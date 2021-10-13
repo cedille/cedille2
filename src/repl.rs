@@ -1,6 +1,7 @@
 
 use std::io::prelude::*;
-use std::fs::File;
+use std::fs::{self, File};
+use std::path::Path;
 use std::borrow::Cow::{self, Borrowed, Owned};
 
 use anyhow::Result;
@@ -101,6 +102,34 @@ fn print_help_text() {
     // TODO: Add help text for the available REPL commands
 }
 
+fn load_file(path : &Path) -> Result<bool> {
+    let mut file = File::open(path)?;
+    if let Some(ext) = path.extension() {
+        if ext.to_string_lossy() == "ced" {
+            println!("loading file {}...", path.display());
+            let mut buffer = Vec::new();
+            file.read_to_end(&mut buffer)?;
+            let text = String::from_utf8(buffer)?;
+            let _parse = syntax::parse(text.as_str())?;
+            // TODO: Parse and check text
+        }
+    }
+    Ok(true)
+}
+
+fn load_dir(path : &Path) -> Result<bool> {
+    for entry in fs::read_dir(path)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_file() {
+            load_file(&path)?;
+        } else {
+            load_dir(&path)?;
+        }
+    }
+    Ok(true)
+}
+
 fn repl_inner<H:Helper>(rl : &mut Editor<H>) -> Result<bool> {
     let line = rl.readline("> ")?;
     rl.add_history_entry(line.as_str());
@@ -115,13 +144,12 @@ fn repl_inner<H:Helper>(rl : &mut Editor<H>) -> Result<bool> {
             },
             "l" | "load" => match words.next() {
                 Some(path) => {
-                    let mut file = File::open(path)?;
-                    let mut buffer = Vec::new();
-                    file.read_to_end(&mut buffer)?;
-                    let text = String::from_utf8(buffer)?;
-                    /* let _parse = syntax::parse(text.as_str())?; */
-                    // TODO: Parse and check text
-                    Ok(true)
+                    let path = Path::new(path);
+                    if path.is_file() {
+                        load_file(path)
+                    } else {
+                        load_dir(path)
+                    }
                 },
                 None => Err(ReplError::MissingFilePath.into())
             },
@@ -160,7 +188,7 @@ pub fn repl() {
         match repl_inner(&mut rl) {
             Ok(r#continue) => if !r#continue { break; }
             Err(error) => {
-                println!("{:?}", error)
+                println!("{0}", &error);
             }
         }
     }

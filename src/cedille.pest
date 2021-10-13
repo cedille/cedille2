@@ -1,0 +1,125 @@
+
+main = _{ SOI ~ file ~ EOI }
+
+file = { (import ~ ".")* ~ "module" ~ qual_id ~ params* ~ "." ~ decl* }
+
+decl = { 
+    import ~ "."
+    | define_term ~ "."
+    | define_type ~ "."
+    | define_kind ~ "."
+    | define_datatype ~ "."
+}
+
+import = { "import" ~ "public"? ~ path ~ ("as" ~ id)? ~ args* }
+
+define_term = { id ~ (":" ~ type_)? ~ "=" ~ term }
+define_type = { id ~ ":" ~ kind ~ "=" ~ type_ }
+define_kind = { kind_id ~ ("(" ~ id ~ ":" ~ (type_ | kind) ~ ")")* ~ "=" ~ kind }
+define_datatype = { "data" ~ id ~ params* ~ ":" ~ kind ~ "=" ~ ctors }
+
+term = { term_binder* ~ term_application }
+
+term_binder = {
+    ("λ" | "Λ") ~ id ~ (":" ~ (type_ | kind))? ~ "."
+    | "[" ~ (define_term | define_type) ~ "]" ~ "-"
+    | "{" ~ (define_term | define_type) ~ "}" ~ "-"
+    | "ρ" ~ "+"? ~ ("<" ~ num ~ ">")? ~ term_atom ~ guide? ~ "-"
+    | "χ" ~ type_? ~ "-"
+}
+
+term_application = {
+    term_atom
+    ~ ("-"? ~ term_atom | "·" ~ type_atom)*
+    ~ ("-"? ~ term | "·" ~ type_)?
+}
+
+term_atom = {
+    "[" ~ term ~ "," ~ term ~ "]" ~ proj?
+    | "β" ~ ("<" ~ term ~ ">")? ~ ("{|" ~ term ~ "|}")?
+    | "φ" ~ term_atom ~ "-" ~ term_atom ~ "{|" ~ term ~ "|}" ~ proj?
+    | "μ" ~ id ~ "." ~ term_application ~ ("@" ~ type_)? ~ "{" ~ cases ~ "}" ~ proj?
+    | "σ" ~ ("<" ~ term ~ ">")? ~ term_application ~ ("@" ~ type_)? ~ "{" ~ cases ~ "}" ~ proj?
+    | "δ" ~ type_? ~ "-" ~ term_application
+    | "ς" ~ term_atom
+    | "(" ~ term ~ ")" ~ proj?
+    | "●"
+    | qual_id ~ proj?
+}
+
+type_ = { 
+    type_binder*
+    ~ type_atom
+    ~ (("➾" | "➔") ~ type_ | "·" ~ type_atom | term_atom)*
+}
+
+type_binder = {
+    "Π" ~ id ~ ":" ~ (kind | type_) ~ "."
+    | "∀" ~ id ~ ":" ~ (kind | type_) ~ "."
+    | "λ" ~ id ~ ":" ~ (kind | type_) ~ "."
+    | "ι" ~ id ~ ":" ~ (kind | type_) ~ "."
+    | "[" ~ (define_term | define_type) ~ "]" ~ "-"
+}
+
+type_application = { type_atom ~ ("·" ~ type_atom | term_atom)* }
+
+type_atom = {
+    "{" ~ term ~ "≃" ~ term ~ "}"
+    | "(" ~ type_ ~ ")"
+    | "●"
+    | qual_id
+}
+
+kind = { 
+    (kind_binder | type_application ~ "➔")*
+    ~ kind_atom
+    ~ ("➔" ~ kind)*
+}
+
+kind_binder = { "Π" ~ id ~ ":" ~ (kind | type_) ~ "." }
+
+kind_atom = { 
+    "(" ~ kind ~ ")"
+    | "★"
+    | qual_kind_id ~ ("·" ~ type_atom | term_atom)+
+}
+
+ctors = { "|"? ~ id ~ ":" ~ type_ ~ ("|" ~ id ~ ":" ~ type_)* }
+cases = { "|"? ~ case ~ ("|" ~ case)* }
+case = { qual_id ~ args* ~ "➔" ~ term }
+
+proj = { ".1" | ".2" }
+guide = { "@" ~ id ~ term? ~ "." ~ type_ }
+args = { term | "-" ~ term | "·" ~ type_ }
+params = { 
+    "(" ~ id ~ ":" ~ (kind | type_) ~ ")"
+    | "{" ~ id ~ ":" ~ type_ ~ "}"
+}
+
+id = @{ alpha ~ (alpha | greek | numeral | punctuation)* | "_" }
+qual_id = @{ id ~ (("." | "/") ~ id)* }
+
+kind_id = @{ "𝒌" ~ (alpha | numeral | punctuation)* }
+qual_kind_id = @{ (id ~ ".")* ~ kind_id }
+
+path = @{ 
+    ("../")*
+    ~ (alpha | numeral | punctuation | path_delimiter )+
+}
+
+path_delimiter = @{
+    ("/" | ".") ~ &(alpha | numeral | punctuation)
+}
+
+alpha = @{ 'a'..'z' | 'A'..'Z' }
+greek = @{ 'α'..'ω' | 'Α'..'Ω' }
+numeral = @{ '0'..'9' }
+punctuation = @{ "_" | "'" | "-" | "!" }
+
+num = @{ '1'..'9' ~ '0'..'9'* }
+
+multiline_comment = @{ "{-" ~ (!"-}" ~ ANY)* ~ "-}" }
+line_comment = @{ "--" ~ (!"\n" ~ ANY)* ~ "\n" }
+
+WHITESPACE = _{ " " | "\t" | "\n" | "\r" }
+COMMENT = _{ line_comment | multiline_comment }
