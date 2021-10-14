@@ -16,6 +16,7 @@ rustyline = "9.0.0"
 rustyline-derive = "0.5.0"
 clap = "2"
 colored = "2"
+directories = "4"
 
 # Parsing libraries
 pest = "2.1.3"

@@ -8,6 +8,7 @@ use anyhow::Result;
 use thiserror::Error;
 use clap::crate_version;
 use colored::*;
+use directories::ProjectDirs;
 
 use rustyline::completion::{Completer, FilenameCompleter, Pair};
 use rustyline::config::OutputStreamType;
@@ -18,6 +19,8 @@ use rustyline::validate::{self, MatchingBracketValidator, Validator};
 use rustyline::{Cmd, CompletionType, Config, Context, Editor, Helper, KeyEvent, Modifiers};
 
 use crate::syntax;
+
+const REPL_HISTORY_LIMIT : usize = 1000;
 
 #[derive(rustyline_derive::Helper)]
 struct ReplHelper {
@@ -48,7 +51,7 @@ impl Hinter for ReplHelper {
 
 impl Highlighter for ReplHelper {
     fn highlight_prompt<'b, 's: 'b, 'p: 'b>(&'s self, prompt: &'p str, default: bool)
-        -> Cow<'b, str>
+        -> Cow<'b, str> /* Moo */
     {
         if default {
             Borrowed(&self.colored_prompt)
@@ -58,7 +61,6 @@ impl Highlighter for ReplHelper {
     }
 
     fn highlight_hint<'h>(&self, hint: &'h str) -> Cow<'h, str> {
-        /* Owned("\x1b[1m".to_owned() + hint + "\x1b[m") */
         Owned(hint.blue().to_string())
     }
 
@@ -110,7 +112,7 @@ fn load_file(path : &Path) -> Result<bool> {
             let mut buffer = Vec::new();
             file.read_to_end(&mut buffer)?;
             let text = String::from_utf8(buffer)?;
-            let _parse = syntax::parse(text.as_str())?;
+            let parse = syntax::parse(text.as_str())?;
             // TODO: Parse and check text
         }
     }
@@ -164,26 +166,36 @@ fn repl_inner<H:Helper>(rl : &mut Editor<H>) -> Result<bool> {
 
 pub fn repl() {
     print_preamble_text();
+
     let config = Config::builder()
         .history_ignore_space(true)
         .completion_type(CompletionType::List)
         .output_stream(OutputStreamType::Stdout)
         .build();
+
     let helper = ReplHelper {
         completer: FilenameCompleter::new(),
         highlighter: MatchingBracketHighlighter::new(),
         hinter: HistoryHinter {},
-/*         colored_prompt: format!("\x1b[1;32m{}\x1b[0m", "> "), */
         colored_prompt: "> ".green().to_string(),
         validator: MatchingBracketValidator::new(),
     };
+
     let mut rl = Editor::with_config(config);
     rl.set_helper(Some(helper));
     rl.bind_sequence(KeyEvent::new('\t', Modifiers::NONE), Cmd::Complete);
     rl.bind_sequence(KeyEvent::new(24 as char, Modifiers::NONE), Cmd::HistorySearchBackward);
     rl.bind_sequence(KeyEvent::new(25 as char, Modifiers::NONE), Cmd::HistorySearchForward);
-    // If history fails to load we silently accept it
-    rl.load_history("history.txt").ok();
+
+    let proj_dirs = ProjectDirs::from("", "The University of Iowa", "Cedille");
+
+    if let Some(proj_dirs) = &proj_dirs {
+        let path = proj_dirs.data_local_dir();
+        let path = path.join("repl_history.txt");
+        rl.load_history(path.as_path()).ok();
+        rl.history_mut().set_max_len(REPL_HISTORY_LIMIT);
+    }
+
     loop {
         match repl_inner(&mut rl) {
             Ok(r#continue) => if !r#continue { break; }
@@ -191,5 +203,12 @@ pub fn repl() {
                 println!("{0}", &error);
             }
         }
+    }
+
+    if let Some(proj_dirs) = &proj_dirs {
+        let path = proj_dirs.data_local_dir();
+        fs::create_dir_all(&path).ok();
+        let path = path.join("repl_history.txt");
+        rl.save_history(&path).ok();
     }
 }
