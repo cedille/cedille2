@@ -11,62 +11,83 @@ decl = {
     | define_datatype ~ "."
 }
 
-import = { "import" ~ "public"? ~ path ~ ("as" ~ id)? ~ args* }
-
+import = { "import" ~ public? ~ path ~ ("as" ~ id)? ~ args* }
 define_term = { id ~ (":" ~ type_)? ~ "=" ~ term }
 define_type = { id ~ ":" ~ kind ~ "=" ~ type_ }
-define_kind = { kind_id ~ ("(" ~ id ~ ":" ~ (type_ | kind) ~ ")")* ~ "=" ~ kind }
+define_kind = { kind_id ~ ("(" ~ id ~ ":" ~ (kind | type_) ~ ")")* ~ "=" ~ kind }
 define_datatype = { "data" ~ id ~ params* ~ ":" ~ kind ~ "=" ~ ctors }
 
 term = { term_binder* ~ term_application }
 
-term_binder = {
-    ("λ" | "Λ") ~ id ~ (":" ~ (type_ | kind))? ~ "."
-    | "[" ~ (define_term | define_type) ~ "]" ~ "-"
-    | "{" ~ (define_term | define_type) ~ "}" ~ "-"
-    | "ρ" ~ "+"? ~ ("<" ~ num ~ ">")? ~ term_atom ~ guide? ~ "-"
-    | "χ" ~ type_? ~ "-"
-}
-
 term_application = {
     term_atom
-    ~ ("-"? ~ term_atom | "·" ~ type_atom)*
-    ~ ("-"? ~ term | "·" ~ type_)?
+    ~ (erased_op? ~ term_atom | "·" ~ type_atom)*
+    ~ (erased_op? ~ term | "·" ~ type_)?
 }
 
+term_binder = _{
+    term_lambda
+    | term_erased_lambda
+    | term_let
+    | term_erased_let
+    | term_rewrite
+    | term_annotate
+}
+
+term_lambda = { "λ" ~ id ~ (":" ~ type_)? ~ "." }
+term_erased_lambda = { "Λ" ~ id ~ (":" ~ (kind | type_))? ~ "." }
+term_let = { "[" ~ (define_term | define_type) ~ "]" ~ "-" }
+term_erased_let = { "{" ~ (define_term | define_type) ~ "}" ~ "-" }
+term_rewrite = { "ρ" ~ reduce? ~ ("<" ~ num ~ ">")? ~ term_atom ~ guide? ~ "-" }
+term_annotate = { "χ" ~ type_? ~ "-" }
+
 term_atom = {
-    "[" ~ term ~ "," ~ term ~ "]" ~ proj?
-    | "β" ~ ("<" ~ term ~ ">")? ~ ("{|" ~ term ~ "|}")?
-    | "φ" ~ term_atom ~ "-" ~ term_atom ~ "{|" ~ term ~ "|}" ~ proj?
-    | "μ" ~ id ~ "." ~ term_application ~ ("@" ~ type_)? ~ "{" ~ cases ~ "}" ~ proj?
-    | "σ" ~ ("<" ~ term ~ ">")? ~ term_application ~ ("@" ~ type_)? ~ "{" ~ cases ~ "}" ~ proj?
-    | "δ" ~ type_? ~ "-" ~ term_application
-    | "ς" ~ term_atom
+    term_intersection ~ proj?
+    | term_refl
+    | term_cast ~ proj?
+    | term_induction ~ proj?
+    | term_match ~ proj?
+    | term_separate
+    | term_symmetry
     | "(" ~ term ~ ")" ~ proj?
-    | "●"
+    | hole
     | qual_id ~ proj?
 }
+
+term_intersection = { "[" ~ term ~ "," ~ term ~ "]" }
+term_refl = { "β" ~ ("<" ~ term ~ ">")? ~ ("{|" ~ term ~ "|}")? }
+term_cast = { "φ" ~ term_atom ~ "-" ~ term_atom ~ "{|" ~ term ~ "|}" }
+term_induction = { "μ" ~ id ~ "." ~ term_application ~ ("@" ~ type_)? ~ "{" ~ cases ~ "}" }
+term_match = { "σ" ~ ("<" ~ term ~ ">")? ~ term_application ~ ("@" ~ type_)? ~ "{" ~ cases ~ "}" }
+term_separate = { "δ" ~ type_? ~ "-" ~ term_application }
+term_symmetry = { "ς" ~ term_atom }
 
 type_ = { 
     type_binder*
     ~ type_atom
-    ~ (("➾" | "➔") ~ type_ | "·" ~ type_atom | term_atom)*
-}
-
-type_binder = {
-    "Π" ~ id ~ ":" ~ (kind | type_) ~ "."
-    | "∀" ~ id ~ ":" ~ (kind | type_) ~ "."
-    | "λ" ~ id ~ ":" ~ (kind | type_) ~ "."
-    | "ι" ~ id ~ ":" ~ (kind | type_) ~ "."
-    | "[" ~ (define_term | define_type) ~ "]" ~ "-"
+    ~ ((erased_arrow | arrow) ~ type_ | "·" ~ type_atom | term_atom)*
 }
 
 type_application = { type_atom ~ ("·" ~ type_atom | term_atom)* }
 
+type_binder = {
+    type_forall
+    | type_erased_forall
+    | type_lambda
+    | type_intersection
+    | type_let
+}
+
+type_forall = { "Π" ~ id ~ ":" ~ type_ ~ "." }
+type_erased_forall = { "∀" ~ id ~ ":" ~ (kind | type_) ~ "." }
+type_lambda = { "λ" ~ id ~ ":" ~ (kind | type_) ~ "." }
+type_intersection = { "ι" ~ id ~ ":" ~ type_ ~ "." }
+type_let = { "[" ~ (define_term | define_type) ~ "]" ~ "-" }
+
 type_atom = {
     "{" ~ term ~ "≃" ~ term ~ "}"
     | "(" ~ type_ ~ ")"
-    | "●"
+    | hole
     | qual_id
 }
 
@@ -88,7 +109,6 @@ ctors = { "|"? ~ id ~ ":" ~ type_ ~ ("|" ~ id ~ ":" ~ type_)* }
 cases = { "|"? ~ case ~ ("|" ~ case)* }
 case = { qual_id ~ args* ~ "➔" ~ term }
 
-proj = { ".1" | ".2" }
 guide = { "@" ~ id ~ term? ~ "." ~ type_ }
 args = { term | "-" ~ term | "·" ~ type_ }
 params = { 
@@ -110,6 +130,14 @@ path = @{
 path_delimiter = @{
     ("/" | ".") ~ &(alpha | numeral | punctuation)
 }
+
+erased_arrow = @{ "➾" }
+arrow = @{ "➔" }
+erased_op = @{ "-" }
+hole = @{ "●" }
+proj = @{ ".1" | ".2" }
+reduce = @{ "+" }
+public = @{ "public" }
 
 alpha = @{ 'a'..'z' | 'A'..'Z' }
 greek = @{ 'α'..'ω' | 'Α'..'Ω' }
