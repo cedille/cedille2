@@ -1,6 +1,5 @@
 
-use std::io::prelude::*;
-use std::fs::{self, File};
+use std::fs::{self};
 use std::path::Path;
 use std::borrow::Cow::{self, Borrowed, Owned};
 
@@ -18,7 +17,7 @@ use rustyline::hint::{Hinter, HistoryHinter};
 use rustyline::validate::{self, MatchingBracketValidator, Validator};
 use rustyline::{Cmd, CompletionType, Config, Context, Editor, Helper, KeyEvent, Modifiers};
 
-use crate::syntax;
+use crate::database::Database;
 
 const REPL_HISTORY_LIMIT : usize = 1000;
 
@@ -104,35 +103,7 @@ fn print_help_text() {
     // TODO: Add help text for the available REPL commands
 }
 
-fn load_file(path : &Path) -> Result<bool> {
-    let mut file = File::open(path)?;
-    if let Some(ext) = path.extension() {
-        if ext.to_string_lossy() == "ced" {
-            println!("loading file {}...", path.display());
-            let mut buffer = Vec::new();
-            file.read_to_end(&mut buffer)?;
-            let text = String::from_utf8(buffer)?;
-            let parse = syntax::parse(text.as_str())?;
-            // TODO: Parse and check text
-        }
-    }
-    Ok(true)
-}
-
-fn load_dir(path : &Path) -> Result<bool> {
-    for entry in fs::read_dir(path)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.is_file() {
-            load_file(&path)?;
-        } else {
-            load_dir(&path)?;
-        }
-    }
-    Ok(true)
-}
-
-fn repl_inner<H:Helper>(rl : &mut Editor<H>) -> Result<bool> {
+fn repl_inner<H:Helper>(db: &mut Database, rl : &mut Editor<H>) -> Result<bool> {
     let line = rl.readline("> ")?;
     rl.add_history_entry(line.as_str());
     let mut words = line.split_ascii_whitespace();
@@ -148,9 +119,9 @@ fn repl_inner<H:Helper>(rl : &mut Editor<H>) -> Result<bool> {
                 Some(path) => {
                     let path = Path::new(path);
                     if path.is_file() {
-                        load_file(path)
+                        db.load_file(path)
                     } else {
-                        load_dir(path)
+                        db.load_dir(path)
                     }
                 },
                 None => Err(ReplError::MissingFilePath.into())
@@ -166,6 +137,7 @@ fn repl_inner<H:Helper>(rl : &mut Editor<H>) -> Result<bool> {
 
 pub fn repl() {
     print_preamble_text();
+    let mut db = Database::new();
 
     let config = Config::builder()
         .history_ignore_space(true)
@@ -197,7 +169,7 @@ pub fn repl() {
     }
 
     loop {
-        match repl_inner(&mut rl) {
+        match repl_inner(&mut db, &mut rl) {
             Ok(r#continue) => if !r#continue { break; }
             Err(error) => {
                 println!("{0}", &error);

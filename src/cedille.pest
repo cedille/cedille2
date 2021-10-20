@@ -34,7 +34,7 @@
 
 main = _{ SOI ~ file ~ EOI }
 
-file = { (import ~ ".")* ~ module_header? ~ decl* }
+file = _{ (import ~ ".")* ~ module_header? ~ decl* }
 module_header = { "module" ~ qual_id ~ param* ~ "." }
 
 decl = _{ 
@@ -48,7 +48,7 @@ decl = _{
 import = { "import" ~ public? ~ path ~ ("as" ~ id)? ~ import_argument* }
 define_term = { id ~ ((":" | "◂") ~ type_)? ~ "=" ~ term }
 define_type = { id ~ (":" | "◂") ~ kind ~ "=" ~ type_ }
-define_kind = { kind_id ~ ("(" ~ id ~ ":" ~ (kind | type_) ~ ")")* ~ "=" ~ kind }
+define_kind = { kind_id ~ kind_arg* ~ "=" ~ kind }
 define_datatype = { "data" ~ id ~ param* ~ ":" ~ kind ~ "=" ~ ctors }
 
 term = { term_binder* ~ term_application }
@@ -71,9 +71,9 @@ term_binder = _{
 term_lambda = { "λ" ~ id ~ (":" ~ type_)? ~ "." }
 term_erased_lambda = { "Λ" ~ id ~ (":" ~ (kind | type_))? ~ "." }
 term_let = { "[" ~ (define_term | define_type) ~ "]" ~ "-" }
-term_erased_let = { "{" ~ (define_term | define_type) ~ "}" ~ "-" }
+term_erased_let = { "{" ~ define_term ~ "}" ~ "-" }
 term_rewrite = { "ρ" ~ reduce? ~ ("<" ~ num ~ ">")? ~ term_atom ~ guide? ~ "-" }
-term_annotate = { "χ" ~ type_? ~ "-" }
+term_annotate = { "χ" ~ type_ ~ "-" }
 
 term_atom = {
     term_intersection ~ proj*
@@ -90,17 +90,18 @@ term_atom = {
 }
 
 term_intersection = { "[" ~ term ~ "," ~ term ~ "]" }
-term_refl = { "β" ~ ("<" ~ term ~ ">")? ~ ("{" ~ "|"? ~ term ~ "|"? ~ "}")? }
+term_refl = { "β" ~ term_guide? ~ ("{" ~ "|"? ~ term ~ "|"? ~ "}")? }
 term_cast = { "φ" ~ term_atom ~ "-" ~ term_application ~ "{" ~ "|"? ~ term ~ "|"? ~ "}" }
 term_induction = { "μ" ~ id ~ "." ~ term_application ~ ("@" ~ type_)? ~ "{" ~ cases ~ "}" }
-term_match = { ("μ'" | "σ") ~ ("<" ~ term ~ ">")? ~ term_application ~ ("@" ~ type_)? ~ "{" ~ cases ~ "}" }
+term_match = { ("μ'" | "σ") ~ term_guide? ~ term_application ~ ("@" ~ type_)? ~ "{" ~ cases ~ "}" }
 term_separate = { "δ" ~ type_? ~ "-" ~ term }
 term_symmetry = { "ς" ~ term_atom }
 term_abstract = { "θ" ~ (reduce | "<" ~ id+ ~ ">")? ~ term_application }
 
-type_ = { 
-    type_binder*
-    ~ type_atom
+type_ = { type_binder* ~ type_body }
+
+type_body = { 
+    type_atom
     ~ ((erased_arrow | arrow) ~ type_ | "·" ~ type_atom | term_atom)*
 }
 
@@ -137,21 +138,26 @@ kind_binder = { "Π" ~ id ~ ":" ~ (kind | type_) ~ "." }
 
 kind_atom = { 
     "(" ~ kind ~ ")"
-    | "★"
+    | star
     | qual_kind_id ~ ("·" ~ type_atom | term_atom)+
 }
 
-guide = { "@" ~ id ~ ("<" ~ term ~ ">")? ~ "." ~ type_ }
+kind_arg = { "(" ~ id ~ ":" ~ (kind | type_) ~ ")" }
 
-ctors = { "|"? ~ id ~ ":" ~ type_ ~ ("|" ~ id ~ ":" ~ type_)* }
+guide = { "@" ~ id ~ term_guide? ~ "." ~ type_ }
+
+ctors = { "|"? ~ ctor ~ ("|" ~ ctor)* }
+ctor = { id ~ ":" ~ type_ }
 cases = { "|"? ~ case ~ ("|" ~ case)* }
-case = { qual_id ~ case_id* ~ "➔" ~ term }
-case_id = @{ (type_op | erased_op)? ~ id }
+case = { qual_id ~ case_arg* ~ "➔" ~ term }
+case_arg = ${ (type_op | erased_op)? ~ id }
 
 import_argument = { "·" ~ type_ | erased_op? ~ term }
 param = { relevant_param | erased_param }
 relevant_param = { "(" ~ id ~ ":" ~ (kind | type_) ~ ")" }
 erased_param = { "{" ~ id ~ ":" ~ type_ ~ "}" }
+
+term_guide = { "<" ~ term ~ ">" }
 
 id = @{ alpha ~ (alpha | greek | numeral | punctuation)* | "_" }
 qual_id = @{ id ~ (("." | "/") ~ id)* }
@@ -173,6 +179,7 @@ arrow = @{ "➔" }
 erased_op = @{ "-" }
 type_op = @{ "·" }
 hole = @{ "●" }
+star = @{ "★" }
 proj = @{ ".1" | ".2" }
 reduce = @{ "+" }
 public = @{ "public" }
@@ -186,7 +193,7 @@ num = @{ '1'..'9' ~ '0'..'9'* }
 
 multiline_comment = @{ "{-" ~ (!"-}" ~ ANY)* ~ "-}" }
 suffix_comment = @{ "{-" ~ ANY* ~ EOI }
-line_comment = @{ "--" ~ (!"\n" ~ ANY)* ~ "\n" }
+line_comment = @{ "--" ~ (!NEWLINE ~ ANY)* ~ NEWLINE }
 
-WHITESPACE = _{ " " | "\t" | "\n" | "\r" }
+WHITESPACE = _{ " " | "\t" | NEWLINE }
 COMMENT = _{ line_comment | multiline_comment | suffix_comment }
