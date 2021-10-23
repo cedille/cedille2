@@ -1,40 +1,7 @@
 
-/*
-    Notes:
-
-    For refl (beta) and casts (phi) term rules we have a choice:
-        1. Require the forms β{t}. efficient-mendler-codata and recursive-representation-of-data will break with this (but can easily be fixed)
-        2. Allow both forms β{t} and β{|t|}, the easiest way to do this is to make the bars optional
-
-    Should we allow optional module headers?
-        A lot of the old code allows files to be written that don't have a module definition.
-        This could be interpreted as the simplest module definition without too much difficulty.
-
-    Should we require brackets around equality?
-        I strongly believe we should require this.
-        This effects efficient-mendler, but only in _one_ file, and other files use the brackets
-
-    Should we support abstract (theta) expressions?
-        Not supporting them would break some old code (efficient-mendler), they are practically never used otherwise
-
-    Should we support normalize (epsilon) expressions?
-        These are used almost excusively for help with rewriting.
-        I would argue that this belongs in the tool not inside the syntax
-
-    Should we support μ', σ, or both?
-        Both is easy enough, though we should likely prefer σ
-
-    The impred-ind development is probably old enough that it should not be supported, however if we want to:
-        1. We need to support line comments with % heading them
-        2. We need to support equality without brackets (if we decide to do this, I think we should demand parantheticals)
-            Parentheticals would still require altering the existing code, but it wouldn't break the target Cedille
-        3. Potentially other problems, there is enough different here that it is hard to figure out everything just by tinkering
-*/
-
-
 main = _{ SOI ~ file ~ EOI }
 
-file = _{ (import ~ ".")* ~ module_header? ~ decl* }
+file = _{ (import ~ ".")* ~ module_header ~ decl* }
 module_header = { "module" ~ qual_id ~ param* ~ "." }
 
 decl = _{ 
@@ -83,20 +50,18 @@ term_atom = {
     | term_match ~ proj*
     | term_separate
     | term_symmetry
-    | term_abstract
     | "(" ~ term ~ ")" ~ proj*
     | hole
     | qual_id ~ proj*
 }
 
 term_intersection = { "[" ~ term ~ "," ~ term ~ "]" }
-term_refl = { "β" ~ term_guide? ~ ("{" ~ "|"? ~ term ~ "|"? ~ "}")? }
-term_cast = { "φ" ~ term_atom ~ "-" ~ term_application ~ "{" ~ "|"? ~ term ~ "|"? ~ "}" }
+term_refl = { "β" ~ term_guide? ~ ("{" ~ term ~ "}")? }
+term_cast = { "φ" ~ term_atom ~ "-" ~ term_application ~ "{" ~ term ~ "}" }
 term_induction = { "μ" ~ id ~ "." ~ term_application ~ ("@" ~ type_)? ~ "{" ~ cases ~ "}" }
-term_match = { ("μ'" | "σ") ~ term_guide? ~ term_application ~ ("@" ~ type_)? ~ "{" ~ cases ~ "}" }
+term_match = { ("σ" | mu_prime) ~ term_guide? ~ term_application ~ ("@" ~ type_)? ~ "{" ~ cases ~ "}" }
 term_separate = { "δ" ~ type_? ~ "-" ~ term }
 term_symmetry = { "ς" ~ term_atom }
-term_abstract = { "θ" ~ (reduce | "<" ~ id+ ~ ">")? ~ term_application }
 
 type_ = { type_binder* ~ type_body }
 
@@ -166,12 +131,7 @@ kind_id = @{ "𝒌" ~ (alpha | numeral | punctuation)* }
 qual_kind_id = @{ (id ~ ".")* ~ kind_id }
 
 path = @{ 
-    ("../")*
-    ~ (alpha | numeral | punctuation | path_delimiter )+
-}
-
-path_delimiter = @{
-    ("/" | ".") ~ &(alpha | numeral | punctuation)
+    ("../")* ~ (alpha | numeral | punctuation | "/" )+
 }
 
 erased_arrow = @{ "➾" }
@@ -183,6 +143,7 @@ star = @{ "★" }
 proj = @{ ".1" | ".2" }
 reduce = @{ "+" }
 public = @{ "public" }
+mu_prime = @{ "μ'" }
 
 alpha = @{ 'a'..'z' | 'A'..'Z' }
 greek = @{ 'α'..'ω' | 'Α'..'Ω' }

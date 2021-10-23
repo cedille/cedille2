@@ -119,10 +119,12 @@ fn repl_inner<H:Helper>(db: &mut Database, rl : &mut Editor<H>) -> Result<bool> 
                 Some(path) => {
                     let path = Path::new(path);
                     if path.is_file() {
-                        db.load_file(path)
+                        db.load_module(path)?;
                     } else {
-                        db.load_dir(path)
+                        db.load_dir(path)?;
                     }
+                    db.sort()?;
+                    Ok(true)
                 },
                 None => Err(ReplError::MissingFilePath.into())
             },
@@ -172,7 +174,16 @@ pub fn repl() {
         match repl_inner(&mut db, &mut rl) {
             Ok(r#continue) => if !r#continue { break; }
             Err(error) => {
-                println!("{0}", &error);
+                for (count, cause) in error.chain().enumerate() {
+                    if count == 0 {
+                        println!("Error: {}", cause);
+                    } else if count == 1 {
+                        println!("Caused by:");
+                        println!("    {}", cause);
+                    } else {
+                        println!("    {}", cause);
+                    }
+                }
             }
         }
     }

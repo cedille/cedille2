@@ -1,14 +1,12 @@
 
-use std::path::PathBuf;
-
 use pest::Parser;
 use pest::iterators::{Pair, Pairs};
 use pest::error::Error;
 
 use crate::syntax::*;
+use crate::database::Database;
 
 type Span = (usize, usize);
-type Id = usize;
 
 #[derive(Parser)]
 #[grammar = "cedille.pest"]
@@ -80,12 +78,27 @@ impl<'a> Extract for Pairs<'a, Rule> {
 }
 
 pub fn module(pairs: Pairs<Rule>) -> Module {
-    fn decl(decl: Pair<Rule>) -> Option<Decl> {
+    enum DeclOrImport {
+        Decl(Decl),
+        Import(Import)
+    }
+    fn split(mut decls_and_imports: Vec<DeclOrImport>) -> (Vec<Decl>, Vec<Import>) {
+        let (mut decls, mut imports) = (vec![], vec![]);
+        for x in decls_and_imports.drain(..) {
+            match x {
+                DeclOrImport::Import(import) => imports.push(import),
+                DeclOrImport::Decl(decl) => decls.push(decl)
+            }
+        }
+        (decls, imports)
+    }
+    fn decl(decl: Pair<Rule>) -> Option<DeclOrImport> {
         match decl.as_rule() {
-            Rule::define_term => Some(Decl::Term(define_term(decl))),
-            Rule::define_type => Some(Decl::Type(define_type(decl))),
-            Rule::define_kind => Some(Decl::Kind(define_kind(decl))),
-            Rule::define_datatype => Some(Decl::Datatype(define_datatype(decl))),
+            Rule::define_term => Some(DeclOrImport::Decl(Decl::Term(define_term(decl)))),
+            Rule::define_type => Some(DeclOrImport::Decl(Decl::Type(define_type(decl)))),
+            Rule::define_kind => Some(DeclOrImport::Decl(Decl::Kind(define_kind(decl)))),
+            Rule::define_datatype => Some(DeclOrImport::Decl(Decl::Datatype(define_datatype(decl)))),
+            Rule::import => Some(DeclOrImport::Import(import(decl))),
             _ => None
         }
     }
@@ -95,17 +108,13 @@ pub fn module(pairs: Pairs<Rule>) -> Module {
         let params = inner.list(Rule::param, param);
         (qual_id, params)
     }
+    let text = String::new();
     let mut pairs = pairs;
-    let imports = pairs.list(Rule::import, import);
-    let header = pairs.optional(Rule::module_header, module_header);
-    let decls = pairs.variant_list(decl);
-    let (id, params) = if let Some((id, params)) = header {
-        (id, params)
-    } else {
-        // TODO: fill in the correct Id
-        (0, vec![])
-    };
-    Module { imports, id, decls, params }
+    let mut imports = pairs.list(Rule::import, import);
+    let (id, params) = pairs.required(module_header);
+    let (decls, mut decl_imports) = split(pairs.variant_list(decl));
+    imports.append(&mut decl_imports);
+    Module { text, imports, id, decls, params }
 }
 
 fn import(import: Pair<Rule>) -> Import {
@@ -347,19 +356,19 @@ fn term_atom(atom: Pair<Rule>) -> Term {
     let term = inner.variant(Box::new(|p| {
         let span = span(p.as_span());
         match p.as_rule() {
-            | Rule::term_intersection => {
+            Rule::term_intersection => {
                 let mut inner = p.into_inner();
                 let first = Box::new(inner.required(term));
                 let second = Box::new(inner.required(term));
                 Some(Term::Intersection { span, first, second })
             },
-            | Rule::term_refl => {
+            Rule::term_refl => {
                 let mut inner = p.into_inner();
                 let guide = inner.optional(Rule::term_guide, term_guide).map(Box::new);
                 let erasure = inner.optional(Rule::term, term).map(Box::new);
                 Some(Term::Refl { span, guide, erasure })
             },
-            | Rule::term_cast => {
+            Rule::term_cast => {
                 let mut inner = p.into_inner();
                 let equation = Box::new(inner.required(term_atom));
                 let input = inner.required(term_application);
@@ -367,7 +376,7 @@ fn term_atom(atom: Pair<Rule>) -> Term {
                 let erasure = Box::new(inner.required(term));
                 Some(Term::Cast { span, equation, input, erasure })
             },
-            | Rule::term_induction => {
+            Rule::term_induction => {
                 let mut inner = p.into_inner();
                 let id = inner.required(id);
                 let inductee = inner.required(term_application);
@@ -376,8 +385,12 @@ fn term_atom(atom: Pair<Rule>) -> Term {
                 let cases = inner.required(cases);
                 Some(Term::Induct { span, id, inductee, motive, cases })
             },
-            | Rule::term_match => {
+            Rule::term_match => {
                 let mut inner = p.into_inner();
+                // Detect deprecated mu prime token header
+                if inner.flag(Rule::mu_prime) {
+                    println!("Warning, μ' is deprecated.");
+                }
                 let guide = inner.optional(Rule::term_guide, term_guide).map(Box::new);
                 let matched = inner.required(term_application);
                 let matched = Box::new(matched);
@@ -385,32 +398,24 @@ fn term_atom(atom: Pair<Rule>) -> Term {
                 let cases = inner.required(cases);
                 Some(Term::Match { span, guide, matched, motive, cases })
             },
-            | Rule::term_separate => {
+            Rule::term_separate => {
                 let mut inner = p.into_inner();
                 let annotation = inner.optional(Rule::type_, type_).map(Box::new);
                 let equation = Box::new(inner.required(term));
                 Some(Term::Separate { span, annotation, equation })
             },
-            | Rule::term_symmetry => {
+            Rule::term_symmetry => {
                 let mut inner = p.into_inner();
                 let equation = Box::new(inner.required(term_atom));
                 Some(Term::Symmetry { span, equation })
             },
-            | Rule::term_abstract => {
-                let mut inner = p.into_inner();
-                let reduce = inner.flag(Rule::reduce);
-                let guide = inner.list(Rule::id, id);
-                let body = inner.required(term_application);
-                let body = Box::new(body);
-                Some(Term::Abstract { span, reduce, guide, body })
-            },
-            | Rule::term => Some(term(p)),
-            | Rule::hole => Some(Term::Hole { span }),
-            | Rule::qual_id => {
+            Rule::term => Some(term(p)),
+            Rule::hole => Some(Term::Hole { span }),
+            Rule::qual_id => {
                 let id = qual_id(p);
                 Some(Term::Var { span, id })
             },
-            | _ => None
+            _ => None
         }
     }));
 
@@ -515,7 +520,7 @@ fn type_body(pairs: Pair<Rule>) -> Type {
         match p.as_rule() {
             Rule::erased_arrow | Rule::arrow  => {
                 let mode = if p.as_rule() == Rule::arrow { Mode::Free } else { Mode::Erased };
-                let id = 0;
+                let id = dummy_id();
                 let domain = Box::new(result);
                 let body = Box::new(inner.required(type_));
                 result = Type::TermFn { span, mode, id, domain, body }
@@ -592,7 +597,7 @@ fn kind(pairs: Pair<Rule>) -> Kind {
     }
     fn type_application(body: Kind, pairs: Pair<Rule>) -> Kind {
         let outer_span = span(pairs.as_span());
-        let id = 0;
+        let id = dummy_id();
         let mut inner = pairs.into_inner();
         // A type application must be headed by a type atom
         let mut result = inner.required(type_atom);
@@ -634,7 +639,7 @@ fn kind(pairs: Pair<Rule>) -> Kind {
                     // The remaining rules must be `kind`
                     for p2 in iter {
                         let span = span(p2.as_span());
-                        let id = 0;
+                        let id = dummy_id();
                         let domain = Box::new(result);
                         let body = Box::new(kind(p2));
                         result = Kind::Fn { span, id, domain, body };
@@ -660,19 +665,22 @@ fn kind_arg(pairs: Pair<Rule>) -> KindArg {
     }
 }
 
-fn path(pairs: Pair<Rule>) -> PathBuf {
-    let path = pairs.as_str().replace(".", "/");
-    PathBuf::from(path)
+fn path(pairs: Pair<Rule>) -> Span {
+    span(pairs.as_span())
 }
 
 fn id(pairs: Pair<Rule>) -> Id {
     // TODO:
-    0
+    dummy_id()
 }
 
 fn qual_id(pairs: Pair<Rule>) -> Id {
     // TODO:
-    0
+    dummy_id()
+}
+
+fn dummy_id() -> Id {
+    Id { module:0, namespace:Some(0), decl:0, index:Some(0) }
 }
 
 fn span(span: pest::Span) -> Span {

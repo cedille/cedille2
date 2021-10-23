@@ -1,8 +1,14 @@
 
-use std::path::PathBuf;
-
 type Span = (usize, usize);
-type Id = usize;
+type Symbol = u16;
+
+#[derive(Debug, Hash, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Id {
+    pub module: Symbol,
+    pub namespace: Option<Symbol>,
+    pub decl: Symbol,
+    pub index: Option<Symbol>
+}
 
 #[derive(Debug)]
 pub enum Mode {
@@ -32,6 +38,7 @@ pub struct Parameter {
 
 #[derive(Debug)]
 pub struct Module {
+    pub text: String,
     pub imports: Vec<Import>,
     pub id: Id,
     pub decls: Vec<Decl>,
@@ -56,7 +63,7 @@ pub enum ImportArg {
 pub struct Import {
     pub span: Span,
     pub public: bool,
-    pub path: PathBuf,
+    pub path: Span,
     pub namespace: Option<Id>,
     pub args : Vec<ImportArg>
 }
@@ -133,13 +140,13 @@ pub enum Term {
     Lambda {
         span: Span,
         mode: Mode,
-        id: usize,
+        id: Id,
         annotation: Option<Box<Type>>,
         body: Box<Term>
     },
     TypeLambda {
         span: Span,
-        id: usize,
+        id: Id,
         annotation: Box<Kind>,
         body: Box<Term>
     },
@@ -176,12 +183,6 @@ pub enum Term {
         span: Span,
         equation: Box<Term>
     },
-    Abstract {
-        span: Span,
-        reduce: bool,
-        guide: Vec<usize>,
-        body: Box<Term>
-    },
     Intersection {
         span: Span,
         first: Box<Term>,
@@ -205,7 +206,7 @@ pub enum Term {
     },
     Induct {
         span: Span,
-        id: usize,
+        id: Id,
         inductee: Box<Term>,
         motive: Option<Box<Type>>,
         cases: Vec<Case>
@@ -230,7 +231,7 @@ pub enum Term {
     },
     Var {
         span: Span,
-        id: usize
+        id: Id
     },
     Hole {
         span: Span
@@ -241,26 +242,26 @@ pub enum Term {
 pub enum Type {
     Fn {
         span: Span,
-        id: usize,
+        id: Id,
         domain: Box<Kind>,
         body: Box<Type>
     },
     TermFn {
         span: Span,
         mode: Mode,
-        id: usize,
+        id: Id,
         domain: Box<Type>,
         body: Box<Type>
     },
     Lambda {
         span: Span,
-        id: usize,
+        id: Id,
         annotation: Box<Kind>,
         body: Box<Type>
     },
     TermLambda {
         span: Span,
-        id: usize,
+        id: Id,
         annotation: Box<Type>,
         body: Box<Type>
     },
@@ -276,7 +277,7 @@ pub enum Type {
     },
     Intersection {
         span: Span,
-        id: usize,
+        id: Id,
         first: Box<Type>,
         second: Box<Type>
     },
@@ -297,7 +298,7 @@ pub enum Type {
     },
     Var {
         span: Span,
-        id: usize
+        id: Id
     },
     Hole {
         span: Span
@@ -308,13 +309,13 @@ pub enum Type {
 pub enum Kind {
     Fn {
         span: Span,
-        id: usize,
+        id: Id,
         domain: Box<Kind>,
         body: Box<Kind>
     },
     TypeFn {
         span: Span,
-        id: usize,
+        id: Id,
         domain: Box<Type>,
         body: Box<Kind>
     },
