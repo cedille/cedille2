@@ -1,13 +1,14 @@
 
+use std::collections::btree_map::OccupiedEntry;
 use std::io::prelude::*;
 use std::fs::{self, File};
+use std::time::SystemTime;
 use std::path::{Path, PathBuf};
 use std::collections::HashMap;
-use std::collections::hash_map::Entry::Vacant;
+use std::collections::hash_map::Entry::{Vacant, Occupied};
 
 use petgraph::prelude::*;
-use petgraph::algo::toposort;
-use petgraph::algo::kosaraju_scc;
+use petgraph::algo::{toposort, kosaraju_scc};
 use radix_trie::Trie;
 use anyhow::{Context, Result, anyhow};
 use colored::*;
@@ -29,11 +30,39 @@ pub enum DatabaseError {
 }
 
 #[derive(Debug)]
+pub struct ModuleData {
+    syntax: syntax::Module,
+    text: String,
+    path: String,
+    imports: Vec<Symbol>,
+    exports: Vec<Symbol>,
+    last_modified: SystemTime,
+}
+
+impl ModuleData {
+    fn new(key: &str, mut file: File, last_modified: SystemTime) -> Result<ModuleData> {
+        println!("{} {}{}", "loading file".dimmed(), key, "...".dimmed());
+        let mut buffer = Vec::new();
+        file.read_to_end(&mut buffer)?;
+        let text = String::from_utf8(buffer)?;
+        let tree = parser::parse(&text)?;
+        let tree = parser::module(tree);
+        let data = ModuleData {
+            syntax: tree,
+            text,
+            path: key.to_string(),
+            imports: Vec::new(),
+            exports: Vec::new(),
+            last_modified,
+        };
+        Ok(data)
+    }
+}
+
+#[derive(Debug)]
 pub struct Database {
-    pub modules: HashMap<Symbol, syntax::Module>,
+    pub modules: HashMap<Symbol, ModuleData>,
     module_order: Vec<Symbol>,
-    module_paths: HashMap<Symbol, String>,
-    module_imports: HashMap<Symbol, Vec<Symbol>>,
     symbols: Trie<String, Symbol>,
     fresh_symbol: Symbol,
 }
@@ -44,8 +73,6 @@ impl Database {
         Database { 
             modules: HashMap::new(),
             module_order: Vec::new(),
-            module_paths: HashMap::new(),
-            module_imports: HashMap::new(),
             symbols: Trie::new(),
             fresh_symbol: 0,
         }
@@ -64,51 +91,60 @@ impl Database {
     }
 
     fn load_imports<P: AsRef<Path>>(&mut self, prefix: P, module: Symbol) -> Result<()> {
-        let paths = self.modules.get(&module)
-            .map(|m| {
-                let mut result = vec![];
-                for i in m.imports.iter() {
-                    let (start, end) = i.path;
-                    let path = m.text[start..end].to_string();
-                    result.push(path);
-                }
-                result
-            })
-            .ok_or(DatabaseError::MissingModuleSymbol { sym:module })?;
+        let paths = {
+            let module_data = self.modules.get_mut(&module)
+                .ok_or(DatabaseError::MissingModuleSymbol { sym:module })?;
+            let mut result = vec![];
+            for i in module_data.syntax.imports.iter() {
+                let (start, end) = i.path;
+                let path = module_data.text[start..end].to_string();
+                result.push(path);
+            }
+            result
+        };
         for path in paths {
             let path = prefix.as_ref().join(path).with_extension("ced");
             let sym = self.load_module(path)?;
-            let imports = self.module_imports.entry(module).or_insert_with(Vec::new);
-            imports.push(sym);
+            self.modules.get_mut(&module)
+                .ok_or(DatabaseError::MissingModuleSymbol { sym:module })?
+                .imports
+                .push(sym);
         }
         Ok(())
     }
 
     pub fn load_module<P: AsRef<Path>>(&mut self, path: P) -> Result<Symbol> {
         let path = path.as_ref();
-        let mut file = File::open(path)
+        let file = File::open(path)
             .with_context(|| format!("Failed to open file with path {}", path.display()))?;
         if let Some(ext) = path.extension() {
             if ext.to_string_lossy() != "ced" { return Ok(0); }
+
+            let metadata = path.metadata()?;
+            let last_modified = metadata.modified().unwrap_or_else(|_| SystemTime::now());
 
             let canonical_path = path.canonicalize()?;
             let key = canonical_path.to_str()
                 .ok_or(DatabaseError::NonUnicodePath { path:path.to_path_buf() })?;
             let sym = self.symbol(key);
-            self.module_paths.insert(sym, key.to_string());
 
-            if let Vacant(vacant) = self.modules.entry(sym) {
-                println!("{} {}{}", "loading file".dimmed(), canonical_path.display(), "...".dimmed());
-                let mut buffer = Vec::new();
-                file.read_to_end(&mut buffer)?;
-                let text = String::from_utf8(buffer)?;
-                let tree = parser::parse(&text)?;
-                let mut tree = parser::module(tree);
-                tree.text = text;
-                vacant.insert(tree);
-                self.load_imports(path.parent().unwrap(), sym)?;
-            } else {
-                println!("{} {}{}", "skipping file".dimmed(), canonical_path.display(), "...".dimmed());
+            match self.modules.entry(sym) {
+                Occupied(mut occupied) => {
+                    let current_modified = occupied.get().last_modified;
+                    if last_modified > current_modified {
+                        let data = ModuleData::new(key, file, last_modified)?;
+                        let module = occupied.get_mut();
+                        *module = data;
+                        self.load_imports(path.parent().unwrap(), sym)?;
+                    } else {
+                        println!("{} {}{}", "skipping file".dimmed(), canonical_path.display(), "...".dimmed());
+                    }
+                },
+                Vacant(vacant) => {
+                    let data = ModuleData::new(key, file, last_modified)?;
+                    vacant.insert(data);
+                    self.load_imports(path.parent().unwrap(), sym)?;
+                }
             }
             Ok(sym)
         } else {
@@ -133,41 +169,39 @@ impl Database {
 
     pub fn sort(&mut self) -> Result<()> {
         let mut edges = Vec::new();
-        for source in self.modules.keys() {
-            if let Some(imports) = self.module_imports.get(source) {
-                for import in imports.iter() {
-                    let path = self.module_paths.get(import)
-                        .ok_or(DatabaseError::MissingModuleSymbol { sym:*import })?;
-                    let target = self.symbols.get(path)
-                        .ok_or(DatabaseError::UnloadedPath { path:path.into() })?;
-                    edges.push((*source as u32, *target as u32));
-                }
+        for (source, module) in self.modules.iter() {
+            for import in module.imports.iter() {
+                let path = &self.modules.get(import)
+                    .ok_or(DatabaseError::MissingModuleSymbol { sym:*import })?
+                    .path;
+                let target = self.symbols.get(path)
+                    .ok_or(DatabaseError::UnloadedPath { path:path.into() })?;
+                edges.push((*source as u32, *target as u32));
             }
         }
         let graph = Graph::<u32, ()>::from_edges(edges.drain(..));
         match toposort(&graph, None) {
             Ok(mut sorted) => { 
                 self.module_order = sorted.drain(..).map(|i| i.index() as u16).collect();
+                Ok(())
             },
             Err(cycle) => {
                 let node = cycle.node_id();
                 let mut scc = kosaraju_scc(&graph);
                 let mut cycle_walk = scc.drain(..)
                     .filter(|v| v.contains(&node));
-                if let Some(mut walk) = cycle_walk.next() {
-                    let walk: Vec<&String> = walk.drain(..)
-                        .map(|n| self.module_paths.get(&(n.index() as Symbol)).unwrap())
-                        .collect();
-                    let mut message = String::new();
-                    for node in walk {
-                        message.push('\n');
-                        message.push_str("    ");
-                        message.push_str(node);
-                    }
-                    return Err(anyhow!("Cycle detected: {}", message));
+                let mut walk = cycle_walk.next().unwrap();
+                let walk: Vec<&String> = walk.drain(..)
+                    .map(|n| &self.modules.get(&(n.index() as Symbol)).unwrap().path)
+                    .collect();
+                let mut message = String::new();
+                for node in walk {
+                    message.push('\n');
+                    message.push_str("    ");
+                    message.push_str(node);
                 }
+                Err(anyhow!("Cycle detected: {}", message))
             }
         }
-        Ok(())
     }
 }

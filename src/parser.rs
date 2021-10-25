@@ -108,13 +108,12 @@ pub fn module(pairs: Pairs<Rule>) -> Module {
         let params = inner.list(Rule::param, param);
         (qual_id, params)
     }
-    let text = String::new();
     let mut pairs = pairs;
     let mut imports = pairs.list(Rule::import, import);
     let (id, params) = pairs.required(module_header);
     let (decls, mut decl_imports) = split(pairs.variant_list(decl));
     imports.append(&mut decl_imports);
-    Module { text, imports, id, decls, params }
+    Module { imports, id, decls, params }
 }
 
 fn import(import: Pair<Rule>) -> Import {

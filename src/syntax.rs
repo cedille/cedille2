@@ -38,7 +38,6 @@ pub struct Parameter {
 
 #[derive(Debug)]
 pub struct Module {
-    pub text: String,
     pub imports: Vec<Import>,
     pub id: Id,
     pub decls: Vec<Decl>,
