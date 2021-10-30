@@ -123,7 +123,6 @@ fn repl_inner<H:Helper>(db: &mut Database, rl : &mut Editor<H>) -> Result<bool> 
                     } else {
                         db.load_dir(path)?;
                     }
-                    db.sort()?;
                     Ok(true)
                 },
                 None => Err(ReplError::MissingFilePath.into())

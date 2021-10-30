@@ -1,12 +1,14 @@
 
+use internment::Intern;
+
 type Span = (usize, usize);
-type Symbol = u16;
+type Symbol = Intern<String>;
 
 #[derive(Debug, Hash, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Id {
     pub module: Symbol,
     pub namespace: Option<Symbol>,
-    pub decl: Symbol,
+    pub decl: Option<Symbol>,
     pub index: Option<Symbol>
 }
 

@@ -125,12 +125,15 @@ erased_param = { "{" ~ id ~ ":" ~ type_ ~ "}" }
 term_guide = { "<" ~ term ~ ">" }
 
 id = @{ alpha ~ (alpha | greek | numeral | punctuation)* | "_" }
-qual_id = @{ id ~ (("." | "/") ~ id)* }
+qual_id = ${ namespace? ~ qual_id_suffix }
 
 kind_id = @{ "𝒌" ~ (alpha | numeral | punctuation)* }
-qual_kind_id = @{ (id ~ ".")* ~ kind_id }
+qual_kind_id = ${ namespace? ~ kind_id }
 
-path = @{ 
+namespace = @{ id ~ "." ~ &id }
+qual_id_suffix = @{ id ~ ("/" ~ id)* }
+
+path = @{
     ("../")* ~ (alpha | numeral | punctuation | "/" )+
 }
 
