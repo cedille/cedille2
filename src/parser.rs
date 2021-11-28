@@ -1,5 +1,6 @@
 // TODO: Modify this file so that all of the rule productions use an Extract combinator
 // TODO: Centralize any of the possible panics in the Extract combinators
+// TODO: Switch to a two phased extraction so that we aren't cloning the pairs parse tree
 
 use pest::Parser;
 use pest::iterators::{Pair, Pairs};
@@ -7,6 +8,7 @@ use pest::error::Error;
 use internment::Intern;
 
 use crate::syntax::*;
+use crate::database::*;
 
 type Symbol = Intern<String>;
 type Span = (usize, usize);

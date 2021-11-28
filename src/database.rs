@@ -1,6 +1,3 @@
-// TODO: Switch to daggy crate (assuming iterator yields a topological order) so that adding a new module doesn't
-// require rebuilding and resorting the module graph every time
-
 
 use std::io::prelude::*;
 use std::fs::{self, File};
@@ -15,8 +12,18 @@ use thiserror::Error;
 
 use crate::parser;
 use crate::syntax;
+use crate::kernel;
+use crate::elaborator;
 
 type Symbol = Intern<String>;
+
+#[derive(Debug, Hash, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Id {
+    pub module: Symbol,
+    pub namespace: Option<Symbol>,
+    pub decl: Option<Symbol>,
+    pub index: Option<Symbol>
+}
 
 #[derive(Debug, Error)]
 pub enum DatabaseError {
@@ -27,9 +34,11 @@ pub enum DatabaseError {
 #[derive(Debug)]
 pub struct ModuleData {
     syntax: syntax::Module,
+    kernel: kernel::Module,
     text: String,
     imports: Vec<Symbol>,
-    exports: HashMap<syntax::Id, Symbol>,
+    exports: HashMap<Id, kernel::Type>,
+    normals: HashMap<Id, kernel::TermOrType>,
     last_modified: SystemTime,
 }
 
@@ -44,6 +53,41 @@ impl Database {
         Database { 
             modules: HashMap::new(),
         }
+    }
+
+    pub fn normal_from(&mut self, id: Id) -> kernel::TermOrType {
+        let (mut result, is_normal) = {
+            let module = self.modules.get_mut(id.module.as_ref())
+                .unwrap_or_else(|| panic!("Precondition failed: Module at path {} is missing", id.module));
+            if let Some(normal) = module.normals.get(&id) {
+                (normal.clone(), true)
+            } else {
+                let term = module.kernel.decls.iter()
+                    .find_map(|decl| match decl {
+                        kernel::Decl::Type(kernel::DefineType { id:id2, body, .. }) => {
+                            if id == *id2 { Some(kernel::TermOrType::Type(*body.clone())) }
+                            else { None }
+                        },
+                        kernel::Decl::Term(kernel::DefineTerm { id:id2, body, .. }) => {
+                            if id == *id2 { Some(kernel::TermOrType::Term(*body.clone())) }
+                            else { None }
+                        },
+                    })
+                    .unwrap_or_else(|| panic!("Precondition failed: Id {:?} is not defined", id));
+                (term, false)
+            }
+        };
+        if !is_normal {
+            use kernel::TermOrType::*;
+            result = match result {
+                Type(t) => Type(kernel::Type::normalize(self, t, None)),
+                Term(t) => Term(kernel::Term::normalize(self, t, None))
+            };
+            let module = self.modules.get_mut(id.module.as_ref())
+                .unwrap_or_else(|| panic!("Precondition failed: Module at path {} is missing", id.module));
+            module.normals.insert(id, result.clone());
+        }
+        result
     }
 
     fn loaded(&self, module: Symbol) -> bool {
@@ -112,21 +156,23 @@ impl Database {
             let ctx = parser::Context::new(sym);
             let tree = parser::module((&text, ctx), tree);
             /***
+             * Elaborate and type check the statically typed AST
+             ***/
+            let kernel = elaborator::elaborate(self, &tree);
+            /***
              * Extract the modules exports
              ***/
             let exports = HashMap::new();
-            /***
-             * Elaborate and type check the statically typed AST
-             ***/
-            // TODO
             /***
              * Finish loading the module
              ***/
             let data = ModuleData {
                 syntax: tree,
+                kernel,
                 text,
                 imports,
                 exports,
+                normals: HashMap::new(),
                 last_modified,
             };
             self.modules.insert(sym, data);
@@ -135,8 +181,7 @@ impl Database {
     }
 
     pub fn load_module<P: AsRef<Path>>(&mut self, path: P) -> Result<()> {
-        self.load_module_with_visited(path, HashSet::new())
-            .map(|_| ())
+        self.load_module_with_visited(path, HashSet::new()).map(|_| ())
     }
 
     pub fn load_dir(&mut self, path: &Path) -> Result<bool> {

@@ -1,61 +1,62 @@
 
+use crate::database::Id;
+
 type Span = (usize, usize);
-type Symbol = u16;
 
 #[derive(Debug, Hash, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Id {
-    pub module: Symbol,
-    pub namespace: Option<Symbol>,
-    pub decl: Symbol,
-    pub index: Option<Symbol>
-}
-
-#[derive(Debug)]
 pub enum Mode {
     Erased,
     Free
 }
 
-#[derive(Debug)]
+#[derive(Debug, Hash, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum TermOrType {
+    Term(Term),
+    Type(Type)
+}
+
+#[derive(Debug, Hash, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Module {
     pub imports: Vec<Import>,
     pub id: Id,
     pub decls: Vec<Decl>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Hash, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Decl {
     Type(DefineType),
     Term(DefineTerm),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Hash, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Import {
     pub public: bool,
     pub path: Span,
     pub namespace: Id,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Hash, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct DefineTerm {
-    pub annotation: Option<Box<Type>>,
+    pub id: Id,
+    pub annotation: Box<Type>,
     pub body: Box<Term>
 }
 
-#[derive(Debug)]
+#[derive(Debug, Hash, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct DefineType {
+    pub id: Id,
     pub annotation: Box<Kind>,
     pub body: Box<Type>
 }
 
-#[derive(Debug)]
+#[derive(Debug, Hash, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct RewriteGuide {
     pub id: Id,
     pub hint: Box<Term>,
     pub equation: Box<Type>
 }
 
-#[derive(Debug)]
+#[derive(Debug, Hash, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Term {
     Lambda {
         mode: Mode,
@@ -101,11 +102,12 @@ pub enum Term {
         fun: Box<Term>,
         arg: Box<Type>
     },
-    Var { index: Id },
+    Var { index: isize },
+    Ref { id: Id },
     Hole,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Hash, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Type {
     Fn {
         domain: Box<Kind>,
@@ -140,11 +142,12 @@ pub enum Type {
         fun: Box<Type>,
         arg: Box<Term>
     },
-    Var { index: Id },
+    Var { index: isize },
+    Ref { id: Id },
     Hole,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Hash, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Kind {
     Fn {
         domain: Box<Kind>,
@@ -155,4 +158,60 @@ pub enum Kind {
         body: Box<Kind>
     },
     Star
+}
+
+impl Term {
+    pub fn erase(&self) -> Term {
+        match self {
+            Term::Lambda { mode, body } => match mode {
+                Mode::Erased => body.erase(),
+                Mode::Free => {
+                    let body = Box::new(body.erase());
+                    Term::Lambda { mode: *mode, body }
+                }
+            }
+            Term::TypeLambda { body }
+            | Term::Rewrite { body, .. }
+            | Term::Annotate { body, .. }
+            | Term::Project { body, .. } => body.erase(),
+            Term::Intersect { first, .. } => first.erase(),
+            Term::Separate { .. } => Term::id(),
+            Term::Refl { erasure }
+            | Term::Cast { erasure, .. } => erasure.erase(),
+            Term::Apply { mode, fun, arg } => match mode {
+                Mode::Erased => fun.erase(),
+                Mode::Free => {
+                    let fun = Box::new(fun.erase());
+                    let arg = Box::new(arg.erase());
+                    Term::Apply { mode: *mode, fun, arg }
+                },
+            },
+            Term::TypeApply { fun, .. } => fun.erase(),
+            t @ Term::Var { .. } => t.clone(),
+            t @ Term::Ref { .. } => t.clone(),
+            t @ Term::Hole => t.clone(),
+        }
+    }
+
+    pub fn id() -> Term {
+        let mode = Mode::Free;
+        let body = Box::new(Term::Var { index:0 });
+        Term::Lambda { mode, body }
+    }
+}
+
+impl TermOrType {
+    pub fn unwrap_term(self) -> Term {
+        match self {
+            TermOrType::Term(t) => t,
+            _ => panic!()
+        }
+    }
+
+    pub fn unwrap_type(self) -> Type {
+        match self {
+            TermOrType::Type(t) => t,
+            _ => panic!()
+        }
+    }
 }

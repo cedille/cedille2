@@ -1,16 +1,7 @@
 
-use internment::Intern;
+use crate::database::Id;
 
 type Span = (usize, usize);
-type Symbol = Intern<String>;
-
-#[derive(Debug, Hash, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Id {
-    pub module: Symbol,
-    pub namespace: Option<Symbol>,
-    pub decl: Option<Symbol>,
-    pub index: Option<Symbol>
-}
 
 #[derive(Debug)]
 pub enum Mode {

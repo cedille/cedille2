@@ -6,6 +6,10 @@ mod repl;
 mod parser;
 mod syntax;
 mod database;
+mod kernel;
+mod elaborator;
+mod conversion;
+mod reduction;
 
 fn main() {
     repl::repl();
