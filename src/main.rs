@@ -3,13 +3,9 @@
 extern crate pest_derive;
 
 mod repl;
-mod parser;
-mod syntax;
 mod database;
 mod kernel;
-mod elaborator;
-mod conversion;
-mod reduction;
+mod lang;
 
 fn main() {
     repl::repl();

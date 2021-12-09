@@ -4,15 +4,16 @@ use crate::database::Id;
 type Span = (usize, usize);
 
 #[derive(Debug, Hash, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Sort {
+    Term,
+    Type,
+    Kind
+}
+
+#[derive(Debug, Hash, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Mode {
     Erased,
     Free
-}
-
-#[derive(Debug, Hash, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub enum TermOrType {
-    Term(Term),
-    Type(Type)
 }
 
 #[derive(Debug, Hash, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -24,7 +25,7 @@ pub struct Module {
 
 #[derive(Debug, Hash, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Decl {
-    Type(DefineType),
+    Type(DefineTerm),
     Term(DefineTerm),
 }
 
@@ -38,32 +39,44 @@ pub struct Import {
 #[derive(Debug, Hash, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct DefineTerm {
     pub id: Id,
-    pub annotation: Box<Type>,
+    pub annotation: Box<Term>,
     pub body: Box<Term>
 }
 
-#[derive(Debug, Hash, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct DefineType {
-    pub id: Id,
-    pub annotation: Box<Kind>,
-    pub body: Box<Type>
-}
 
 #[derive(Debug, Hash, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct RewriteGuide {
     pub id: Id,
     pub hint: Box<Term>,
-    pub equation: Box<Type>
+    pub equation: Box<Term>
 }
 
 #[derive(Debug, Hash, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Term {
     Lambda {
         mode: Mode,
+        sort: Sort,
         body: Box<Term>
     },
-    TypeLambda {
+    Let {
+        mode: Mode,
+        sort: Sort,
+        def: DefineTerm,
         body: Box<Term>
+    },
+    Fn {
+        mode: Mode,
+        sort: Sort,
+        domain: Box<Term>,
+        body: Box<Term>
+    },
+    IntersectType {
+        first: Box<Term>,
+        second: Box<Term>
+    },
+    Equality {
+        left: Box<Term>,
+        right: Box<Term>
     },
     Rewrite {
         equation: Box<Term>,
@@ -71,7 +84,7 @@ pub enum Term {
         body: Box<Term>
     },
     Annotate {
-        annotation: Box<Type>,
+        annotation: Box<Term>,
         body: Box<Term>
     },
     Project {
@@ -95,123 +108,67 @@ pub enum Term {
     },
     Apply {
         mode: Mode,
+        sort: Sort,
         fun: Box<Term>,
         arg: Box<Term>
     },
-    TypeApply {
-        fun: Box<Term>,
-        arg: Box<Type>
+    Bound {
+        sort: Sort,
+        index: isize
     },
-    Var { index: isize },
-    Ref { id: Id },
-    Hole,
-}
-
-#[derive(Debug, Hash, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Type {
-    Fn {
-        domain: Box<Kind>,
-        body: Box<Type>
+    Free {
+        sort: Sort,
+        id: Id
     },
-    TermFn {
-        mode: Mode,
-        domain: Box<Type>,
-        body: Box<Type>
-    },
-    Lambda {
-        domain: Box<Kind>,
-        body: Box<Type>
-    },
-    TermLambda {
-        domain: Box<Type>,
-        body: Box<Type>
-    },
-    Intersection {
-        first: Box<Type>,
-        second: Box<Type>
-    },
-    Equality {
-        left: Box<Term>,
-        right: Box<Term>
-    },
-    Apply {
-        fun: Box<Type>,
-        arg: Box<Type>
-    },
-    TermApply {
-        fun: Box<Type>,
-        arg: Box<Term>
-    },
-    Var { index: isize },
-    Ref { id: Id },
-    Hole,
-}
-
-#[derive(Debug, Hash, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Kind {
-    Fn {
-        domain: Box<Kind>,
-        body: Box<Kind>
-    },
-    TypeFn {
-        domain: Box<Type>,
-        body: Box<Kind>
-    },
-    Star
+    Star,
+    Hole { sort: Sort },
 }
 
 impl Term {
     pub fn erase(&self) -> Term {
         match self {
-            Term::Lambda { mode, body } => match mode {
+            Term::Lambda { mode, sort, body } => match mode {
                 Mode::Erased => body.erase(),
                 Mode::Free => {
                     let body = Box::new(body.erase());
-                    Term::Lambda { mode: *mode, body }
+                    Term::Lambda { mode: *mode, sort: *sort, body }
                 }
             }
-            Term::TypeLambda { body }
-            | Term::Rewrite { body, .. }
+            Term::Let { mode, sort, def, body } => match mode {
+                Mode::Erased => body.erase(),
+                Mode::Free => {
+                    let body = Box::new(body.erase());
+                    Term::Let { mode: *mode, sort: *sort, def: def.clone(), body }
+                }
+            }
+            Term::Fn { .. }
+            | Term::IntersectType { .. }
+            | Term::Equality { .. } => unreachable!(),
+            Term::Rewrite { body, .. }
             | Term::Annotate { body, .. }
             | Term::Project { body, .. } => body.erase(),
             Term::Intersect { first, .. } => first.erase(),
             Term::Separate { .. } => Term::id(),
             Term::Refl { erasure }
             | Term::Cast { erasure, .. } => erasure.erase(),
-            Term::Apply { mode, fun, arg } => match mode {
+            Term::Apply { mode, sort, fun, arg } => match mode {
                 Mode::Erased => fun.erase(),
                 Mode::Free => {
                     let fun = Box::new(fun.erase());
                     let arg = Box::new(arg.erase());
-                    Term::Apply { mode: *mode, fun, arg }
+                    Term::Apply { mode: *mode, sort: *sort, fun, arg }
                 },
             },
-            Term::TypeApply { fun, .. } => fun.erase(),
-            t @ Term::Var { .. } => t.clone(),
-            t @ Term::Ref { .. } => t.clone(),
-            t @ Term::Hole => t.clone(),
+            t @ Term::Bound { .. } => t.clone(),
+            t @ Term::Free { .. } => t.clone(),
+            t @ Term::Star => t.clone(),
+            t @ Term::Hole { .. } => t.clone(),
         }
     }
 
     pub fn id() -> Term {
-        let mode = Mode::Free;
-        let body = Box::new(Term::Var { index:0 });
-        Term::Lambda { mode, body }
-    }
-}
-
-impl TermOrType {
-    pub fn unwrap_term(self) -> Term {
-        match self {
-            TermOrType::Term(t) => t,
-            _ => panic!()
-        }
-    }
-
-    pub fn unwrap_type(self) -> Type {
-        match self {
-            TermOrType::Type(t) => t,
-            _ => panic!()
-        }
+        let (mode, sort) = (Mode::Free, Sort::Term);
+        let body = Box::new(Term::Bound { sort, index:0 });
+        Term::Lambda { mode, sort, body }
     }
 }

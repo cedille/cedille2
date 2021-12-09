@@ -1,7 +1,7 @@
 
 use crate::database::Database;
 use crate::kernel::*;
-
+/* 
 impl Term {
     pub fn convertible(db: &mut Database, a: Term, b: Term) -> bool {
         let a = Term::normalize(db, a.erase(), None);
@@ -65,3 +65,4 @@ impl Kind {
         }
     }
 }
+ */

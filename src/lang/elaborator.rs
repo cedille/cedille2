@@ -2,17 +2,18 @@
 use internment::Intern;
 
 use crate::database::{Id, Database};
-use crate::syntax;
-use crate::kernel;
+use crate::lang::syntax;
+use crate::kernel::term;
 
-pub fn elaborate(db: &Database, module: &syntax::Module) -> kernel::Module {
-    kernel::Module {
+pub fn elaborate(db: &Database, module: &syntax::Module) -> term::Module {
+    todo!()
+/*     kernel::Module {
         imports: vec![],
         id: Id { module:Intern::from(""), namespace:None, decl:None, index:None },
         decls: module.decls.iter().map(|d| elaborate_decl(db, &module.params, d)).collect()
-    }
+    } */
 }
-
+/* 
 fn elaborate_decl(db: &Database, params: &[syntax::Parameter], decl: &syntax::Decl) -> kernel::Decl {
     match decl {
         syntax::Decl::Type(ty) => kernel::Decl::Type(elaborate_define_type(db, params, ty)),
@@ -155,3 +156,4 @@ fn elaborate_mode(mode: &syntax::Mode) -> kernel::Mode {
         syntax::Mode::Free => kernel::Mode::Free,
     }
 }
+ */

@@ -10,19 +10,17 @@ use anyhow::{Context, Result, anyhow};
 use colored::*;
 use thiserror::Error;
 
-use crate::parser;
-use crate::syntax;
+use crate::lang::parser;
+use crate::lang::syntax;
 use crate::kernel;
-use crate::elaborator;
+use crate::lang::elaborator;
 
 type Symbol = Intern<String>;
 
-#[derive(Debug, Hash, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Hash, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Id {
-    pub module: Symbol,
-    pub namespace: Option<Symbol>,
-    pub decl: Option<Symbol>,
-    pub index: Option<Symbol>
+    pub namespace: Vec<Intern<String>>,
+    pub name: Intern<String>,
 }
 
 #[derive(Debug, Error)]
@@ -34,11 +32,11 @@ pub enum DatabaseError {
 #[derive(Debug)]
 pub struct ModuleData {
     syntax: syntax::Module,
-    kernel: kernel::Module,
+    kernel: kernel::term::Module,
     text: String,
     imports: Vec<Symbol>,
-    exports: HashMap<Id, kernel::Type>,
-    normals: HashMap<Id, kernel::TermOrType>,
+    exports: HashMap<Id, syntax::Term>,
+    normals: HashMap<Id, syntax::Term>,
     last_modified: SystemTime,
 }
 
@@ -55,8 +53,9 @@ impl Database {
         }
     }
 
-    pub fn normal_from(&mut self, id: Id) -> kernel::TermOrType {
-        let (mut result, is_normal) = {
+    pub fn normal_from(&mut self, id: Id) -> syntax::Term {
+        todo!()
+/*         let (mut result, is_normal) = {
             let module = self.modules.get_mut(id.module.as_ref())
                 .unwrap_or_else(|| panic!("Precondition failed: Module at path {} is missing", id.module));
             if let Some(normal) = module.normals.get(&id) {
@@ -87,7 +86,7 @@ impl Database {
                 .unwrap_or_else(|| panic!("Precondition failed: Module at path {} is missing", id.module));
             module.normals.insert(id, result.clone());
         }
-        result
+        result */
     }
 
     fn loaded(&self, module: Symbol) -> bool {
@@ -153,8 +152,7 @@ impl Database {
             /***
              * Construct the statically typed AST
              ***/
-            let ctx = parser::Context::new(sym);
-            let tree = parser::module((&text, ctx), tree);
+            let tree = parser::module(tree);
             /***
              * Elaborate and type check the statically typed AST
              ***/

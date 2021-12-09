@@ -14,7 +14,7 @@ decl = _{
 
 import = { "import" ~ public? ~ path ~ ("as" ~ id)? ~ import_argument* }
 define_term = { id ~ ((":" | "◂") ~ type_)? ~ "=" ~ term }
-define_type = { id ~ (":" | "◂") ~ kind ~ "=" ~ type_ }
+define_type = { id ~ ((":" | "◂") ~ kind)? ~ "=" ~ type_ }
 define_kind = { kind_id ~ kind_arg* ~ "=" ~ kind }
 define_datatype = { "data" ~ id ~ param* ~ ":" ~ kind ~ "=" ~ ctors }
 
