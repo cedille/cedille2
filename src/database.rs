@@ -12,8 +12,9 @@ use thiserror::Error;
 
 use crate::lang::parser;
 use crate::lang::syntax;
-use crate::kernel;
+use crate::kernel::term;
 use crate::lang::elaborator;
+use crate::lang::resolver;
 
 type Symbol = Intern<String>;
 
@@ -30,19 +31,24 @@ pub enum DatabaseError {
 }
 
 #[derive(Debug)]
+pub struct ImmediateExports {
+    namespace_args: Vec<(syntax::Mode, syntax::Term)>,
+    def: HashSet<syntax::Term>
+}
+
+#[derive(Debug)]
 pub struct ModuleData {
-    syntax: syntax::Module,
-    kernel: kernel::term::Module,
     text: String,
     imports: Vec<Symbol>,
-    exports: HashMap<Id, syntax::Term>,
-    normals: HashMap<Id, syntax::Term>,
+    exports: HashMap<Option<Symbol>, ImmediateExports>,
+    params: Vec<syntax::Parameter>,
     last_modified: SystemTime,
 }
 
 #[derive(Debug)]
 pub struct Database {
-    pub modules: HashMap<Symbol, ModuleData>
+    pub modules: HashMap<Symbol, ModuleData>,
+    pub defs: HashSet<Id>,
 }
 
 impl Database {
@@ -50,7 +56,12 @@ impl Database {
     pub fn new() -> Database {
         Database { 
             modules: HashMap::new(),
+            defs: HashSet::new(),
         }
+    }
+
+    pub fn lookup(&self, id: &Id) -> Option<&syntax::Term> {
+        todo!()
     }
 
     pub fn normal_from(&mut self, id: Id) -> syntax::Term {
@@ -152,7 +163,8 @@ impl Database {
             /***
              * Construct the statically typed AST
              ***/
-            let tree = parser::module(tree);
+            let mut tree = parser::module(tree);
+            resolver::resolve(&mut tree, self);
             /***
              * Elaborate and type check the statically typed AST
              ***/
@@ -160,11 +172,11 @@ impl Database {
             /***
              * Extract the modules exports
              ***/
-            let exports = HashMap::new();
+            /* let exports = HashMap::new(); */
             /***
              * Finish loading the module
              ***/
-            let data = ModuleData {
+/*             let data = ModuleData {
                 syntax: tree,
                 kernel,
                 text,
@@ -173,7 +185,7 @@ impl Database {
                 normals: HashMap::new(),
                 last_modified,
             };
-            self.modules.insert(sym, data);
+            self.modules.insert(sym, data); */
         }
         Ok(sym)
     }
