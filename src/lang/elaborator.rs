@@ -1,11 +1,12 @@
 
 use internment::Intern;
 
-use crate::database::{Id, Database};
+use crate::common::Id;
+use crate::database::Database;
 use crate::lang::syntax;
 use crate::kernel::term;
 
-pub fn elaborate(db: &Database, module: &syntax::Module) -> term::Module {
+pub fn elaborate(module: &syntax::Module) -> term::Module {
     todo!()
 /*     kernel::Module {
         imports: vec![],

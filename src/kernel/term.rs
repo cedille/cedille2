@@ -1,5 +1,6 @@
 
-use crate::database::Id;
+use crate::common::debruijn::Index;
+use crate::common::Id;
 
 type Span = (usize, usize);
 
@@ -64,7 +65,7 @@ pub enum Term {
         def: DefineTerm,
         body: Box<Term>
     },
-    Fn {
+    Pi {
         mode: Mode,
         sort: Sort,
         domain: Box<Term>,
@@ -114,7 +115,7 @@ pub enum Term {
     },
     Bound {
         sort: Sort,
-        index: isize
+        index: Index
     },
     Free {
         sort: Sort,
@@ -124,7 +125,7 @@ pub enum Term {
     Hole { sort: Sort },
 }
 
-impl Term {
+/* impl Term {
     pub fn erase(&self) -> Term {
         match self {
             Term::Lambda { mode, sort, body } => match mode {
@@ -172,3 +173,4 @@ impl Term {
         Term::Lambda { mode, sort, body }
     }
 }
+ */

@@ -17,7 +17,7 @@ use rustyline::hint::{Hinter, HistoryHinter};
 use rustyline::validate::{self, MatchingBracketValidator, Validator};
 use rustyline::{Cmd, CompletionType, Config, Context, Editor, Helper, KeyEvent, Modifiers};
 
-use crate::database::Database;
+use crate::database;
 
 const REPL_HISTORY_LIMIT : usize = 1000;
 
@@ -103,7 +103,8 @@ fn print_help_text() {
     // TODO: Add help text for the available REPL commands
 }
 
-fn repl_inner<H:Helper>(db: &mut Database, rl : &mut Editor<H>) -> Result<bool> {
+fn repl_inner<H:Helper>(rl : &mut Editor<H>) -> Result<bool> {
+    database::get_ref_mut!(db);
     let line = rl.readline("> ")?;
     rl.add_history_entry(line.as_str());
     let mut words = line.split_ascii_whitespace();
@@ -138,7 +139,6 @@ fn repl_inner<H:Helper>(db: &mut Database, rl : &mut Editor<H>) -> Result<bool> 
 
 pub fn repl() {
     print_preamble_text();
-    let mut db = Database::new();
 
     let config = Config::builder()
         .history_ignore_space(true)
@@ -170,7 +170,7 @@ pub fn repl() {
     }
 
     loop {
-        match repl_inner(&mut db, &mut rl) {
+        match repl_inner(&mut rl) {
             Ok(r#continue) => if !r#continue { break; }
             Err(error) => {
                 for (count, cause) in error.chain().enumerate() {

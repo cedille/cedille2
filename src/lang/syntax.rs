@@ -1,31 +1,31 @@
 
-use internment::Intern;
-use crate::database::Id;
+use crate::common::symbol::Symbol;
+use crate::common::Id;
 
 type Span = (usize, usize);
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
     Erased,
     Free
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Sort {
     Term,
     Type,
     Kind
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Parameter {
     pub span: Span,
     pub mode: Mode,
-    pub name: Intern<String>,
+    pub name: Symbol,
     pub body: Term
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Module {
     pub imports: Vec<Import>,
     pub id: Id,
@@ -33,7 +33,7 @@ pub struct Module {
     pub params: Vec<Parameter>
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Decl {
     Type(DefineTerm),
     Term(DefineTerm),
@@ -41,61 +41,61 @@ pub enum Decl {
     Datatype(DefineDatatype)
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Import {
     pub span: Span,
     pub public: bool,
     pub path: Span,
-    pub namespace: Option<Intern<String>>,
+    pub namespace: Option<Symbol>,
     pub args : Vec<(Mode, Term)>
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct DefineTerm {
     pub span: Span,
-    pub name: Intern<String>,
+    pub name: Symbol,
     pub anno: Option<Box<Term>>,
     pub body: Box<Term>
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct DefineKind {
     pub span: Span,
-    pub name: Intern<String>,
+    pub name: Symbol,
     pub args: Vec<KindArg>,
     pub body: Box<Term>
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct DefineDatatype {
     pub span: Span,
-    pub name: Intern<String>,
+    pub name: Symbol,
     pub params: Vec<Parameter>,
     pub kind: Box<Term>,
     pub ctors: Vec<Constructor>
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RewriteGuide {
-    pub name: Intern<String>,
+    pub name: Symbol,
     pub hint: Option<Box<Term>>,
     pub equation: Box<Term>
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct KindArg {
-    pub name: Intern<String>,
+    pub name: Symbol,
     pub body: Term
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum CaseArg {
-    Erased(Intern<String>),
-    Free(Intern<String>),
-    Type(Intern<String>)
+    Erased(Symbol),
+    Free(Symbol),
+    Type(Symbol)
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Case {
     pub span: Span,
     pub id: Id,
@@ -103,19 +103,19 @@ pub struct Case {
     pub body: Term
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Constructor {
-    pub name: Intern<String>,
+    pub name: Symbol,
     pub anno: Term
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Term {
     Lambda {
         span: Span,
         mode: Mode,
         sort: Sort,
-        var: Intern<String>,
+        var: Option<Symbol>,
         anno: Option<Box<Term>>,
         body: Box<Term>
     },
@@ -126,17 +126,17 @@ pub enum Term {
         def: DefineTerm,
         body: Box<Term>
     },
-    Fn {
+    Pi {
         span: Span,
         mode: Mode,
         sort: Sort,
-        var: Option<Intern<String>>,
+        var: Option<Symbol>,
         domain: Box<Term>,
         body: Box<Term>
     },
     IntersectType {
         span: Span,
-        var: Intern<String>,
+        var: Option<Symbol>,
         first: Box<Term>,
         second: Box<Term>
     },
@@ -177,7 +177,7 @@ pub enum Term {
         anno: Option<Box<Term>>,
         equation: Box<Term>
     },
-    Refl {
+    Reflexivity {
         span: Span,
         guide: Option<Box<Term>>,
         erasure: Option<Box<Term>>
@@ -190,7 +190,7 @@ pub enum Term {
     },
     Induct {
         span: Span,
-        var: Intern<String>,
+        var: Symbol,
         inductee: Box<Term>,
         motive: Option<Box<Term>>,
         cases: Vec<Case>
@@ -209,13 +209,7 @@ pub enum Term {
         fun: Box<Term>,
         arg: Box<Term>
     },
-    Bound {
-        span: Span,
-        sort: Sort,
-        var: Intern<String>,
-        index: usize
-    },
-    Free {
+    Variable {
         span: Span,
         sort: Sort,
         id: Id
@@ -227,4 +221,65 @@ pub enum Term {
         span: Span,
         sort: Sort
     },
+}
+
+impl Term {
+    pub fn span(&self) -> Span {
+        match self {
+            Term::Lambda { span, .. }
+            | Term::Let { span, .. }
+            | Term::Pi { span, .. }
+            | Term::IntersectType { span, .. }
+            | Term::Equality { span, .. }
+            | Term::Rewrite { span, .. }
+            | Term::Annotate { span, .. }
+            | Term::Project { span, .. }
+            | Term::Symmetry { span, .. }
+            | Term::Intersect { span, .. }
+            | Term::Separate { span, .. }
+            | Term::Reflexivity { span, .. }
+            | Term::Cast { span, .. }
+            | Term::Induct { span, .. }
+            | Term::Match { span, .. }
+            | Term::Apply { span, .. }
+            | Term::Variable { span, .. }
+            | Term::Star { span }
+            | Term::Hole { span, .. }
+            => *span,
+        }
+    }
+
+    /// Returns the syntactic sort of a term.
+    /// The syntactic sort does not need to match the actual sort.
+    /// 
+    /// For example:
+    /// ```no_run
+    ///     f : Nat → Nat = ...
+    ///     Λ X. f Nat 
+    /// ```
+    /// The sort of `Nat` in the above would be `Sort::Term` but it is obviously a type.
+    /// Thus, the sort returned is the _intended_ sort of the syntax.
+    pub fn sort(&self) -> Sort {
+        match self {
+            Term::Lambda { sort, .. }
+            | Term::Let { sort, .. }
+            | Term::Pi { sort, .. } => *sort,
+            Term::IntersectType { .. }
+            | Term::Equality { .. } => Sort::Type,
+            Term::Rewrite { .. }
+            | Term::Annotate { .. }
+            | Term::Project { .. }
+            | Term::Symmetry { .. }
+            | Term::Intersect { .. }
+            | Term::Separate { .. }
+            | Term::Reflexivity { .. }
+            | Term::Cast { .. }
+            | Term::Induct { .. }
+            | Term::Match { .. } => Sort::Term,
+            Term::Apply { sort, .. }
+            | Term::Variable { sort, .. } => *sort,
+            Term::Star { .. } => Sort::Kind,
+            Term::Hole { sort, .. } => *sort,
+        }
+    }
 }

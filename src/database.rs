@@ -4,25 +4,19 @@ use std::fs::{self, File};
 use std::time::SystemTime;
 use std::path::{Path, PathBuf};
 use std::collections::{HashSet, HashMap};
+use std::cell::RefCell;
 
-use internment::Intern;
 use anyhow::{Context, Result, anyhow};
 use colored::*;
 use thiserror::Error;
+use threadstack::*;
 
+use crate::common::Id;
+use crate::common::symbol::Symbol;
 use crate::lang::parser;
 use crate::lang::syntax;
-use crate::kernel::term;
+use crate::kernel::value::Value;
 use crate::lang::elaborator;
-use crate::lang::resolver;
-
-type Symbol = Intern<String>;
-
-#[derive(Debug, Hash, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Id {
-    pub namespace: Vec<Intern<String>>,
-    pub name: Intern<String>,
-}
 
 #[derive(Debug, Error)]
 pub enum DatabaseError {
@@ -37,10 +31,17 @@ pub struct ImmediateExports {
 }
 
 #[derive(Debug)]
+pub struct ImportData {
+    name: Option<Symbol>,
+    args: Vec<(syntax::Mode, syntax::Term)>,
+}
+
+#[derive(Debug)]
 pub struct ModuleData {
     text: String,
-    imports: Vec<Symbol>,
+    imports: HashMap<Symbol, ImportData>,
     exports: HashMap<Option<Symbol>, ImmediateExports>,
+    values: HashMap<Symbol, Value<'static>>,
     params: Vec<syntax::Parameter>,
     last_modified: SystemTime,
 }
@@ -49,61 +50,41 @@ pub struct ModuleData {
 pub struct Database {
     pub modules: HashMap<Symbol, ModuleData>,
     pub defs: HashSet<Id>,
+    active_module: Symbol,
 }
 
-impl Database {
+declare_thread_stacks!(pub DATABASE: RefCell<Database> = RefCell::new(Database::new()); );
 
-    pub fn new() -> Database {
+macro_rules! get_ref {
+    ($db:ident) => { 
+        threadstack::let_ref_thread_stack_value!($db, crate::database::DATABASE);
+        let $db = $db.borrow();
+    };
+}
+pub(crate) use get_ref;
+
+macro_rules! get_ref_mut {
+    ($db:ident) => { 
+        threadstack::let_ref_thread_stack_value!($db, crate::database::DATABASE);
+        let mut $db = $db.borrow_mut();
+    };
+}
+pub(crate) use get_ref_mut;
+
+
+impl Database {
+    fn new() -> Database {
         Database { 
             modules: HashMap::new(),
             defs: HashSet::new(),
+            active_module: Symbol::default()
         }
-    }
-
-    pub fn lookup(&self, id: &Id) -> Option<&syntax::Term> {
-        todo!()
-    }
-
-    pub fn normal_from(&mut self, id: Id) -> syntax::Term {
-        todo!()
-/*         let (mut result, is_normal) = {
-            let module = self.modules.get_mut(id.module.as_ref())
-                .unwrap_or_else(|| panic!("Precondition failed: Module at path {} is missing", id.module));
-            if let Some(normal) = module.normals.get(&id) {
-                (normal.clone(), true)
-            } else {
-                let term = module.kernel.decls.iter()
-                    .find_map(|decl| match decl {
-                        kernel::Decl::Type(kernel::DefineType { id:id2, body, .. }) => {
-                            if id == *id2 { Some(kernel::TermOrType::Type(*body.clone())) }
-                            else { None }
-                        },
-                        kernel::Decl::Term(kernel::DefineTerm { id:id2, body, .. }) => {
-                            if id == *id2 { Some(kernel::TermOrType::Term(*body.clone())) }
-                            else { None }
-                        },
-                    })
-                    .unwrap_or_else(|| panic!("Precondition failed: Id {:?} is not defined", id));
-                (term, false)
-            }
-        };
-        if !is_normal {
-            use kernel::TermOrType::*;
-            result = match result {
-                Type(t) => Type(kernel::Type::normalize(self, t, None)),
-                Term(t) => Term(kernel::Term::normalize(self, t, None))
-            };
-            let module = self.modules.get_mut(id.module.as_ref())
-                .unwrap_or_else(|| panic!("Precondition failed: Module at path {} is missing", id.module));
-            module.normals.insert(id, result.clone());
-        }
-        result */
     }
 
     fn loaded(&self, module: Symbol) -> bool {
         if let Some(data) = self.modules.get(&module) {
             let imports_loaded = data.imports.iter()
-                .all(|i| self.loaded(*i));
+                .all(|(i, _)| self.loaded( *i));
             let current_modified = Path::new(module.as_ref())
                 .metadata()
                 .and_then(|m| m.modified())
@@ -112,7 +93,12 @@ impl Database {
         } else { false }
     }
 
-    fn load_imports<P: AsRef<Path>>(&mut self, prefix: P, imports: impl Iterator<Item=P>, visited: HashSet<Symbol>) -> Result<Vec<Symbol>> {
+    fn load_imports<P: AsRef<Path>>(&mut self
+        , prefix: P
+        , imports: impl Iterator<Item=P>
+        , visited: HashSet<Symbol>)
+        -> Result<Vec<Symbol>>
+    {
         let mut result = vec![];
         for path in imports {
             let path = prefix.as_ref().join(path).with_extension("ced");
@@ -122,16 +108,20 @@ impl Database {
         Ok(result)
     }
 
-    fn load_module_with_visited<P: AsRef<Path>>(&mut self, path: P, mut visited: HashSet<Symbol>) -> Result<Symbol> {
+    fn load_module_with_visited<P: AsRef<Path>>(&mut self
+        , path: P
+        , mut visited: HashSet<Symbol>)
+        -> Result<Symbol>
+    {
         let path = path.as_ref();
         let ext = path.extension().unwrap_or_default();
-        if ext.to_string_lossy() != "ced" { return Ok(Intern::from("")); }
+        if ext.to_string_lossy() != "ced" { return Ok(Symbol::from("")); }
 
         let canonical_path = path.canonicalize()
             .with_context(|| format!("Failed to canonicalize path {}", path.display()))?;
         let key = canonical_path.to_str()
             .ok_or(DatabaseError::NonUnicodePath { path:path.to_path_buf() })?;
-        let sym = Intern::from(key);
+        let sym = Symbol::from(key);
 
         if visited.contains(&sym) {
             return Err(anyhow!(format!("Cycle in dependencies of module {}", key)));
@@ -142,6 +132,7 @@ impl Database {
             println!("{} {}{}", "skipping file".dimmed(), key, "...".dimmed());
         } else {
             println!("{} {}{}", "loading file".dimmed(), key, "...".dimmed());
+            self.active_module = sym;
             /***
              * Parse the file to the dynamically typed AST
              ***/
@@ -164,11 +155,10 @@ impl Database {
              * Construct the statically typed AST
              ***/
             let mut tree = parser::module(tree);
-            resolver::resolve(&mut tree, self);
             /***
              * Elaborate and type check the statically typed AST
              ***/
-            let kernel = elaborator::elaborate(self, &tree);
+            let kernel = elaborator::elaborate(&tree);
             /***
              * Extract the modules exports
              ***/
@@ -176,7 +166,7 @@ impl Database {
             /***
              * Finish loading the module
              ***/
-/*             let data = ModuleData {
+    /*             let data = ModuleData {
                 syntax: tree,
                 kernel,
                 text,
@@ -207,5 +197,34 @@ impl Database {
             }
         }
         Ok(true)
+    }
+
+    fn trace_qualified_id(&self, id: &Id) -> Symbol {
+        let mut module = self.active_module;
+        let get_next_module = |module, namespace_component| {
+            let pairs = self.modules.get(&module).unwrap()
+                .imports.iter()
+                .map(|(key, data)| (key, data.name))
+                .collect::<Vec<_>>();
+            let next_module = pairs.iter().find_map(|(_, name)| match name {
+                | Some(n) => if *n == namespace_component { Some(n) } else { None },
+                | None => None
+            }).unwrap();
+            *next_module
+        };
+        for component in id.namespace.iter() {
+            module = get_next_module(module, *component);
+        }
+        module
+    }
+
+    fn lookup_module_data(&self, id: &Id) -> &ModuleData {
+        let module = self.trace_qualified_id(id);
+        self.modules.get(&module).unwrap()
+    }
+
+    pub fn lookup(&self, id: &Id) -> &Value<'static> {
+        let module_data = self.lookup_module_data(id);
+        module_data.values.get(&id.name).unwrap()
     }
 }

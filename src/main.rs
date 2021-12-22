@@ -4,6 +4,7 @@ extern crate pest_derive;
 
 mod repl;
 mod database;
+mod common;
 mod kernel;
 mod lang;
 
