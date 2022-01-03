@@ -1,21 +1,19 @@
 
+use std::rc::Rc;
 use std::io::prelude::*;
 use std::fs::{self, File};
 use std::time::SystemTime;
 use std::path::{Path, PathBuf};
 use std::collections::{HashSet, HashMap};
-use std::cell::RefCell;
 
 use anyhow::{Context, Result, anyhow};
 use colored::*;
 use thiserror::Error;
-use threadstack::*;
 
-use crate::common::Id;
-use crate::common::symbol::Symbol;
+use crate::common::{Id, Mode, Symbol};
+use crate::kernel::core;
 use crate::lang::parser;
 use crate::lang::syntax;
-use crate::kernel::value::Value;
 use crate::lang::elaborator;
 
 #[derive(Debug, Error)]
@@ -25,60 +23,50 @@ pub enum DatabaseError {
 }
 
 #[derive(Debug)]
-pub struct ImmediateExports {
-    namespace_args: Vec<(syntax::Mode, syntax::Term)>,
+struct ImmediateExports {
+    namespace_args: Vec<(Mode, syntax::Term)>,
     def: HashSet<syntax::Term>
 }
 
 #[derive(Debug)]
-pub struct ImportData {
+struct ImportData {
     name: Option<Symbol>,
-    args: Vec<(syntax::Mode, syntax::Term)>,
+    args: Vec<(Mode, syntax::Term)>,
 }
 
 #[derive(Debug)]
-pub struct ModuleData {
+struct DeclValues {
+    type_value: Rc<core::Term>,
+    definition_value: Rc<core::Term>
+}
+
+#[derive(Debug)]
+struct ModuleData {
     text: String,
     imports: HashMap<Symbol, ImportData>,
     exports: HashMap<Option<Symbol>, ImmediateExports>,
-    values: HashMap<Symbol, Value<'static>>,
+    values: HashMap<Symbol, DeclValues>,
     params: Vec<syntax::Parameter>,
     last_modified: SystemTime,
 }
 
 #[derive(Debug)]
 pub struct Database {
-    pub modules: HashMap<Symbol, ModuleData>,
-    pub defs: HashSet<Id>,
-    active_module: Symbol,
+    modules: HashMap<Symbol, ModuleData>,
+    defs: HashSet<Id>,
 }
-
-declare_thread_stacks!(pub DATABASE: RefCell<Database> = RefCell::new(Database::new()); );
-
-macro_rules! get_ref {
-    ($db:ident) => { 
-        threadstack::let_ref_thread_stack_value!($db, crate::database::DATABASE);
-        let $db = $db.borrow();
-    };
-}
-pub(crate) use get_ref;
-
-macro_rules! get_ref_mut {
-    ($db:ident) => { 
-        threadstack::let_ref_thread_stack_value!($db, crate::database::DATABASE);
-        let mut $db = $db.borrow_mut();
-    };
-}
-pub(crate) use get_ref_mut;
-
 
 impl Database {
-    fn new() -> Database {
+    pub fn new() -> Database {
         Database { 
             modules: HashMap::new(),
             defs: HashSet::new(),
-            active_module: Symbol::default()
         }
+    }
+
+    pub fn clear(&mut self) {
+        self.modules.clear();
+        self.defs.clear();
     }
 
     fn loaded(&self, module: Symbol) -> bool {
@@ -132,7 +120,6 @@ impl Database {
             println!("{} {}{}", "skipping file".dimmed(), key, "...".dimmed());
         } else {
             println!("{} {}{}", "loading file".dimmed(), key, "...".dimmed());
-            self.active_module = sym;
             /***
              * Parse the file to the dynamically typed AST
              ***/
@@ -158,7 +145,7 @@ impl Database {
             /***
              * Elaborate and type check the statically typed AST
              ***/
-            let kernel = elaborator::elaborate(&tree);
+            let kernel = elaborator::elaborate(self, &tree, sym)?;
             /***
              * Extract the modules exports
              ***/
@@ -184,33 +171,39 @@ impl Database {
         self.load_module_with_visited(path, HashSet::new()).map(|_| ())
     }
 
-    pub fn load_dir(&mut self, path: &Path) -> Result<bool> {
+    pub fn load_dir(&mut self, path: &Path) -> Result<()> {
+        let mut found_error = false;
         for entry in fs::read_dir(path)? {
             let entry = entry?;
             let path = entry.path();
             if path.is_file() {
                 if let Err(error) = self.load_module(path) {
+                    found_error = true;
                     println!("{}", error);
                 }
             } else {
                 self.load_dir(&path)?;
             }
         }
-        Ok(true)
+        if !found_error { Ok(()) }
+        else { Err(anyhow!("Error loading directory.")) }
     }
 
-    fn trace_qualified_id(&self, id: &Id) -> Symbol {
-        let mut module = self.active_module;
+    fn trace_qualified_id(&self, module: Symbol, id: &Id) -> Option<Symbol> {
+        let mut module = Some(module);
         let get_next_module = |module, namespace_component| {
-            let pairs = self.modules.get(&module).unwrap()
-                .imports.iter()
-                .map(|(key, data)| (key, data.name))
-                .collect::<Vec<_>>();
-            let next_module = pairs.iter().find_map(|(_, name)| match name {
-                | Some(n) => if *n == namespace_component { Some(n) } else { None },
-                | None => None
-            }).unwrap();
-            *next_module
+            if let Some(module) = module {
+                if let Some(pairs) = self.modules.get(&module) {
+                    let pairs = pairs.imports.iter()
+                    .map(|(key, data)| (key, data.name))
+                    .collect::<Vec<_>>();
+                    let next_module = pairs.iter().find_map(|(_, name)| match name {
+                        | Some(n) => if *n == namespace_component { Some(n) } else { None },
+                        | None => None
+                    });
+                    next_module.copied()
+                } else { None }
+            } else { None }
         };
         for component in id.namespace.iter() {
             module = get_next_module(module, *component);
@@ -218,13 +211,26 @@ impl Database {
         module
     }
 
-    fn lookup_module_data(&self, id: &Id) -> &ModuleData {
-        let module = self.trace_qualified_id(id);
-        self.modules.get(&module).unwrap()
+    fn lookup_module_data(&self, module: Symbol, id: &Id) -> Option<&ModuleData> {
+        let module = self.trace_qualified_id(module, id);
+        module.map(|s| self.modules.get(&s)).flatten()
     }
 
-    pub fn lookup(&self, id: &Id) -> &Value<'static> {
-        let module_data = self.lookup_module_data(id);
-        module_data.values.get(&id.name).unwrap()
+    pub fn lookup_def(&self, module: Symbol, id: &Id) -> Option<Rc<core::Term>> {
+        let module_data = self.lookup_module_data(module, id);
+        module_data.map(|data| data.values.get(&id.name))
+            .flatten()
+            .map(|values| values.definition_value.clone())
+    }
+
+    pub fn lookup_type(&self, module: Symbol, id: &Id) -> Option<Rc<core::Term>> {
+        let module_data = self.lookup_module_data(module, id);
+        module_data.map(|data| data.values.get(&id.name))
+            .flatten()
+            .map(|values| values.type_value.clone())
+    }
+
+    pub fn lookup_module(&self, module: Symbol, id: &Id) -> Option<Symbol> {
+        self.trace_qualified_id(module, id)
     }
 }

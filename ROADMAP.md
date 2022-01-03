@@ -4,16 +4,16 @@
 - [ ] REPL
 - [ ] Modules
 - [ ] Core types (no datatypes, no elaborated rhos, no bohm-out)
-    - [ ] Syntax
+    - [x] Syntax
     - [ ] Reduction and Conversion
     - [ ] Elaboration (intersections to refinements)
     - [ ] Type inference
-    - [ ] Kind inference
+    - [x] Kind inference
 - [ ] Multiple binding lambdas (λ x -g ⋅T. ...)
 - [ ] Basic VSCode support
-    - [ ] syntax highlighting
+    - [x] syntax highlighting
     - [ ] underlined errors and warnings
-    - [ ] unicode input
+    - [x] unicode input
 - [ ] Testing framework
 
 # Phase 2 (Finish equality)

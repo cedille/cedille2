@@ -6,8 +6,7 @@ use pest::Parser;
 use pest::iterators::{Pair, Pairs};
 use pest::error::Error;
 
-use crate::common::symbol::Symbol;
-use crate::common::Id;
+use crate::common::{Id, Mode, Sort, Symbol};
 use crate::lang::syntax::*;
 
 type Span = (usize, usize);
@@ -139,18 +138,18 @@ pub fn module(pairs: Pairs<Rule>) -> Module {
             _ => None
         }
     }
-    fn module_header(header: Pair<Rule>) -> (Id, Vec<Parameter>) {
+    fn module_header(header: Pair<Rule>) -> (Span, Vec<Parameter>) {
         let mut inner = header.into_inner();
-        let qual_id = inner.required(qual_id);
+        let path = inner.required(path);
         let params = inner.list(Rule::param, param);
-        (qual_id, params)
+        (path, params)
     }
     let mut pairs = pairs;
     let mut imports = pairs.list(Rule::import, import);
-    let (id, params) = pairs.required(module_header);
+    let (path, params) = pairs.required(module_header);
     let (decls, mut decl_imports) = split(pairs.variant_list(decl));
     imports.append(&mut decl_imports);
-    Module { imports, id, decls, params }
+    Module { imports, path, decls, params }
 }
 
 fn import(import: Pair<Rule>) -> Import {
@@ -504,9 +503,10 @@ fn type_binder(body: Term, binder: Pair<Rule>) -> Term {
     let body = Box::new(body);
     let rule = binder.as_rule();
     let mut inner = binder.into_inner();
+    let sort = Sort::Type;
     match rule {
         Rule::type_forall => {
-            let (mode, sort) = (Mode::Free, Sort::Type);
+            let mode = Mode::Free;
             let var = Some(inner.required(id));
             let domain = Box::new(inner.required(type_));
             Term::Pi { span, mode, sort, var, domain, body }
@@ -515,11 +515,9 @@ fn type_binder(body: Term, binder: Pair<Rule>) -> Term {
             let mode = Mode::Erased;
             let var = Some(inner.required(id));
             if inner.peek().map(|p| p.as_rule()) == Some(Rule::kind) {
-                let sort = Sort::Kind;
                 let domain = Box::new(inner.required(kind));
                 Term::Pi { span, mode, sort, var, domain, body }
             } else {
-                let sort = Sort::Type;
                 let domain = Box::new(inner.required(type_));
                 Term::Pi { span, mode, sort, var, domain, body }
             }
@@ -527,13 +525,11 @@ fn type_binder(body: Term, binder: Pair<Rule>) -> Term {
         Rule::type_lambda => {
             let var = inner.required(bound_id);
             let mode = Mode::Free;
-            if inner.peek().map(|p| p.as_rule()) == Some(Rule::kind) {
-                let sort = Sort::Kind;
-                let anno = Some(Box::new(inner.required(kind)));
+            if let Some(k) = inner.optional(Rule::kind, kind) {
+                let anno = Some(Box::new(k));
                 Term::Lambda { span, mode, sort, var, anno, body }
             } else {
-                let sort = Sort::Type;
-                let anno = Some(Box::new(inner.required(type_)));
+                let anno = inner.optional(Rule::type_, type_).map(Box::new);
                 Term::Lambda { span, mode, sort, var, anno, body }
             }
         },
@@ -546,11 +542,9 @@ fn type_binder(body: Term, binder: Pair<Rule>) -> Term {
         Rule::type_let => {
             let mode = Mode::Free;
             if inner.peek().map(|p| p.as_rule()) == Some(Rule::define_type) {
-                let sort = Sort::Type;
                 let def = inner.required(define_type);
                 Term::Let { span, mode, sort, def, body }
             } else {
-                let sort = Sort::Term;
                 let def = inner.required(define_term);
                 Term::Let { span, mode, sort, def, body }
             }
@@ -617,13 +611,11 @@ fn kind(pairs: Pair<Rule>) -> Term {
         let var = inner.required(bound_id);
         let p = inner.next().unwrap();
         let span = span(p.as_span());
-        let mode = Mode::Free;
+        let (mode, sort) = (Mode::Free, Sort::Kind);
         if p.as_rule() == Rule::kind {
-            let sort = Sort::Kind;
             let domain = Box::new(kind(p));
             Term::Pi { span, mode, sort, var, domain, body }
-        } else { 
-            let sort = Sort::Type;
+        } else {
             let domain = Box::new(type_(p));
             Term::Pi { span, mode, sort, var, domain, body }
         }
@@ -661,7 +653,7 @@ fn kind(pairs: Pair<Rule>) -> Term {
         let mut inner = pairs.into_inner();
         // A type application must be headed by a type atom
         let mut result = inner.required(type_atom);
-        let (mode, sort) = (Mode::Free, Sort::Type);
+        let (mode, sort) = (Mode::Free, Sort::Kind);
         for p in inner {
             let span = span(p.as_span());
             match p.as_rule() {
@@ -679,7 +671,6 @@ fn kind(pairs: Pair<Rule>) -> Term {
             }
         }
         let span = outer_span;
-        let (mode, sort) = (Mode::Free, Sort::Kind);
         let domain = Box::new(result);
         let body = Box::new(body);
         Term::Pi { span, mode, sort, var, domain, body }

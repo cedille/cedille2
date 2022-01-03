@@ -2,7 +2,7 @@
 main = _{ SOI ~ file ~ EOI }
 
 file = _{ (import ~ ".")* ~ module_header ~ decl* }
-module_header = { "module" ~ qual_id ~ param* ~ "." }
+module_header = { "module" ~ path ~ param* ~ "." }
 
 decl = _{ 
     import ~ "."
@@ -82,7 +82,7 @@ type_binder = _{
 
 type_forall = { "Π" ~ bound_id ~ ":" ~ type_ ~ "." }
 type_erased_forall = { "∀" ~ bound_id ~ ":" ~ (kind | type_) ~ "." }
-type_lambda = { "λ" ~ bound_id ~ ":" ~ (kind | type_) ~ "." }
+type_lambda = { "λ" ~ bound_id ~ (":" ~ (kind | type_))? ~ "." }
 type_intersection = { "ι" ~ bound_id ~ ":" ~ type_ ~ "." }
 type_let = { "[" ~ (define_term | define_type) ~ "]" ~ "-" }
 
@@ -126,13 +126,10 @@ term_guide = { "<" ~ term ~ ">" }
 
 bound_id = { id | omission }
 id = @{ alpha ~ (alpha | greek | numeral | punctuation)* | "_" }
-qual_id = ${ namespace? ~ qual_id_suffix }
+qual_id = ${ (id ~ ("."|"/") ~ &id)* ~ id  }
 
 kind_id = @{ "𝒌" ~ (alpha | numeral | punctuation)* }
-qual_kind_id = ${ namespace? ~ kind_id }
-
-namespace = @{ id ~ "." ~ &id }
-qual_id_suffix = @{ id ~ ("/" ~ id)* }
+qual_kind_id = ${ (id ~ "." ~ &id)* ~ kind_id }
 
 path = @{
     ("../")* ~ (alpha | numeral | punctuation | "/" )+

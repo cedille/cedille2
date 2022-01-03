@@ -21,7 +21,15 @@ directories = "=4"
 # Parsing libraries
 pest = "=2.1.3"
 pest_derive = "=2.1.0"
+## Consider: https://lib.rs/crates/chumsky (not mature, grammar is combinator based)
 
-# Other libraries
+# Memory management libraries
 internment = "=0.5.4"
 threadstack = "=0.4.1"
+
+# Data structures
+im-rc = "=15.0.0"
+
+# Helper / auxillary libraries
+derive_more = "=0.99.17"
+once_cell = "=1.9.0"

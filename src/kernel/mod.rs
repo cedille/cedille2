@@ -1,6 +1,4 @@
 
-pub mod term;
+pub mod core;
 pub mod value;
-pub mod reduction;
-pub mod conversion;
 

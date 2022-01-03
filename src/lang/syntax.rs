@@ -1,21 +1,7 @@
 
-use crate::common::symbol::Symbol;
-use crate::common::Id;
+use crate::common::{Id, Mode, Sort, Symbol};
 
 type Span = (usize, usize);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Mode {
-    Erased,
-    Free
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Sort {
-    Term,
-    Type,
-    Kind
-}
 
 #[derive(Debug, Clone)]
 pub struct Parameter {
@@ -28,7 +14,7 @@ pub struct Parameter {
 #[derive(Debug, Clone)]
 pub struct Module {
     pub imports: Vec<Import>,
-    pub id: Id,
+    pub path: Span,
     pub decls: Vec<Decl>,
     pub params: Vec<Parameter>
 }
@@ -253,7 +239,7 @@ impl Term {
     /// The syntactic sort does not need to match the actual sort.
     /// 
     /// For example:
-    /// ```no_run
+    /// ```ignore
     ///     f : Nat → Nat = ...
     ///     Λ X. f Nat 
     /// ```
