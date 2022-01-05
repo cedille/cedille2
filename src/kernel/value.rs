@@ -1,32 +1,29 @@
 
 use std::rc::Rc;
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
 
-use threadstack::*;
+use once_cell::unsync::OnceCell;
 
 use crate::common::*;
 use crate::lang::elaborator::References;
+use crate::kernel::factory::Handle;
 use crate::kernel::core::Term;
 
-declare_thread_stacks!(
-    VALUE_MEMORY: RefCell<Vec<Rc<Value>>> = RefCell::new(Vec::with_capacity(1024));
-    STAR_HANDLE: Cell<Option<Handle>> = Cell::new(None);
-    SUPERSTAR_HANDLE: Cell<Option<Handle>> = Cell::new(None);
-    VAR_HANDLES: RefCell<HashMap<Level, Handle>> = RefCell::new(HashMap::with_capacity(16));
-);
+// Assuming GC is still needed:
+/*
+    Have a Slotmap of Rc<Value>'s
+    Give out special handles that when dropped will attempt to drop the associated Rc<Value> if it is unique
+    When an Value is successfully dropped, it will try to drop any children that are also uniquely referenced
 
-#[derive(Debug, Clone, Copy)]
-pub struct Handle(usize);
+    or..
 
-impl Handle {
-    pub fn deref(&self) -> Rc<Value> {
-        let_ref_thread_stack_value!(slab, VALUE_MEMORY);
-        let slab = slab.borrow();
-        let ptr = slab.get(self.0).unwrap();
-        ptr.clone()
-    }
-}
+    Don't use Rc but have a custom key that updates the number of times it was cloned
+    and decrements when it is dropped
+
+    or..
+
+    Give out reference counted keys!
+*/
 
 #[derive(Debug, Clone)]
 pub struct EnvEntry {
@@ -57,35 +54,44 @@ impl Closure {
 }
 
 #[derive(Debug, Clone)]
+struct LazyValueCode {
+    env: ConsVec<EnvEntry>,
+    spine: ConsVec<EnvEntry>,
+    code: Rc<Term>
+}
+
+#[derive(Debug, Clone)]
 pub struct LazyValue {
-    value: Cell<Option<Handle>>,
-    closure: RefCell<Option<Closure>>
+    value: OnceCell<Handle>,
+    code: RefCell<Option<LazyValueCode>>
 }
 
 impl LazyValue {
     pub fn new(env: ConsVec<EnvEntry>, code: Rc<Term>) -> LazyValue {
+        let spine = ConsVec::new();
         LazyValue { 
-            value: Cell::new(None),
-            closure: RefCell::new(Some(Closure { env, code }))
+            value: OnceCell::new(),
+            code: RefCell::new(Some(LazyValueCode { env, spine, code }))
         }
     }
 
     pub fn computed(value: Handle) -> LazyValue {
         LazyValue {
-            value: Cell::new(Some(value)),
-            closure: RefCell::new(None)
+            value: OnceCell::from(value),
+            code: RefCell::new(None)
         }
     }
 
     pub fn force(&self, refs: References) -> Handle {
-        if let Some(value) = self.value.get() { value }
+        if let Some(value) = self.value.get() { value.clone() }
         else {
-            let mut closure = self.closure.borrow_mut();
-            match closure.as_ref() {
-                Some(Closure { env, code }) => {
-                    let result = Value::eval(refs, env.clone(), code.clone());
-                    self.value.replace(Some(result));
-                    *closure = None;
+            let mut code = self.code.borrow_mut();
+            match code.as_ref() {
+                Some(LazyValueCode { env, spine, code:term }) => {
+                    let result = Value::eval(refs, env.clone(), term.clone());
+                    let result = Value::apply_spine(result, refs, spine.clone());
+                    self.value.set(result.clone());
+                    *code = None;
                     result
                 },
                 None => unreachable!()
@@ -93,16 +99,18 @@ impl LazyValue {
         }
     }
 
-    fn is_forced(&self) -> bool {
-        self.value.get().is_some()
-    }
-
     fn apply(&self, refs: References, arg: EnvEntry) -> LazyValue {
-        match self.value.get() {
-            Some(value) => {
-                LazyValue::computed(value.deref().apply(refs, arg))
+        if let Some(value) = self.value.get() { 
+            LazyValue::computed(value.apply(refs, arg))
+        } else {
+            let mut code = self.code.borrow_mut();
+            match code.as_mut() {
+                Some(LazyValueCode { spine, .. }) => {
+                    spine.push_back(arg);
+                    self.clone()
+                },
+                None => unreachable!()
             }
-            None => self.clone()
         }
     }
 }
@@ -143,36 +151,18 @@ pub enum Value {
 }
 
 impl Value {
-    fn alloc(self) -> Handle {
-        let_ref_thread_stack_value!(slab, VALUE_MEMORY);
-        let mut slab = slab.borrow_mut();
-        slab.push(Rc::new(self));
-        Handle(slab.len() - 1)
-    }
-
-    pub fn collect() {
-        let_ref_thread_stack_value!(slab, VALUE_MEMORY);
-        let_ref_thread_stack_value!(superstar_handle, SUPERSTAR_HANDLE);
-        let_ref_thread_stack_value!(star_handle, STAR_HANDLE);
-        let_ref_thread_stack_value!(var_handles, VAR_HANDLES);
-        slab.borrow_mut().clear();
-        superstar_handle.take();
-        star_handle.take();
-        var_handles.borrow_mut().clear();
-    }
-
-    fn apply(&self, refs: References, arg: EnvEntry) -> Handle {
+    pub fn apply(&self, refs: References, arg: EnvEntry) -> Handle {
         match self {
             Value::Variable { level, spine } => {
                 let mut spine = spine.clone();
                 spine.push_back(arg);
-                Value::Variable { level:*level, spine }.alloc()
+                Value::variable_with_spine(*level, spine)
             },
             Value::Reference { id, spine, unfolded } => {
                 let unfolded = unfolded.as_ref().map(|v| v.apply(refs, arg.clone()));
                 let mut spine = spine.clone();
                 spine.push_back(arg);
-                Value::Reference { id:id.clone(), spine, unfolded }.alloc()
+                Value::reference(id.clone(), spine, unfolded)
             },
             Value::Lambda { closure, .. } => closure.apply(refs, arg),
             _ => unreachable!()
@@ -180,48 +170,14 @@ impl Value {
     }
 
     fn apply_spine(value: Handle, refs: References, spine: ConsVec<EnvEntry>) -> Handle {
-        spine.iter().fold(value, |acc, entry| acc.deref().apply(refs, entry.clone()))
-    }
-
-    pub fn equality(left: Handle, right: Handle) -> Handle {
-        Value::Equality { left, right }.alloc()
-    }
-
-    pub fn superstar() -> Handle {
-        let_ref_thread_stack_value!(handle, SUPERSTAR_HANDLE);
-        match handle.get() {
-            Some(h) => h,
-            None => {
-                let result = Value::SuperStar.alloc();
-                handle.replace(Some(result));
-                result
-            }
-        }
-    }
-
-    pub fn star() -> Handle {
-        let_ref_thread_stack_value!(handle, STAR_HANDLE);
-        match handle.get() {
-            Some(h) => h,
-            None => {
-                let result = Value::Star.alloc();
-                handle.replace(Some(result));
-                result
-            }
-        }
-    }
-
-    pub fn var(level: Level) -> Handle {
-        let_ref_thread_stack_value!(handle, VAR_HANDLES);
-        let mut handle = handle.borrow_mut();
-        *handle.entry(level).or_insert_with(|| Value::Variable { level, spine: ConsVec::new() }.alloc())
+        spine.iter().fold(value, |acc, entry| acc.apply(refs, entry.clone()))
     }
 
     pub fn classifier(sort: Sort) -> Handle {
         match sort {
             Sort::Term => unreachable!(),
             Sort::Type => Value::star(),
-            Sort::Kind => Value::superstar(),
+            Sort::Kind => Value::super_star(),
         }
     }
 
@@ -230,7 +186,7 @@ impl Value {
             Term::Lambda { mode, name, body } => {
                 let (mode, name) = (*mode, *name);
                 let closure = Closure { env, code:body.clone() };
-                Value::Lambda { mode, name, closure }.alloc()
+                Value::lambda(mode, name, closure)
             },
             Term::Let { mode, name, let_body, body } => {
                 let def_value = LazyValue::new(env.clone(), let_body.clone());
@@ -241,17 +197,17 @@ impl Value {
                 let (mode, name) = (*mode, *name);
                 let domain = LazyValue::new(env.clone(), domain.clone());
                 let closure = Closure { env, code:body.clone() };
-                Value::Pi { mode, name, domain:domain.force(refs), closure }.alloc()
+                Value::pi(mode, name, domain.force(refs), closure)
             },
             Term::IntersectType { name, first, second } => {
                 let first = LazyValue::new(env.clone(), first.clone());
                 let second = Closure { env, code:second.clone() };
-                Value::IntersectType { name:*name, first:first.force(refs), second }.alloc()
+                Value::intersect_type(*name, first.force(refs), second)
             },
             Term::Equality { left, right } => {
                 let left = Value::eval(refs, env.clone(), left.clone());
                 let right = Value::eval(refs, env, right.clone());
-                Value::Equality { left, right }.alloc()
+                Value::equality(left, right)
             },
             Term::Rewrite { body, .. }
             | Term::Annotate { body, .. }
@@ -264,17 +220,18 @@ impl Value {
                 let (mode, name) = (*mode, Symbol::default());
                 let arg = LazyValue::new(env.clone(), arg.clone());
                 let entry = EnvEntry::new(mode, name, arg);
-                match Value::eval(refs, env.clone(), fun.clone()).deref().as_ref() {
+                let fun = Value::eval(refs, env.clone(), fun.clone());
+                match &*Handle::upgrade(&fun) {
                     Value::Variable { level, spine } => {
                         let mut spine = spine.clone();
                         spine.push_back(entry);
-                        Value::Variable { level:*level, spine }.alloc()
+                        Value::variable_with_spine(*level, spine)
                     }
                     Value::Reference { id, spine, unfolded } => {
                         let unfolded = unfolded.as_ref().map(|v| v.apply(refs, entry.clone()));
                         let mut spine = spine.clone();
                         spine.push_back(entry);
-                        Value::Reference { id:id.clone(), spine, unfolded }.alloc()
+                        Value::reference(id.clone(), spine, unfolded)
                     } 
                     Value::Lambda { closure, .. } => closure.apply(refs, entry),
                     _ => unreachable!()
@@ -286,20 +243,18 @@ impl Value {
             Term::Free { id, .. } => {
                 let unfolded = refs.lookup_def(id).ok()
                     .map(LazyValue::computed);
-                Value::Reference { id:id.clone(), spine:ConsVec::new(), unfolded }.alloc()
+                Value::reference(id.clone(), ConsVec::new(), unfolded)
             }
             Term::Star => Value::star(),
-            Term::SuperStar => Value::superstar()
+            Term::SuperStar => Value::super_star()
         }
     }
 
     pub fn unfold_to_head(refs: References, value: Handle) -> Handle {
-        match value.deref().as_ref() {
-            Value::Reference { spine, unfolded, .. } => {
+        match &*Handle::upgrade(&value) {
+            Value::Reference { unfolded, .. } => {
                 if let Some(unfolded) = unfolded {
-                    let result = if unfolded.is_forced() { unfolded.force(refs) }
-                        else { Value::apply_spine(unfolded.force(refs), refs, spine.clone()) };
-                    Value::unfold_to_head(refs, result)
+                    Value::unfold_to_head(refs, unfolded.force(refs))
                 } else { value }
             },
             _ => value
@@ -313,60 +268,60 @@ impl Value {
             if l.mode == r.mode && l.mode == Mode::Free {
                 let left = l.value.force(refs);
                 let right = r.value.force(refs);
-                acc && Value::convertible(refs, env, left, right)
+                acc && Value::convertible(refs, env, &left, &right)
             } else { acc && l.mode == r.mode }
         })
     }
 
-    pub fn convertible(refs: References, env: Level, left: Handle, right: Handle) -> bool {
-        match (left.deref().as_ref(), right.deref().as_ref()) {
+    pub fn convertible(refs: References, env: Level, left: &Handle, right: &Handle) -> bool {
+        match dbg!(&*Handle::upgrade(left), &*Handle::upgrade(right)) {
             // Type head conversion
             (Value::Star, Value::Star) => true,
             (Value::SuperStar, Value::SuperStar) => true,
             (Value::Pi { mode:m1, name:n1, domain:d1, closure:c1 },
                 Value::Pi { mode:m2, name:n2, domain:d2, closure:c2 }) =>
             {
-                let (mode, input) = (Mode::Free, LazyValue::computed(Value::var(env)));
+                let (mode, input) = (Mode::Free, LazyValue::computed(Value::variable(env)));
                 let c1 = c1.apply(refs, EnvEntry::new(mode, *n1, input.clone()));
                 let c2 = c2.apply(refs, EnvEntry::new(mode, *n2, input));
-                *m1 == *m2
-                && Value::convertible(refs, env, *d1, *d2)
-                && Value::convertible(refs, env + 1, c1, c2)
+                m1 == m2
+                && Value::convertible(refs, env, &d1, &d2)
+                && Value::convertible(refs, env + 1, &c1, &c2)
             }
             (Value::IntersectType { name:n1, first:f1, second:s1 },
                 Value::IntersectType { name:n2, first:f2, second:s2 }) =>
             {
-                let (mode, input) = (Mode::Free, LazyValue::computed(Value::var(env)));
+                let (mode, input) = (Mode::Free, LazyValue::computed(Value::variable(env)));
                 let s1 = s1.apply(refs, EnvEntry::new(mode, *n1, input.clone()));
                 let s2 = s2.apply(refs, EnvEntry::new(mode, *n2, input));
-                Value::convertible(refs, env, *f1, *f2)
-                && Value::convertible(refs, env + 1, s1, s2)
+                Value::convertible(refs, env, &f1, &f2)
+                && Value::convertible(refs, env + 1, &s1, &s2)
             }
             (Value::Equality { left:l1, right:r1 },
                 Value::Equality { left:l2, right:r2 }) =>
             {
-                Value::convertible(refs, env, *l1, *l2)
-                && Value::convertible(refs, env, *r1, *r2)
+                Value::convertible(refs, env, &l1, &l2)
+                && Value::convertible(refs, env, &r1, &r2)
             }
             // Lambda conversion + eta conversion
             (Value::Lambda { mode:m1, name:n1, closure:c1 },
                 Value::Lambda { mode:m2, name:n2, closure:c2 }) => {
-                let input= LazyValue::computed(Value::var(env));
+                let input= LazyValue::computed(Value::variable(env));
                 let c1 = c1.apply(refs, EnvEntry::new(*m1, *n1, input.clone()));
                 let c2 = c2.apply(refs, EnvEntry::new(*m2, *n2, input));
-                Value::convertible(refs, env + 1, c1, c2)
+                Value::convertible(refs, env + 1, &c1, &c2)
             }
             (Value::Lambda { mode, name, closure }, v) => {
-                let input= LazyValue::computed(Value::var(env));
+                let input= LazyValue::computed(Value::variable(env));
                 let closure = closure.apply(refs, EnvEntry::new(*mode, *name, input.clone()));
                 let v = v.apply(refs, EnvEntry::new(*mode, *name, input));
-                Value::convertible(refs, env + 1, closure, v)
+                Value::convertible(refs, env + 1, &closure, &v)
             }
             (v, Value::Lambda { mode, name, closure }) => {
-                let input = LazyValue::computed(Value::var(env));
+                let input = LazyValue::computed(Value::variable(env));
                 let closure = closure.apply(refs, EnvEntry::new(*mode, *name, input.clone()));
                 let v = v.apply(refs, EnvEntry::new(*mode, *name, input));
-                Value::convertible(refs, env + 1, v, closure)
+                Value::convertible(refs, env + 1, &v, &closure)
             }
             // Spines
             (Value::Variable { level:l1, spine:s1},
@@ -374,10 +329,29 @@ impl Value {
             {
                 l1 == l2 && Value::convertible_spine(refs, env, s1.clone(), s2.clone())
             }
-            (Value::Reference { id:id1, spine:s1, .. },
-                Value::Reference { id:id2, spine:s2, .. }) =>
+            (Value::Reference { id:id1, spine:s1, unfolded:u1 },
+                Value::Reference { id:id2, spine:s2, unfolded:u2 }) =>
             {
-                id1 == id2 && Value::convertible_spine(refs, env, s1.clone(), s2.clone())
+                let check_unfolded = || {
+                    let mut result = false;
+                    if let Some(u1) = u1 {
+                        if let Some(u2) = u2 {
+                            let (u1, u2) = (u1.force(refs), u2.force(refs));
+                            result = Value::convertible(refs, env, &u1, &u2);
+                        }
+                    }
+                    result
+                };
+                (id1 == id2 && Value::convertible_spine(refs, env, s1.clone(), s2.clone()))
+                    || check_unfolded()
+            },
+            (Value::Reference { unfolded, .. }, _) => {
+                unfolded.as_ref()
+                    .map_or(false, |u| Value::convertible(refs, env, &u.force(refs), right))
+            }
+            (_, Value::Reference { unfolded, .. }) => {
+                unfolded.as_ref()
+                    .map_or(false, |u| Value::convertible(refs, env, left, &u.force(refs)))
             }
 
             _ => false
@@ -389,7 +363,7 @@ impl Value {
         else {
             spine.iter_mut().fold(head, |acc, arg| {
                 let (mode, fun) = (arg.mode, Rc::new(acc));
-                let arg = Rc::new(arg.value.force(refs).deref().quote(refs, level));
+                let arg = Rc::new(Handle::upgrade(&arg.value.force(refs)).quote(refs, level));
                 Term::Apply { mode, fun, arg }
             })
         }
@@ -407,26 +381,26 @@ impl Value {
             }
             Value::Lambda { mode, name, closure } => {
                 let (mode, name) = (*mode, *name);
-                let input = EnvEntry::new(mode, name, LazyValue::computed(Value::var(level)));
-                let body = Rc::new(closure.apply(refs, input).deref().quote(refs, level + 1));
+                let input = EnvEntry::new(mode, name, LazyValue::computed(Value::variable(level)));
+                let body = Rc::new(Handle::upgrade(&closure.apply(refs, input)).quote(refs, level + 1));
                 Term::Lambda { mode, name, body }
             }
             Value::Pi { mode, name, domain, closure } => {
                 let (mode, name) = (*mode, *name);
-                let input = EnvEntry::new(mode, name, LazyValue::computed(Value::var(level)));
-                let domain = Rc::new(domain.deref().quote(refs, level));
-                let body = Rc::new(closure.apply(refs, input).deref().quote(refs, level + 1));
+                let input = EnvEntry::new(mode, name, LazyValue::computed(Value::variable(level)));
+                let domain = Rc::new(Handle::upgrade(&domain).quote(refs, level));
+                let body = Rc::new(Handle::upgrade(&closure.apply(refs, input)).quote(refs, level + 1));
                 Term::Pi { mode, name, domain, body }
             },
             Value::IntersectType { name, first, second } => {
-                let input = EnvEntry::new(Mode::Free, *name, LazyValue::computed(Value::var(level)));
-                let first = Rc::new(first.deref().quote(refs, level));
-                let second = Rc::new(second.apply(refs, input).deref().quote(refs, level + 1));
+                let input = EnvEntry::new(Mode::Free, *name, LazyValue::computed(Value::variable(level)));
+                let first = Rc::new(Handle::upgrade(&first).quote(refs, level));
+                let second = Rc::new(Handle::upgrade(&second.apply(refs, input)).quote(refs, level + 1));
                 Term::IntersectType { name:*name, first, second }
             },
             Value::Equality { left, right } => {
-                let left = Rc::new(left.deref().quote(refs, level));
-                let right = Rc::new(right.deref().quote(refs, level));
+                let left = Rc::new(Handle::upgrade(&left).quote(refs, level));
+                let right = Rc::new(Handle::upgrade(&right).quote(refs, level));
                 Term::Equality { left, right }
             }
             Value::Star => Term::Star,
