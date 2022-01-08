@@ -1,0 +1,6 @@
+module church/unit.
+
+Unit : ★ = ∀ X:★. X ➔ X.
+
+unit : Unit
+= Λ X. λ x. x.

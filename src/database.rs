@@ -145,7 +145,7 @@ impl Database {
             /***
              * Elaborate and type check the statically typed AST
              ***/
-            let kernel = elaborator::elaborate(self, &tree, sym)?;
+            let kernel = elaborator::elaborate(&text, self, &tree, sym)?;
             /***
              * Extract the modules exports
              ***/

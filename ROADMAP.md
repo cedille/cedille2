@@ -6,24 +6,25 @@
 - [ ] Core types (no datatypes, no elaborated rhos, no bohm-out)
     - [x] Syntax
     - [ ] Reduction and Conversion
-    - [ ] Elaboration (intersections to refinements)
-    - [ ] Type inference
-    - [x] Kind inference
+    - [ ] Basic Elaboration 
+    - [x] Basic Type inference
+    - [x] Basic Kind inference
 - [ ] Multiple binding lambdas (λ x -g ⋅T. ...)
 - [ ] Basic VSCode support
     - [x] syntax highlighting
-    - [ ] underlined errors and warnings
     - [x] unicode input
 - [ ] Testing framework
 
 # Phase 2 (Finish equality)
-- [ ] Elaborate rhos
-- [ ] Implement bohm-out
+- [ ] Finish elaborating equality constructs
+- [ ] Implement bohm-out (? not sure why this is needed)
+- [ ] Replace intersection types in core language with refinements types
+- [ ] Greatly improve error messages in the REPL
 
 # Phase 3 (New constructs)
 - [ ] Add refinement types to the surface syntax
 - [ ] Add term existentials to the surface syntax
-- [ ] Add "omitted" term for improved type inference
+- [ ] Add "omitted" term for improved type inference (i.e. Improve type inference)
 - [ ] Investigate and implement better type inference for refinements / existentials
 
 # Phase 4 (Datatypes)
@@ -37,6 +38,7 @@
 # Tooling
 - [ ] Implement equality prover (like beta reduction explorer in Cedille)
 - [ ] Improve VSCode support
+    - [ ] Underline text with error spans and messages
     - [ ] Show type on hover
     - [ ] ...
 - [ ] (possibly) Emacs support?

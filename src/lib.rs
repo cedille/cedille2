@@ -15,40 +15,32 @@ mod tests {
     use anyhow::Result;
     use super::*;
 
-    fn test_runner(components: Vec<&'static str>, id: &'static str, is_dir: bool) -> Result<()> {
+    fn test_runner(path: &'static str) -> Result<()> {
         let mut db = database::Database::new();
         let mut builder = String::new();
-        for s in components.iter() {
-            builder.push_str(s);
-            builder.push('/');
-        }
-        builder.push_str(id);
-        if !is_dir { builder.push_str(".ced"); }
+        builder.push_str("tests/");
+        let path = path.replace("_", "/");
+        builder.push_str(path.as_str());
+        builder.push_str(".ced");
         let path = Path::new(builder.as_str());
-        if is_dir { db.load_dir(path) }
-        else { db.load_module(path) }
+        db.load_module(path)
     }
 
     macro_rules! test_file_success {
-        ([$($component:ident),*], $id:ident) => {
+        ($path_with_underscores:ident) => {
             #[test]
-            fn $id() -> Result<()> {
-                test_runner(vec![$(stringify!($component),)*], stringify!($id), false)
+            fn $path_with_underscores() -> Result<()> {
+                test_runner(stringify!($path_with_underscores))
             }
         }
     }
 
-    macro_rules! test_dir_success {
-        ([$($component:ident),*], $id:ident) => {
-            #[test]
-            fn $id() -> Result<()> {
-                test_runner(vec![$(stringify!($component),)*], stringify!($id), true)
-            }
-        }
-    }
-
-    test_file_success!([tests], church);
-
-    test_dir_success!([lib], core);
+    test_file_success!(core_false);
+    test_file_success!(core_true);
+    test_file_success!(church_bool);
+    test_file_success!(church_list);
+    test_file_success!(church_nat);
+    test_file_success!(church_unit);
+    test_file_success!(church_vec);
 }
 

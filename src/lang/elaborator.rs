@@ -1,6 +1,5 @@
 
 use std::collections::HashMap;
-use std::ops::Deref;
 use std::rc::Rc;
 
 use colored::Colorize;
@@ -9,8 +8,7 @@ use thiserror::Error;
 use crate::common::*;
 use crate::lang::syntax;
 use crate::kernel::core;
-use crate::kernel::factory::Handle;
-use crate::kernel::value::{Value, LazyValue, EnvEntry};
+use crate::kernel::value::{Value, ValueEx, LazyValue, EnvEntry, Environment};
 use crate::database::Database;
 
 type Span = (usize, usize);
@@ -60,22 +58,24 @@ pub enum ElabError {
 #[derive(Debug, Clone, Copy)]
 pub struct References<'a> {
     module: Symbol,
+    text: &'a str,
     db: &'a Database,
     decl_defs: &'a HashMap<Symbol, LazyValue>,
     decl_types: &'a HashMap<Symbol, LazyValue>,
 }
 
 impl<'a> References<'a> {
-    fn new(module: Symbol
+    pub fn new(module: Symbol
+        , text: &'a str
         , db: &'a Database
         , decl_defs: &'a HashMap<Symbol, LazyValue>
         , decl_types: &'a HashMap<Symbol, LazyValue>)
         -> References<'a>
     {
-        References { module, db, decl_defs, decl_types }
+        References { module, text, db, decl_defs, decl_types }
     }
 
-    pub fn lookup_type(&self, id: &Id) -> Result<Handle, ElabError> {
+    pub fn lookup_type(&self, id: &Id) -> Result<Rc<Value>, ElabError> {
         let has_namespace = if id.namespace.is_empty() { Some(()) } else { None };
         let db_type = self.db.lookup_type(self.module, id);
         let decl_type = has_namespace.and(self.decl_types.get(&id.name)).cloned();
@@ -87,7 +87,7 @@ impl<'a> References<'a> {
         }
     }
 
-    pub fn lookup_def(&self, id: &Id) -> Result<Handle, ElabError> {
+    pub fn lookup_def(&self, id: &Id) -> Result<Rc<Value>, ElabError> {
         let has_namespace = if id.namespace.is_empty() { Some(()) } else { None };
         let db_def = self.db.lookup_def(self.module, id);
         let decl_def = has_namespace.and(self.decl_defs.get(&id.name)).cloned();
@@ -103,8 +103,8 @@ impl<'a> References<'a> {
 #[derive(Debug, Clone)]
 struct Context<'a> {
     pub refs: References<'a>,
-    env: ConsVec<EnvEntry>,
-    types: ConsVec<(Symbol, Handle)>,
+    env: Environment,
+    types: im_rc::Vector<(Symbol, Rc<Value>)>,
     module: Symbol,
     mode: Mode,
     sort: Sort
@@ -116,31 +116,31 @@ impl<'a> Context<'a> {
     {
         Context {
             refs,
-            env: ConsVec::new(),
-            types: ConsVec::new(),
+            env: Environment::new(),
+            types: im_rc::Vector::new(),
             module: Symbol::default(),
             mode: Mode::Free,
             sort
         }
     }
 
-    fn bind(&mut self, mode: Mode, name: Symbol, value_type: Handle) {
+    fn bind(&mut self, mode: ApplyType, name: Symbol, value_type: Rc<Value>) {
         let level = self.env_lvl();
         self.env.push_back(EnvEntry::new(mode, name, LazyValue::computed(Value::variable(level))));
         self.types.push_back((name, value_type));
     }
 
-    fn define(&mut self, mode: Mode, name: Symbol, value: LazyValue, value_type: Handle) {
+    fn define(&mut self, mode: ApplyType, name: Symbol, value: LazyValue, value_type: Rc<Value>) {
         self.env.push_back(EnvEntry::new(mode, name, value));
         self.types.push_back((name, value_type));
     }
 
-    fn env(&self) -> ConsVec<EnvEntry> { self.env.clone() }
+    fn env(&self) -> Environment { self.env.clone() }
 
     fn env_lvl(&self) -> Level { self.env.len().into() }
 }
 
-pub fn elaborate(db: &Database, module: &syntax::Module, module_name: Symbol) -> Result<core::Module, ElabError> {
+pub fn elaborate(text: &str, db: &Database, module: &syntax::Module, module_name: Symbol) -> Result<core::Module, ElabError> {
     let imports = vec![];
     let id = Id { namespace:vec![], name: Symbol::from("") };
     let mut decls = vec![];
@@ -149,11 +149,11 @@ pub fn elaborate(db: &Database, module: &syntax::Module, module_name: Symbol) ->
     let mut errors = vec![];
     
     for decl in module.decls.iter() {
-        let refs = References::new(module_name, db, &decl_defs, &decl_types);
+        let refs = References::new(module_name, text, db, &decl_defs, &decl_types);
         match elaborate_decl(refs, &module.params, decl) {
             Ok(elaborated_decl) =>  {
-                let lazy_def = LazyValue::new(ConsVec::new(), elaborated_decl.body.clone());
-                let lazy_type = LazyValue::new(ConsVec::new(), elaborated_decl.ty.clone());
+                let lazy_def = LazyValue::new(Environment::new(), elaborated_decl.body.clone());
+                let lazy_type = LazyValue::new(Environment::new(), elaborated_decl.ty.clone());
                 decl_defs.insert(elaborated_decl.name, lazy_def);
                 decl_types.insert(elaborated_decl.name, lazy_type);
                 decls.push(elaborated_decl)
@@ -161,21 +161,25 @@ pub fn elaborate(db: &Database, module: &syntax::Module, module_name: Symbol) ->
             Err(error) => errors.push(error)
         }
     }
-
-    let result = if errors.is_empty() { Ok(core::Module { imports, id, decls }) }
-        else { Err(ElabError::Many { errors }) };
-    
-    //Value::collect();
-    result
+    if errors.is_empty() { Ok(core::Module { imports, id, decls }) }
+    else { Err(ElabError::Many { errors }) }
 }
 
 fn elaborate_decl(refs: References, params: &[syntax::Parameter], decl: &syntax::Decl) -> Result<core::Decl, ElabError> {
     match decl {
         syntax::Decl::Type(ty) => {
-            elaborate_define_term(Sort::Type, refs, params, ty)
-        },
+            let result = elaborate_define_term(Sort::Type, refs, params, ty);
+            if let Ok(ref ty_elabed) = result {
+                log::info!("\n{}\n{}\n{}", ty.as_str(refs.text), "elaborated to".green(), ty_elabed);
+            }
+            result
+        }
         syntax::Decl::Term(term) => {
-            elaborate_define_term(Sort::Term, refs, params, term)
+            let result = elaborate_define_term(Sort::Term, refs, params, term);
+            if let Ok(ref term_elabed) = result {
+                log::info!("\n{}\n{}\n{}", term.as_str(refs.text), "elaborated to".green(), term_elabed);
+            }
+            result
         },
         syntax::Decl::Kind(_) => todo!(),
         syntax::Decl::Datatype(_) => todo!(),
@@ -200,16 +204,16 @@ fn elaborate_define_term(sort: Sort, refs: References, _params: &[syntax::Parame
         let (body, inferred) = infer(ctx.clone(), &def.body)?;
         Ok(core::Decl {
             name: def.name,
-            ty: Rc::new(Handle::upgrade(&inferred).quote(ctx.refs, ctx.env_lvl())),
+            ty: Rc::new(inferred.quote(ctx.refs, ctx.env_lvl())),
             body
         })
     }
 }
 
-fn check(mut ctx: Context, term: &syntax::Term, ty: Handle) -> Result<Rc<core::Term>, ElabError> {
+fn check(mut ctx: Context, term: &syntax::Term, ty: Rc<Value>) -> Result<Rc<core::Term>, ElabError> {
     let ty = Value::unfold_to_head(ctx.refs, ty);
-    /* eprintln!("{} {:#?} \n{} {:#?}", "check:".red(), term, "against:".red(), ty.deref()); */
-    match (term, &*Handle::upgrade(&ty)) {
+    log::trace!("\n{} {} {}", term.as_str(ctx.refs.text), "<=".bright_blue(), ty);
+    match (term, ty.as_ref()) {
         (syntax::Term::Lambda { mode
             , sort
             , var
@@ -227,13 +231,13 @@ fn check(mut ctx: Context, term: &syntax::Term, ty: Handle) -> Result<Rc<core::T
                 convertible(ctx.clone(), span, &anno, domain)?;
             }
             let value = LazyValue::computed(Value::variable(ctx.env_lvl()));
-            ctx.bind(*mode, name, domain.clone());
-            let body_type = closure.apply(ctx.refs, EnvEntry::new(*mode, name, value));
+            ctx.bind(mode.to_apply_type(sort), name, domain.clone());
+            let body_type = closure.apply(ctx.refs, EnvEntry::new(mode.to_apply_type(sort), name, value));
             let elaborated_body = check(ctx, body, body_type)?;
             Ok(Rc::new(core::Term::Lambda { mode:*mode, name, body: elaborated_body }))
         }
 
-        (syntax::Term::Let { mode, def, body, .. }, _) =>
+        (syntax::Term::Let { mode, sort, def, body, .. }, _) =>
         {
             let (anno_elabed, anno_value) = if let Some(anno) = &def.anno {
                 let anno_elabed = check(ctx.clone(), anno, Value::star())?;
@@ -242,7 +246,7 @@ fn check(mut ctx: Context, term: &syntax::Term, ty: Handle) -> Result<Rc<core::T
             } else { infer(ctx.clone(), &def.body)? };
             let def_body_elabed = check(ctx.clone(), &def.body, anno_value.clone())?;
             let def_body_value = LazyValue::new(ctx.env(), def_body_elabed.clone());
-            ctx.define(*mode, def.name, def_body_value, anno_value);
+            ctx.define(mode.to_apply_type(sort), def.name, def_body_value, anno_value);
             let body_elabed = check(ctx, body, ty)?;
             let result_let = Rc::new(core::Term::Let { 
                 mode: *mode,
@@ -262,7 +266,7 @@ fn check(mut ctx: Context, term: &syntax::Term, ty: Handle) -> Result<Rc<core::T
         {
             let first_elabed = check(ctx.clone(), first, type1.clone())?;
             let first_value = Value::eval(ctx.refs, ctx.env(), first_elabed.clone());
-            let closure_arg = EnvEntry::new(Mode::Free, *name, LazyValue::computed(first_value.clone()));
+            let closure_arg = EnvEntry::new(ApplyType::Free, *name, LazyValue::computed(first_value.clone()));
             let type2 = type2.apply(ctx.refs, closure_arg);
             let second_elabed = check(ctx.clone(), second, type2)?;
             let second_value = Value::eval(ctx.refs, ctx.env(), second_elabed.clone());
@@ -285,7 +289,7 @@ fn check(mut ctx: Context, term: &syntax::Term, ty: Handle) -> Result<Rc<core::T
         (syntax::Term::Separate { span, equation, .. }, _) =>
         {
             let (equation_elabed, equality) = infer(ctx.clone(), equation)?;
-            match &*Handle::upgrade(&equality) {
+            match equality.as_ref() {
                 Value::Equality { left, right } => {
                     if convertible(ctx, *span, left, right).is_ok() {
                         Err(ElabError::Convertible { span:*span })
@@ -331,8 +335,8 @@ fn check(mut ctx: Context, term: &syntax::Term, ty: Handle) -> Result<Rc<core::T
     }
 }
 
-fn infer(mut ctx: Context, term: &syntax::Term) -> Result<(Rc<core::Term>, Handle), ElabError> {
-    /* eprintln!("{} {:#?}", "infer:".red(), term); */
+fn infer(mut ctx: Context, term: &syntax::Term) -> Result<(Rc<core::Term>, Rc<Value>), ElabError> {
+    let refs = ctx.refs;
     let result = match term {
         syntax::Term::Pi { mode
             , sort
@@ -343,8 +347,8 @@ fn infer(mut ctx: Context, term: &syntax::Term) -> Result<(Rc<core::Term>, Handl
         {
             let (mode, name) = (*mode, var.unwrap_or_default());
             let domain_elabed = check(ctx.clone(), domain, Value::classifier(domain.sort()))?;
-            let domain_value = Value::eval(ctx.refs, ctx.env(), domain_elabed.clone());
-            ctx.bind(mode, name, domain_value);
+            let domain_value = Value::eval(refs, ctx.env(), domain_elabed.clone());
+            ctx.bind(ApplyType::Free, name, domain_value);
             let body_elabed = check(ctx, body, Value::classifier(body.sort()))?;
             let result = Rc::new(core::Term::Pi { 
                 mode, 
@@ -357,9 +361,9 @@ fn infer(mut ctx: Context, term: &syntax::Term) -> Result<(Rc<core::Term>, Handl
 
         syntax::Term::IntersectType { var, first, second, .. } => {
             let first_elabed = check(ctx.clone(), first, Value::star())?;
-            let first_value = Value::eval(ctx.refs, ctx.env(), first_elabed.clone());
+            let first_value = Value::eval(refs, ctx.env(), first_elabed.clone());
             let name = var.unwrap_or_default();
-            ctx.bind(Mode::Free, name, first_value);
+            ctx.bind(ApplyType::Free, name, first_value);
             let second_elabed = check(ctx, second, Value::star())?;
             let result = Rc::new(core::Term::IntersectType {
                 name,
@@ -379,15 +383,15 @@ fn infer(mut ctx: Context, term: &syntax::Term) -> Result<(Rc<core::Term>, Handl
             Ok((result, Value::star()))
         }
 
-        syntax::Term::Let { mode, def, body, .. } => {
+        syntax::Term::Let { mode, sort, def, body, .. } => {
             let (anno_elabed, anno_value) = if let Some(anno) = &def.anno {
                 let anno_elabed = check(ctx.clone(), anno, Value::star())?;
-                let anno_value = Value::eval(ctx.refs, ctx.env(), anno_elabed.clone());
+                let anno_value = Value::eval(refs, ctx.env(), anno_elabed.clone());
                 (anno_elabed, anno_value)
             } else { infer(ctx.clone(), &def.body)? };
             let def_body_elabed = check(ctx.clone(), &def.body, anno_value.clone())?;
             let def_body_value = LazyValue::new(ctx.env(), def_body_elabed.clone());
-            ctx.define(*mode, def.name, def_body_value, anno_value);
+            ctx.define(mode.to_apply_type(sort), def.name, def_body_value, anno_value);
             let (body_elabed, type_value) = infer(ctx.clone(), body)?;
             let result_let = Rc::new(core::Term::Let { 
                 mode: *mode,
@@ -399,15 +403,14 @@ fn infer(mut ctx: Context, term: &syntax::Term) -> Result<(Rc<core::Term>, Handl
                 anno: anno_elabed,
                 body: result_let
             });
-            Ok((result, Value::unfold_to_head(ctx.refs, type_value)))
+            Ok((result, Value::unfold_to_head(refs, type_value)))
         }
 
         syntax::Term::Variable { id, .. } => {
-            let env_level = ctx.env_lvl();
             let (var_type, level) = lookup_type(ctx.clone(), id)?;
-            let var_type = Value::unfold_to_head(ctx.refs, var_type);
+            let var_type = Value::unfold_to_head(refs, var_type);
             if let Some(level) = level {
-                let index = level.to_index(env_level);
+                let index = level.to_index(ctx.env.len());
                 Ok((Rc::new(core::Term::Bound { index }), var_type))
             } else {
                 Ok((Rc::new(core::Term::Free { id:id.clone() }), var_type))
@@ -416,19 +419,19 @@ fn infer(mut ctx: Context, term: &syntax::Term) -> Result<(Rc<core::Term>, Handl
 
         syntax::Term::Apply { mode, fun, arg, .. } => {
             let (fun_elabed, fun_type) = infer(ctx.clone(), fun)?;
-            match &*Handle::upgrade(&fun_type) {
+            match fun_type.as_ref() {
                 Value::Pi { mode:type_mode, name, domain, closure } => {
                     if mode != type_mode { return Err(ElabError::ModeMismatch); }
                     let arg_elabed = check(ctx.clone(), arg, domain.clone())?;
                     let arg_value = LazyValue::new(ctx.env(), arg_elabed.clone());
-                    let closure_arg = EnvEntry::new(*mode, *name, arg_value);
-                    let result_type = closure.apply(ctx.refs, closure_arg);
+                    let closure_arg = EnvEntry::new(mode.to_apply_type(&arg.sort()), *name, arg_value);
+                    let result_type = closure.apply(refs, closure_arg);
                     let result = Rc::new(core::Term::Apply {
-                        mode:*mode,
+                        apply_type: mode.to_apply_type(&arg.sort()),
                         fun: fun_elabed,
                         arg: arg_elabed
                     });
-                    Ok((result, Value::unfold_to_head(ctx.refs, result_type)))
+                    Ok((result, Value::unfold_to_head(refs, result_type)))
                 },
                 _ => Err(ElabError::ExpectedFunctionType)
             }
@@ -436,16 +439,16 @@ fn infer(mut ctx: Context, term: &syntax::Term) -> Result<(Rc<core::Term>, Handl
 
         syntax::Term::Project { variant, body, .. } => {
             let (body_elabed, body_type) = infer(ctx.clone(), body)?;
-            match &*Handle::upgrade(&body_type) {
+            match body_type.as_ref() {
                 Value::IntersectType { name, first, second } => {
                     let first_proj = Rc::new(core::Term::Project { variant:1, body: body_elabed.clone() });
-                    let first_value = Value::eval(ctx.refs, ctx.env(), first_proj.clone());
+                    let first_value = Value::eval(refs, ctx.env(), first_proj.clone());
                     match variant {
-                        1 => Ok((first_proj, Value::unfold_to_head(ctx.refs, first.clone()))),
+                        1 => Ok((first_proj, Value::unfold_to_head(refs, first.clone()))),
                         2 => {
                             let second_proj = Rc::new(core::Term::Project { variant:2, body: body_elabed });
-                            let closure_arg = EnvEntry::new(Mode::Free, *name, LazyValue::computed(first_value));
-                            let result_type = Value::unfold_to_head(ctx.refs, second.apply(ctx.refs, closure_arg));
+                            let closure_arg = EnvEntry::new(ApplyType::Free, *name, LazyValue::computed(first_value));
+                            let result_type = Value::unfold_to_head(refs, second.apply(refs, closure_arg));
                             Ok((second_proj, result_type))
                         }
                         _ => Err(ElabError::UnsupportedProjection)
@@ -457,9 +460,9 @@ fn infer(mut ctx: Context, term: &syntax::Term) -> Result<(Rc<core::Term>, Handl
 
         syntax::Term::Cast { equation, input, erasure, .. } => {
             let (input_elabed, result_type) = infer(ctx.clone(), input)?;
-            let input_value = Value::eval(ctx.refs, ctx.env(), input_elabed.clone());
+            let input_value = Value::eval(refs, ctx.env(), input_elabed.clone());
             let erasure_elabed = erase(ctx.clone(), erasure)?;
-            let erasure_value = Value::eval(ctx.refs, ctx.env(), erasure_elabed.clone());
+            let erasure_value = Value::eval(refs, ctx.env(), erasure_elabed.clone());
             let equality_type = Value::equality(input_value, erasure_value);
             let equation_elabed = check(ctx.clone(), equation, equality_type)?;
             let result = Rc::new(core::Term::Cast { 
@@ -467,7 +470,7 @@ fn infer(mut ctx: Context, term: &syntax::Term) -> Result<(Rc<core::Term>, Handl
                 input: input_elabed,
                 erasure: erasure_elabed
             });
-            Ok((result, Value::unfold_to_head(ctx.refs, result_type)))
+            Ok((result, Value::unfold_to_head(refs, result_type)))
         }
 
         syntax::Term::Star { .. } => Ok((Rc::new(core::Term::Star), Value::super_star())),
@@ -478,17 +481,20 @@ fn infer(mut ctx: Context, term: &syntax::Term) -> Result<(Rc<core::Term>, Handl
 
         syntax::Term::Annotate { anno, body, .. } => {
             let anno_elabed = check(ctx.clone(), anno, Value::star())?;
-            let anno_value = Value::eval(ctx.refs, ctx.env(), anno_elabed.clone());
+            let anno_value = Value::eval(refs, ctx.env(), anno_elabed.clone());
             let body_elabed = check(ctx.clone(), body, anno_value.clone())?;
             let result = Rc::new(core::Term::Annotate {
                 anno: anno_elabed,
                 body: body_elabed
             });
-            Ok((result, Value::unfold_to_head(ctx.refs, anno_value)))
+            Ok((result, Value::unfold_to_head(refs, anno_value)))
         }
 
         _ => Err(ElabError::InferenceFailed { span:term.span() })
     };
+    if let Ok((_, ref inferred_type)) = result {
+        log::trace!("\n{} {} {}", term.as_str(refs.text), "=>".bright_blue(), inferred_type);
+    }
     result
 }
 
@@ -500,7 +506,7 @@ fn erase(mut ctx: Context, term: &syntax::Term) -> Result<Rc<core::Term>, ElabEr
             if mode == Mode::Erased || sort != Sort::Term { erase(ctx, body) }
             else {
                 let name = var.unwrap_or_default();
-                ctx.bind(mode, name, Value::star());
+                ctx.bind(ApplyType::Free, name, Value::star());
                 let body = erase(ctx, body)?;
                 Ok(Rc::new(core::Term::Lambda { mode, name, body }))
             }
@@ -510,7 +516,7 @@ fn erase(mut ctx: Context, term: &syntax::Term) -> Result<Rc<core::Term>, ElabEr
             if mode == Mode::Erased || sort != Sort::Term { erase(ctx, body) }
             else {
                 let let_body = erase(ctx.clone(), &def.body)?;
-                ctx.bind(mode, def.name, Value::star());
+                ctx.bind(ApplyType::Free, def.name, Value::star());
                 let body = erase(ctx, body)?;
                 Ok(Rc::new(core::Term::Let { mode, name:def.name, let_body, body }))
             }
@@ -535,15 +541,16 @@ fn erase(mut ctx: Context, term: &syntax::Term) -> Result<Rc<core::Term>, ElabEr
             let (mode, sort) = (*mode, *sort);
             if mode == Mode::Erased || sort != Sort::Term { erase(ctx, fun) }
             else {
+                let apply_type = ApplyType::Free;
                 let fun = erase(ctx.clone(), fun)?;
                 let arg = erase(ctx, arg)?;
-                Ok(Rc::new(core::Term::Apply { mode, fun, arg }))
+                Ok(Rc::new(core::Term::Apply { apply_type, fun, arg }))
             }
         },
         Term::Variable { id, .. } => {
             let (_, level) = lookup_type(ctx.clone(), id)?;
             if let Some(level) = level {
-                let index = level.to_index(ctx.env_lvl());
+                let index = level.to_index(ctx.env.len());
                 Ok(Rc::new(core::Term::Bound { index }))
             } else {
                 Ok(Rc::new(core::Term::Free { id:id.clone() }))
@@ -554,13 +561,13 @@ fn erase(mut ctx: Context, term: &syntax::Term) -> Result<Rc<core::Term>, ElabEr
     }
 }
 
-fn convertible(ctx: Context, span: Span, left: &Handle, right: &Handle) -> Result<(), ElabError> {
-    /* eprintln!("{} {:#?} =? {:#?}", "convertible?".red(), left.deref(), right.deref()); */
+fn convertible(ctx: Context, span: Span, left: &Rc<Value>, right: &Rc<Value>) -> Result<(), ElabError> {
+    log::debug!("\n{} {} {}", left, "=?".bright_blue(), right);
     if Value::convertible(ctx.refs, ctx.env_lvl(), left, right) { Ok(()) }
     else { Err(ElabError::Inconvertible { span }) }
 }
 
-fn lookup_type(ctx: Context, id: &Id) -> Result<(Handle, Option<Level>), ElabError> {
+fn lookup_type(ctx: Context, id: &Id) -> Result<(Rc<Value>, Option<Level>), ElabError> {
     let has_namespace = if id.namespace.is_empty() { Some(()) } else { None };
     let toplevel_type = ctx.refs.lookup_type(id);
     let context_type = has_namespace

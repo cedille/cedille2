@@ -1,0 +1,6 @@
+module core/false.
+
+False : ★ = ∀ X:★. X.
+
+explode : ∀ X:★. False ➔ X
+= Λ X. λ f. f ·X.

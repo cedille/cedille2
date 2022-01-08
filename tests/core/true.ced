@@ -1,0 +1,5 @@
+module core/true.
+
+import false.
+
+True : ★ = False ➔ False.

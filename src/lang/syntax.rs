@@ -209,6 +209,13 @@ pub enum Term {
     },
 }
 
+impl DefineTerm {
+    pub fn as_str<'a, 'b>(&'a self, text: &'b str) -> &'b str {
+        let (start, end) = self.span;
+        &text[start..end]
+    }
+}
+
 impl Term {
     pub fn span(&self) -> Span {
         match self {
@@ -235,16 +242,11 @@ impl Term {
         }
     }
 
-    /// Returns the syntactic sort of a term.
-    /// The syntactic sort does not need to match the actual sort.
-    /// 
-    /// For example:
-    /// ```ignore
-    ///     f : Nat → Nat = ...
-    ///     Λ X. f Nat 
-    /// ```
-    /// The sort of `Nat` in the above would be `Sort::Term` but it is obviously a type.
-    /// Thus, the sort returned is the _intended_ sort of the syntax.
+    pub fn as_str<'a, 'b>(&'a self, text: &'b str) -> &'b str {
+        let (start, end) = self.span();
+        &text[start..end]
+    }
+
     pub fn sort(&self) -> Sort {
         match self {
             Term::Lambda { sort, .. }

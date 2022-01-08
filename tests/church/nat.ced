@@ -1,0 +1,12 @@
+module church/nat.
+
+Nat : ★ = ∀ X:★. X ➔ (X ➔ X) ➔ X.
+
+zero : Nat
+= Λ X. λ z. λ s. z.
+
+zero2 : Nat ➾ Nat
+= Λ n. zero.
+
+succ : Nat ➔ Nat
+= λ n. Λ X. λ z. λ s. s (n·X z s).

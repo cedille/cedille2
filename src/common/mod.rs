@@ -4,7 +4,7 @@ use std::{ops, fmt};
 use derive_more::{From, AsRef, AsMut, Deref, Display};
 use internment::LocalIntern;
 
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord, Display, Default)]
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord, Display)]
 pub struct Symbol(LocalIntern<String>);
 
 impl From<&str> for Symbol {
@@ -20,16 +20,49 @@ impl ops::Deref for Symbol {
     fn deref(&self) -> &Self::Target { self.0.deref() }
 }
 
+impl Default for Symbol {
+    fn default() -> Self { Self::from("_") }
+}
+
 #[derive(Debug, Hash, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Id {
     pub namespace: Vec<Symbol>,
     pub name: Symbol,
 }
 
+impl fmt::Display for Id {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut result = Ok(());
+        for component in self.namespace.iter() {
+            result = result.and_then(|_| write!(f, "{}.", component));
+        }
+        result.and_then(|_| write!(f, "{}", self.name))
+    }
+}
+
+#[derive(Debug, Hash, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ApplyType {
+    Free,
+    TermErased,
+    TypeErased
+}
+
 #[derive(Debug, Hash, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Mode {
     Erased,
     Free
+}
+
+impl Mode {
+    pub fn to_apply_type(&self, sort: &Sort) -> ApplyType {
+        if *sort == Sort::Term { 
+            match self {
+                Mode::Free => ApplyType::Free,
+                Mode::Erased => ApplyType::TermErased
+            }
+        }
+        else { ApplyType::TypeErased }
+    }
 }
 
 #[derive(Debug, Hash, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -50,6 +83,12 @@ impl ops::Add<usize> for Index {
     }
 }
 
+impl Index {
+    pub fn to_level(self, env: usize) -> Level {
+        (env - *self - 1).into()
+    }
+}
+
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord, From, AsRef, AsMut, Deref, Display)]
 pub struct Level(usize);
 
@@ -62,34 +101,7 @@ impl ops::Add<usize> for Level {
 }
 
 impl Level {
-    pub fn to_index(self, env: Level) -> Index {
-        (*env - *self - 1).into()
-    }
-}
-
-pub struct ConsVec<T>(im_rc::Vector<T>);
-
-impl<T: Clone> ConsVec<T> {
-    pub fn new() -> ConsVec<T> {
-        ConsVec(im_rc::Vector::new())
-    }
-}
-
-impl<T> ops::Deref for ConsVec<T> {
-    type Target = im_rc::Vector<T>;
-    fn deref(&self) -> &Self::Target { &self.0 }
-}
-
-impl<T> ops::DerefMut for ConsVec<T> {
-    fn deref_mut(&mut self) -> &mut Self::Target { &mut self.0 }
-}
-
-impl<T: Clone> Clone for ConsVec<T> {
-    fn clone(&self) -> Self { Self(self.0.clone()) }
-}
-
-impl<T: fmt::Debug + Clone> fmt::Debug for ConsVec<T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_tuple("ConsVec").field(&self.0).finish()
+    pub fn to_index(self, env: usize) -> Index {
+        (env - *self - 1).into()
     }
 }
