@@ -81,7 +81,7 @@ impl<'a> References<'a> {
         let decl_type = has_namespace.and(self.decl_types.get(&id.name)).cloned();
         match (db_type, decl_type) {
             (Some(_), Some(_)) => Err(ElabError::DefinitionCollision),
-            | (Some(_ty), None) => todo!(),
+            (Some(ty), None)
             | (None, Some(ty)) => Ok(ty.force(*self)),
             (None, None) => Err(ElabError::MissingName)
         }
@@ -93,8 +93,8 @@ impl<'a> References<'a> {
         let decl_def = has_namespace.and(self.decl_defs.get(&id.name)).cloned();
         match (db_def, decl_def) {
             (Some(_), Some(_)) => Err(ElabError::DefinitionCollision),
-            | (Some(_ty), None) => todo!(),
-            | (None, Some(ty)) => Ok(ty.force(*self)),
+            (Some(def), None)
+            | (None, Some(def)) => Ok(def.force(*self)),
             (None, None) => Err(ElabError::MissingName)
         }
     }
@@ -562,9 +562,11 @@ fn erase(mut ctx: Context, term: &syntax::Term) -> Result<Rc<core::Term>, ElabEr
 }
 
 fn convertible(ctx: Context, span: Span, left: &Rc<Value>, right: &Rc<Value>) -> Result<(), ElabError> {
-    log::debug!("\n{} {} {}", left, "=?".bright_blue(), right);
     if Value::convertible(ctx.refs, ctx.env_lvl(), left, right) { Ok(()) }
-    else { Err(ElabError::Inconvertible { span }) }
+    else {
+        log::debug!("\n{} {} {}", left, "=?".bright_blue(), right);
+        Err(ElabError::Inconvertible { span })
+    }
 }
 
 fn lookup_type(ctx: Context, id: &Id) -> Result<(Rc<Value>, Option<Level>), ElabError> {

@@ -1,6 +1,6 @@
 module church/vec.
 
-import church/nat.
+import nat.
 
 Vec : ★ ➔ Nat ➔ ★
 = λ A. λ n. ∀ X:Nat ➔ ★. X zero ➔ (∀ n:Nat. A ➔ X n ➔ X (succ n)) ➔ X n.

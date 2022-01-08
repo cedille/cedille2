@@ -11,7 +11,7 @@ use colored::*;
 use thiserror::Error;
 
 use crate::common::{Id, Mode, Symbol};
-use crate::kernel::core;
+use crate::kernel::value::{Environment, LazyValue};
 use crate::lang::parser;
 use crate::lang::syntax;
 use crate::lang::elaborator;
@@ -23,36 +23,27 @@ pub enum DatabaseError {
 }
 
 #[derive(Debug)]
-struct ImmediateExports {
-    namespace_args: Vec<(Mode, syntax::Term)>,
-    def: HashSet<syntax::Term>
-}
-
-#[derive(Debug)]
-struct ImportData {
-    name: Option<Symbol>,
-    args: Vec<(Mode, syntax::Term)>,
-}
-
-#[derive(Debug)]
 struct DeclValues {
-    type_value: Rc<core::Term>,
-    definition_value: Rc<core::Term>
+    type_value: LazyValue,
+    def_value: LazyValue
 }
 
 #[derive(Debug)]
 struct ModuleData {
     text: String,
-    imports: HashMap<Symbol, ImportData>,
-    exports: HashMap<Option<Symbol>, ImmediateExports>,
     values: HashMap<Symbol, DeclValues>,
-    params: Vec<syntax::Parameter>,
     last_modified: SystemTime,
+}
+
+#[derive(Debug)]
+struct ModuleImports {
+    imports: HashMap<Symbol, Option<Symbol>>
 }
 
 #[derive(Debug)]
 pub struct Database {
     modules: HashMap<Symbol, ModuleData>,
+    imports: HashMap<Symbol, ModuleImports>,
     defs: HashSet<Id>,
 }
 
@@ -60,6 +51,7 @@ impl Database {
     pub fn new() -> Database {
         Database { 
             modules: HashMap::new(),
+            imports: HashMap::new(),
             defs: HashSet::new(),
         }
     }
@@ -71,13 +63,11 @@ impl Database {
 
     fn loaded(&self, module: Symbol) -> bool {
         if let Some(data) = self.modules.get(&module) {
-            let imports_loaded = data.imports.iter()
-                .all(|(i, _)| self.loaded( *i));
             let current_modified = Path::new(module.as_ref())
                 .metadata()
                 .and_then(|m| m.modified())
                 .unwrap_or_else(|_| SystemTime::now());
-            imports_loaded && current_modified <= data.last_modified
+            current_modified <= data.last_modified
         } else { false }
     }
 
@@ -137,32 +127,39 @@ impl Database {
              ***/
             let import_paths = parser::extract_imports(tree.clone()).into_iter()
                 .map(|(start, end)| Path::new(&text[start..end]));
-            let imports = self.load_imports(path.parent().unwrap(), import_paths, visited)?;
+            let import_names = self.load_imports(path.parent().unwrap(), import_paths, visited)?;
+            let mut imports = HashMap::new();
+            for name in import_names.into_iter() {
+                imports.insert(name, None);
+            }
+            self.imports.insert(sym, ModuleImports { imports });
             /***
              * Construct the statically typed AST
              ***/
-            let mut tree = parser::module(tree);
+            let tree = parser::module(tree);
             /***
              * Elaborate and type check the statically typed AST
              ***/
-            let kernel = elaborator::elaborate(&text, self, &tree, sym)?;
+            let core_module = elaborator::elaborate(&text, self, &tree, sym)?;
             /***
              * Extract the modules exports
              ***/
-            /* let exports = HashMap::new(); */
+            let mut values = HashMap::new();
+            for decl in core_module.decls.iter() {
+                let type_value = LazyValue::new(Environment::new(), decl.ty.clone());
+                let def_value = LazyValue::new(Environment::new(), decl.body.clone());
+                let decl_data = DeclValues { type_value, def_value };
+                values.insert(decl.name, decl_data);
+            }
             /***
              * Finish loading the module
              ***/
-    /*             let data = ModuleData {
-                syntax: tree,
-                kernel,
+            let data = ModuleData {
                 text,
-                imports,
-                exports,
-                normals: HashMap::new(),
+                values,
                 last_modified,
             };
-            self.modules.insert(sym, data); */
+            self.modules.insert(sym, data);
         }
         Ok(sym)
     }
@@ -193,9 +190,9 @@ impl Database {
         let mut module = Some(module);
         let get_next_module = |module, namespace_component| {
             if let Some(module) = module {
-                if let Some(pairs) = self.modules.get(&module) {
+                if let Some(pairs) = self.imports.get(&module) {
                     let pairs = pairs.imports.iter()
-                    .map(|(key, data)| (key, data.name))
+                    .map(|(key, name)| (key, name))
                     .collect::<Vec<_>>();
                     let next_module = pairs.iter().find_map(|(_, name)| match name {
                         | Some(n) => if *n == namespace_component { Some(n) } else { None },
@@ -211,26 +208,36 @@ impl Database {
         module
     }
 
-    fn lookup_module_data(&self, module: Symbol, id: &Id) -> Option<&ModuleData> {
-        let module = self.trace_qualified_id(module, id);
-        module.map(|s| self.modules.get(&s)).flatten()
+    /// Lookup the definition of a declaration in its unqualified imports
+    /// without chasing the namespace even if one is present
+    fn lookup_decl_immediate(&self, module: Symbol, id: &Id) -> Option<&DeclValues> {
+        let module_imports = self.imports.get(&module);
+        module_imports.map(|data| {
+            let mut result = self.modules.get(&module)
+                .map(|data| data.values.get(&id.name))
+                .flatten();
+            for (import_module, import_name) in data.imports.iter() {
+                if import_name.is_none() {
+                    result = result.or_else(|| self.lookup_decl_immediate(*import_module, id));
+                }
+            }
+            result
+        }).flatten()
     }
 
-    pub fn lookup_def(&self, module: Symbol, id: &Id) -> Option<Rc<core::Term>> {
-        let module_data = self.lookup_module_data(module, id);
-        module_data.map(|data| data.values.get(&id.name))
+    fn lookup_decl(&self, module: Symbol, id: &Id) -> Option<&DeclValues> {
+        let root_module = self.trace_qualified_id(module, id);
+        root_module.map(|module| self.lookup_decl_immediate(module, id))
             .flatten()
-            .map(|values| values.definition_value.clone())
     }
 
-    pub fn lookup_type(&self, module: Symbol, id: &Id) -> Option<Rc<core::Term>> {
-        let module_data = self.lookup_module_data(module, id);
-        module_data.map(|data| data.values.get(&id.name))
-            .flatten()
-            .map(|values| values.type_value.clone())
+    pub fn lookup_def(&self, module: Symbol, id: &Id) -> Option<LazyValue> {
+        let decl = self.lookup_decl(module, id);
+        decl.map(|decl| decl.def_value.clone())
     }
 
-    pub fn lookup_module(&self, module: Symbol, id: &Id) -> Option<Symbol> {
-        self.trace_qualified_id(module, id)
+    pub fn lookup_type(&self, module: Symbol, id: &Id) -> Option<LazyValue> {
+        let decl = self.lookup_decl(module, id);
+        decl.map(|decl| decl.type_value.clone())
     }
 }
