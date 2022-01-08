@@ -1,4 +1,0 @@
-module cycle_a.
-
-import basic.
-import cycle_b.
