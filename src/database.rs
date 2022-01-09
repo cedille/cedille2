@@ -1,5 +1,4 @@
 
-use std::rc::Rc;
 use std::io::prelude::*;
 use std::fs::{self, File};
 use std::time::SystemTime;
@@ -10,10 +9,10 @@ use anyhow::{Context, Result, anyhow};
 use colored::*;
 use thiserror::Error;
 
-use crate::common::{Id, Mode, Symbol};
+use crate::common::*;
 use crate::kernel::value::{Environment, LazyValue};
-use crate::lang::parser;
 use crate::lang::syntax;
+use crate::lang::parser;
 use crate::lang::elaborator;
 
 #[derive(Debug, Error)]
@@ -36,15 +35,26 @@ struct ModuleData {
 }
 
 #[derive(Debug)]
-struct ModuleImports {
-    imports: HashMap<Symbol, Option<Symbol>>
+struct ImportData {
+    public: bool,
+    path: Symbol,
+    namespace: Option<Symbol>
 }
 
 #[derive(Debug)]
 pub struct Database {
     modules: HashMap<Symbol, ModuleData>,
-    imports: HashMap<Symbol, ModuleImports>,
+    imports: HashMap<Symbol, Vec<ImportData>>,
     defs: HashSet<Id>,
+}
+
+fn path_to_module_symbol<P: AsRef<Path>>(prefix: P, path: P) -> Result<Symbol> {
+    let path = prefix.as_ref().join(path);
+    let canonical_path = path.canonicalize()
+        .with_context(|| format!("Failed to canonicalize path {}", path.display()))?;
+    let key = canonical_path.to_str()
+        .ok_or(DatabaseError::NonUnicodePath { path })?;
+    Ok(Symbol::from(key))
 }
 
 impl Database {
@@ -75,15 +85,13 @@ impl Database {
         , prefix: P
         , imports: impl Iterator<Item=P>
         , visited: HashSet<Symbol>)
-        -> Result<Vec<Symbol>>
+        -> Result<()>
     {
-        let mut result = vec![];
         for path in imports {
             let path = prefix.as_ref().join(path).with_extension("ced");
-            let sym = self.load_module_with_visited(path, visited.clone())?;
-            result.push(sym);
+            self.load_module_with_visited(path, visited.clone())?;
         }
-        Ok(result)
+        Ok(())
     }
 
     fn load_module_with_visited<P: AsRef<Path>>(&mut self
@@ -94,22 +102,18 @@ impl Database {
         let path = path.as_ref();
         let ext = path.extension().unwrap_or_default();
         if ext.to_string_lossy() != "ced" { return Ok(Symbol::from("")); }
-
-        let canonical_path = path.canonicalize()
-            .with_context(|| format!("Failed to canonicalize path {}", path.display()))?;
-        let key = canonical_path.to_str()
-            .ok_or(DatabaseError::NonUnicodePath { path:path.to_path_buf() })?;
-        let sym = Symbol::from(key);
+        let sym = path_to_module_symbol(Path::new(""), path)?;
+        let parent_path = Path::new(sym.as_str()).parent().unwrap();
 
         if visited.contains(&sym) {
-            return Err(anyhow!(format!("Cycle in dependencies of module {}", key)));
+            return Err(anyhow!(format!("Cycle in dependencies of module {}", *sym)));
         }
         visited.insert(sym);
 
         if self.loaded(sym) {
-            println!("{} {}{}", "skipping file".dimmed(), key, "...".dimmed());
+            println!("{} {}{}", "skipping file".dimmed(), *sym, "...".dimmed());
         } else {
-            println!("{} {}{}", "loading file".dimmed(), key, "...".dimmed());
+            println!("{} {}{}", "loading file".dimmed(), *sym, "...".dimmed());
             /***
              * Parse the file to the dynamically typed AST
              ***/
@@ -122,25 +126,30 @@ impl Database {
             file.read_to_end(&mut buffer)?;
             let text = String::from_utf8(buffer)?;
             let tree = parser::parse(&text)?;
+            let ast = parser::module(tree);
             /***
-             * Recurse through the files imports and load them first
+             * Load the import data so symbols can be resolved when elaborating
              ***/
-            let import_paths = parser::extract_imports(tree.clone()).into_iter()
-                .map(|(start, end)| Path::new(&text[start..end]));
-            let import_names = self.load_imports(path.parent().unwrap(), import_paths, visited)?;
-            let mut imports = HashMap::new();
-            for name in import_names.into_iter() {
-                imports.insert(name, None);
-            }
-            self.imports.insert(sym, ModuleImports { imports });
+            let import_data = ast.imports.iter()
+                .map(|syntax::Import { public, path, namespace, .. }|
+            {
+                let (start, end) = *path;
+                let path = Path::new(&text[start..end]);
+                let path = path.with_extension("ced");
+                let path = path_to_module_symbol(parent_path, &path)?;
+                Ok(ImportData { public: *public, path, namespace: *namespace })
+            }).collect::<Result<Vec<_>>>()?;
+            let import_paths = import_data.iter()
+                .map(|ImportData { path, .. }| Path::new(path.as_str()));
+            self.load_imports(path.parent().unwrap(), import_paths, visited)?;
+            self.imports.insert(sym, import_data);
             /***
              * Construct the statically typed AST
              ***/
-            let tree = parser::module(tree);
             /***
              * Elaborate and type check the statically typed AST
              ***/
-            let core_module = elaborator::elaborate(&text, self, &tree, sym)?;
+            let core_module = elaborator::elaborate(&text, self, &ast, sym)?;
             /***
              * Extract the modules exports
              ***/
@@ -186,58 +195,49 @@ impl Database {
         else { Err(anyhow!("Error loading directory.")) }
     }
 
-    fn trace_qualified_id(&self, module: Symbol, id: &Id) -> Option<Symbol> {
-        let mut module = Some(module);
-        let get_next_module = |module, namespace_component| {
-            if let Some(module) = module {
-                if let Some(pairs) = self.imports.get(&module) {
-                    let pairs = pairs.imports.iter()
-                    .map(|(key, name)| (key, name))
-                    .collect::<Vec<_>>();
-                    let next_module = pairs.iter().find_map(|(_, name)| match name {
-                        | Some(n) => if *n == namespace_component { Some(n) } else { None },
-                        | None => None
-                    });
-                    next_module.copied()
-                } else { None }
-            } else { None }
-        };
-        for component in id.namespace.iter() {
-            module = get_next_module(module, *component);
-        }
-        module
-    }
-
-    /// Lookup the definition of a declaration in its unqualified imports
-    /// without chasing the namespace even if one is present
-    fn lookup_decl_immediate(&self, module: Symbol, id: &Id) -> Option<&DeclValues> {
-        let module_imports = self.imports.get(&module);
-        module_imports.map(|data| {
-            let mut result = self.modules.get(&module)
-                .map(|data| data.values.get(&id.name))
-                .flatten();
-            for (import_module, import_name) in data.imports.iter() {
-                if import_name.is_none() {
-                    result = result.or_else(|| self.lookup_decl_immediate(*import_module, id));
-                }
-            }
-            result
+    fn reverse_lookup_namespace(&self, module: Symbol, component: Symbol) -> Option<&ImportData> {
+        self.imports.get(&module).map(|data| {
+            data.iter().find(|ImportData { namespace, .. }| {
+                if let Some(namespace) = namespace { component == *namespace }
+                else { false }
+            })
         }).flatten()
     }
 
-    fn lookup_decl(&self, module: Symbol, id: &Id) -> Option<&DeclValues> {
-        let root_module = self.trace_qualified_id(module, id);
-        root_module.map(|module| self.lookup_decl_immediate(module, id))
-            .flatten()
+    fn lookup_decl(&self, original: bool, module: Symbol, namespace: &mut Vec<Symbol>, name: Symbol) -> Option<&DeclValues> {
+        let mut result = None;
+        if let Some(component) = namespace.get(0) {
+            if let Some(import_data) = self.reverse_lookup_namespace(module, *component) {
+                namespace.pop();
+                if original || import_data.public {
+                    result = result
+                        .or_else(|| self.lookup_decl(false, import_data.path, namespace, name));
+                }
+            }
+        }
+        if let Some(module_data) = self.modules.get(&module) {
+            result = result.or_else(|| module_data.values.get(&name));
+        }
+        if let Some(imports) = self.imports.get(&module) {
+            for ImportData { public, path, namespace:qual } in imports.iter() {
+                if (original || *public) && qual.is_none() {
+                    result = result
+                        .or_else(|| self.lookup_decl(false, *path, namespace, name));
+                }
+            }
+        }
+        result
     }
 
     pub fn lookup_def(&self, module: Symbol, id: &Id) -> Option<LazyValue> {
-        let decl = self.lookup_decl(module, id);
+        let mut namespace = id.namespace.clone();
+        let decl = self.lookup_decl(true, module, &mut namespace, id.name);
         decl.map(|decl| decl.def_value.clone())
     }
 
     pub fn lookup_type(&self, module: Symbol, id: &Id) -> Option<LazyValue> {
-        let decl = self.lookup_decl(module, id);
+        let mut namespace = id.namespace.clone();
+        let decl = self.lookup_decl(true, module, &mut namespace, id.name);
         decl.map(|decl| decl.type_value.clone())
     }
 }

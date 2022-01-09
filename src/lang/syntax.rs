@@ -1,5 +1,5 @@
 
-use crate::common::{Id, Mode, Sort, Symbol};
+use crate::common::*;
 
 type Span = (usize, usize);
 

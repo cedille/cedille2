@@ -1,0 +1,6 @@
+module qualified.
+
+import unit as U.
+
+Unit : ★ = U.Unit.
+unit : Unit = U.unit.

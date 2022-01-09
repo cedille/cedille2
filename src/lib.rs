@@ -53,12 +53,19 @@ mod tests {
 
     test_file_success!(core_false);
     test_file_success!(core_true);
+
     test_file_success!(church_bool);
     test_file_success!(church_list);
     test_file_success!(church_nat);
     test_file_success!(church_unit);
     test_file_success!(church_inductive_unit);
     test_file_success!(church_vec);
+
+    test_file_success!(module_unqualified);
+    test_file_success!(module_qualified);
+    test_file_success!(module_transitive);
+    test_file_success!(module_transitive2);
+    test_file_success!(module_transitive3);
 
     test_file_failure!(module_cycle);
 }

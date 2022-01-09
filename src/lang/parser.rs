@@ -1,6 +1,5 @@
 // TODO: Modify this file so that all of the rule productions use an Extract combinator
 // TODO: Centralize any of the possible panics in the Extract combinators
-// TODO: Switch to a two phased extraction so that we aren't cloning the pairs parse tree
 
 use pest::Parser;
 use pest::iterators::{Pair, Pairs};
@@ -91,26 +90,6 @@ impl<'a> Extract for Pairs<'a, Rule> {
         let p = self.next().unwrap();
         f(p).unwrap()
     }
-}
-
-pub fn extract_imports(mut pairs: Pairs<Rule>) -> Vec<Span> {
-    let import_closure = |p:Pair<Rule>| {
-        let mut inner = p.into_inner();
-        inner.optional(Rule::public, |_| { });
-        inner.required(|p| span(p.as_span()))
-    };
-    let mut imports = pairs.list(Rule::import, import_closure);
-    pairs.required(|_| { }); // Skip module_header
-    let mut decl_imports = pairs.variant_list(|p|
-        match p.as_rule() {
-        | Rule::import => Some(Some(import_closure(p))),
-        | Rule::define_term | Rule::define_type | Rule::define_kind | Rule::define_datatype
-            => Some(None),
-        | _ => None
-    });
-    let decl_imports = decl_imports.drain(..).flatten();
-    imports.extend(decl_imports);
-    imports
 }
 
 pub fn module(pairs: Pairs<Rule>) -> Module {

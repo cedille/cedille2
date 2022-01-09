@@ -1,0 +1,6 @@
+module transitive.
+
+import unitwrapper.
+
+Unit2 : ★ = Unit.
+unit2 : Unit2 = unit.

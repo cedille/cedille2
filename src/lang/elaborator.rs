@@ -111,9 +111,7 @@ struct Context<'a> {
 }
 
 impl<'a> Context<'a> {
-    fn new(sort: Sort, refs: References)
-        -> Context
-    {
+    fn new(sort: Sort, refs: References) -> Context {
         Context {
             refs,
             env: Environment::new(),

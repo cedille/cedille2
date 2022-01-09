@@ -347,7 +347,7 @@ impl Value {
     }
 
     pub fn pi(mode: Mode, name: Symbol, domain: Rc<Value>, closure: Closure) -> Rc<Value> {
-        Rc::new(Value::Pi { mode, name, domain: domain.into(), closure })
+        Rc::new(Value::Pi { mode, name, domain, closure })
     }
 
     pub fn intersect_type(name: Symbol, first: Rc<Value>, second: Closure) -> Rc<Value> {
