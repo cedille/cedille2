@@ -1,0 +1,10 @@
+module mixed.
+
+import unit as U1.
+
+Unit1 : ★ = U1.Unit.
+
+import unit as U2.
+
+Unit1_2 : ★ = U1.Unit.
+Unit2 : ★ = U2.Unit.

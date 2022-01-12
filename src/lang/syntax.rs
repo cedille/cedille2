@@ -13,7 +13,7 @@ pub struct Parameter {
 
 #[derive(Debug, Clone)]
 pub struct Module {
-    pub imports: Vec<Import>,
+    pub header_imports: Vec<Import>,
     pub path: Span,
     pub decls: Vec<Decl>,
     pub params: Vec<Parameter>
@@ -24,6 +24,7 @@ pub enum Decl {
     Type(DefineTerm),
     Term(DefineTerm),
     Kind(DefineKind),
+    Import(Import),
     Datatype(DefineDatatype)
 }
 

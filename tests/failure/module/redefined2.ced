@@ -1,0 +1,5 @@
+module redefined2.
+
+import ../church/unitwrapper.
+
+Unit : ★ = ∀ X:★. X.

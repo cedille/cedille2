@@ -1,4 +1,5 @@
 
+use std::rc::Rc;
 use std::io::prelude::*;
 use std::fs::{self, File};
 use std::time::SystemTime;
@@ -6,14 +7,15 @@ use std::path::{Path, PathBuf};
 use std::collections::{HashSet, HashMap};
 
 use anyhow::{Context, Result, anyhow};
-use colored::*;
 use thiserror::Error;
+use normpath::PathExt;
 
 use crate::common::*;
+use crate::kernel::core;
 use crate::kernel::value::{Environment, LazyValue};
 use crate::lang::syntax;
 use crate::lang::parser;
-use crate::lang::elaborator;
+use crate::lang::elaborator::{self, ElabError};
 
 #[derive(Debug, Error)]
 pub enum DatabaseError {
@@ -23,15 +25,8 @@ pub enum DatabaseError {
 
 #[derive(Debug)]
 struct DeclValues {
-    type_value: LazyValue,
-    def_value: LazyValue
-}
-
-#[derive(Debug)]
-struct ModuleData {
-    text: String,
-    values: HashMap<Symbol, DeclValues>,
-    last_modified: SystemTime,
+    type_value: Rc<LazyValue>,
+    def_value: Rc<LazyValue>
 }
 
 #[derive(Debug)]
@@ -42,18 +37,35 @@ struct ImportData {
 }
 
 #[derive(Debug)]
-pub struct Database {
-    modules: HashMap<Symbol, ModuleData>,
-    imports: HashMap<Symbol, Vec<ImportData>>,
-    defs: HashSet<Id>,
+struct ModuleData {
+    text: String,
+    values: HashMap<Symbol, DeclValues>,
+    imports: Vec<ImportData>,
+    exports: HashSet<Id>,
+    scope: HashSet<Id>,
+    last_modified: SystemTime,
 }
 
-fn path_to_module_symbol<P: AsRef<Path>>(prefix: P, path: P) -> Result<Symbol> {
-    let path = prefix.as_ref().join(path);
-    let canonical_path = path.canonicalize()
-        .with_context(|| format!("Failed to canonicalize path {}", path.display()))?;
-    let key = canonical_path.to_str()
-        .ok_or(DatabaseError::NonUnicodePath { path })?;
+#[derive(Debug)]
+pub struct Database {
+    modules: HashMap<Symbol, ModuleData>,
+    queued: Vec<Symbol>
+}
+
+pub fn path_to_module_symbol<P: AsRef<Path>>(prefix: P, path: P) -> Result<Symbol> {
+    let path = if cfg!(target_os = "windows") {
+        let windows_fix= path.as_ref()
+            .to_str()
+            .ok_or(DatabaseError::NonUnicodePath { path: path.as_ref().into() })?
+            .replace("/", "\\");
+        PathBuf::from(windows_fix)
+    } else { path.as_ref().into() };
+    let mut result: PathBuf = prefix.as_ref().into();
+    result.push(path);
+    let canonical_path = result.normalize()
+        .with_context(|| format!("Failed to normalize path {}", result.display()))?;
+    let key = canonical_path.as_path().to_str()
+        .ok_or(DatabaseError::NonUnicodePath { path: result })?;
     Ok(Symbol::from(key))
 }
 
@@ -61,120 +73,127 @@ impl Database {
     pub fn new() -> Database {
         Database { 
             modules: HashMap::new(),
-            imports: HashMap::new(),
-            defs: HashSet::new(),
+            queued: Vec::new()
         }
     }
 
-    pub fn clear(&mut self) {
-        self.modules.clear();
-        self.defs.clear();
+    pub fn insert_decl(&mut self, decl: core::Decl) -> Result<(), ElabError> {
+        let active = self.queued.last().unwrap();
+        let module_data = self.modules.get_mut(active).unwrap();
+        let id = Id::from(decl.name);
+        if module_data.scope.contains(&id) || module_data.exports.contains(&id) {
+            Err(ElabError::DefinitionCollision)
+        } else {
+            module_data.scope.insert(id.clone());
+            module_data.exports.insert(id);
+            let type_value = Rc::new(LazyValue::new(Environment::new(), decl.ty.clone()));
+            let def_value = Rc::new(LazyValue::new(Environment::new(), decl.body.clone()));
+            let decl_values = DeclValues { type_value, def_value };
+            module_data.values.insert(decl.name, decl_values);
+            Ok(())
+        }
     }
 
     fn loaded(&self, module: Symbol) -> bool {
         if let Some(data) = self.modules.get(&module) {
+            let mut imports_loaded = true;
+            for ImportData { path, .. } in data.imports.iter() {
+                imports_loaded = imports_loaded && self.loaded(*path);
+            }
+
             let current_modified = Path::new(module.as_ref())
                 .metadata()
                 .and_then(|m| m.modified())
                 .unwrap_or_else(|_| SystemTime::now());
-            current_modified <= data.last_modified
+            
+            imports_loaded && current_modified <= data.last_modified
         } else { false }
     }
 
-    fn load_imports<P: AsRef<Path>>(&mut self
-        , prefix: P
-        , imports: impl Iterator<Item=P>
-        , visited: HashSet<Symbol>)
-        -> Result<()>
-    {
-        for path in imports {
-            let path = prefix.as_ref().join(path).with_extension("ced");
-            self.load_module_with_visited(path, visited.clone())?;
-        }
-        Ok(())
+    pub fn load_import(&mut self, import: &syntax::Import) -> Result<()> {
+        let active = self.queued.last().copied().unwrap();
+        let path = {
+            let module_data = self.modules.get(&active).unwrap();
+            let (start, end) = import.path;
+            let parent_path = Path::new(&**active).parent().unwrap();
+            let path = Path::new(&module_data.text[start..end]).with_extension("ced");
+            path_to_module_symbol(parent_path, &path)?
+        };
+
+        self.load_module(path)?;
+        let import_module_data = self.modules.remove(&path).unwrap();
+        
+        let result = {
+            let module_data = self.modules.get_mut(&active).unwrap();
+            let import_data = ImportData { public: import.public, path, namespace: import.namespace };
+            module_data.imports.push(import_data);
+
+            if module_data.scope.intersection(&import_module_data.exports).count() != 0 {
+                Err(anyhow::Error::new(ElabError::DefinitionCollision))
+            } else {
+                for id in import_module_data.exports.iter() {
+                    let mut id = id.clone();
+                    if let Some(qual) = import.namespace { id.namespace.insert(0, qual); }
+                    module_data.scope.insert(id.clone());
+                    if import.public { module_data.exports.insert(id); }
+                }
+                Ok(())
+            }
+        };
+
+        self.modules.insert(path, import_module_data);
+        result
     }
 
-    fn load_module_with_visited<P: AsRef<Path>>(&mut self
-        , path: P
-        , mut visited: HashSet<Symbol>)
-        -> Result<Symbol>
-    {
+    pub fn load_module_from_path<P: AsRef<Path>>(&mut self, path: P) -> Result<Symbol> {
         let path = path.as_ref();
         let ext = path.extension().unwrap_or_default();
         if ext.to_string_lossy() != "ced" { return Ok(Symbol::from("")); }
         let sym = path_to_module_symbol(Path::new(""), path)?;
-        let parent_path = Path::new(sym.as_str()).parent().unwrap();
-
-        if visited.contains(&sym) {
-            return Err(anyhow!(format!("Cycle in dependencies of module {}", *sym)));
-        }
-        visited.insert(sym);
-
-        if self.loaded(sym) {
-            println!("{} {}{}", "skipping file".dimmed(), *sym, "...".dimmed());
-        } else {
-            println!("{} {}{}", "loading file".dimmed(), *sym, "...".dimmed());
-            /***
-             * Parse the file to the dynamically typed AST
-             ***/
-            let metadata = path.metadata()
-                .with_context(|| format!("Failed to extract metadata of path {}", path.display()))?;
-            let last_modified = metadata.modified().unwrap_or_else(|_| SystemTime::now());
-            let mut file = File::open(path)
-                .with_context(|| format!("Failed to open file with path {}", path.display()))?;
-            let mut buffer = Vec::new();
-            file.read_to_end(&mut buffer)?;
-            let text = String::from_utf8(buffer)?;
-            let tree = parser::parse(&text)?;
-            let ast = parser::module(tree);
-            /***
-             * Load the import data so symbols can be resolved when elaborating
-             ***/
-            let import_data = ast.imports.iter()
-                .map(|syntax::Import { public, path, namespace, .. }|
-            {
-                let (start, end) = *path;
-                let path = Path::new(&text[start..end]);
-                let path = path.with_extension("ced");
-                let path = path_to_module_symbol(parent_path, &path)?;
-                Ok(ImportData { public: *public, path, namespace: *namespace })
-            }).collect::<Result<Vec<_>>>()?;
-            let import_paths = import_data.iter()
-                .map(|ImportData { path, .. }| Path::new(path.as_str()));
-            self.load_imports(path.parent().unwrap(), import_paths, visited)?;
-            self.imports.insert(sym, import_data);
-            /***
-             * Construct the statically typed AST
-             ***/
-            /***
-             * Elaborate and type check the statically typed AST
-             ***/
-            let core_module = elaborator::elaborate(&text, self, &ast, sym)?;
-            /***
-             * Extract the modules exports
-             ***/
-            let mut values = HashMap::new();
-            for decl in core_module.decls.iter() {
-                let type_value = LazyValue::new(Environment::new(), decl.ty.clone());
-                let def_value = LazyValue::new(Environment::new(), decl.body.clone());
-                let decl_data = DeclValues { type_value, def_value };
-                values.insert(decl.name, decl_data);
-            }
-            /***
-             * Finish loading the module
-             ***/
-            let data = ModuleData {
-                text,
-                values,
-                last_modified,
-            };
-            self.modules.insert(sym, data);
-        }
+        self.load_module(sym)?;
         Ok(sym)
     }
 
-    pub fn load_module<P: AsRef<Path>>(&mut self, path: P) -> Result<()> {
-        self.load_module_with_visited(path, HashSet::new()).map(|_| ())
+    fn load_module(&mut self, sym: Symbol) -> Result<()> {
+        if self.queued.contains(&sym) {
+            Err(anyhow!(format!("Cycle in dependencies of module {}", *sym)))
+        } else if self.loaded(sym) {
+            log::info!("Skipped {}", *sym);
+            Ok(())
+        } else {
+            self.queued.push(sym);
+            let result = self.load_module_inner(sym);
+            self.queued.pop();
+            log::info!("Loaded {}", *sym);
+            result
+        }
+    }
+
+    fn load_module_inner(&mut self, sym: Symbol) -> Result<()> {
+        let path = Path::new(&*sym);
+        let metadata = path.metadata()
+            .with_context(|| format!("Failed to extract metadata of path {}", path.display()))?;
+        let last_modified = metadata.modified().unwrap_or_else(|_| SystemTime::now());
+        
+        let mut file = File::open(path)
+            .with_context(|| format!("Failed to open file with path {}", path.display()))?;
+        let mut buffer = Vec::new();
+        file.read_to_end(&mut buffer)?;
+        let text = String::from_utf8(buffer)?;
+
+        self.modules.insert(sym, ModuleData { 
+            text,
+            values: HashMap::new(),
+            imports: Vec::new(),
+            exports: HashSet::new(),
+            scope: HashSet::new(),
+            last_modified
+        });
+
+        let tree = parser::parse(self.text())?;
+        let ast = parser::module(tree);
+        elaborator::elaborate(self, &ast)?;
+        Ok(())
     }
 
     pub fn load_dir(&mut self, path: &Path) -> Result<()> {
@@ -183,7 +202,7 @@ impl Database {
             let entry = entry?;
             let path = entry.path();
             if path.is_file() {
-                if let Err(error) = self.load_module(path) {
+                if let Err(error) = self.load_module_from_path(path) {
                     found_error = true;
                     println!("{}", error);
                 }
@@ -196,8 +215,8 @@ impl Database {
     }
 
     fn reverse_lookup_namespace(&self, module: Symbol, component: Symbol) -> Option<&ImportData> {
-        self.imports.get(&module).map(|data| {
-            data.iter().find(|ImportData { namespace, .. }| {
+        self.modules.get(&module).map(|data| {
+            data.imports.iter().find(|ImportData { namespace, .. }| {
                 if let Some(namespace) = namespace { component == *namespace }
                 else { false }
             })
@@ -206,38 +225,51 @@ impl Database {
 
     fn lookup_decl(&self, original: bool, module: Symbol, namespace: &mut Vec<Symbol>, name: Symbol) -> Option<&DeclValues> {
         let mut result = None;
-        if let Some(component) = namespace.get(0) {
-            if let Some(import_data) = self.reverse_lookup_namespace(module, *component) {
-                namespace.pop();
-                if original || import_data.public {
-                    result = result
-                        .or_else(|| self.lookup_decl(false, import_data.path, namespace, name));
-                }
+        if_chain! {
+            if let Some(component) = namespace.get(0);
+            if let Some(import_data) = self.reverse_lookup_namespace(module, *component);
+            if original || import_data.public;
+            then {
+                namespace.remove(0);
+                result = self.lookup_decl(false, import_data.path, namespace, name);
             }
         }
-        if let Some(module_data) = self.modules.get(&module) {
-            result = result.or_else(|| module_data.values.get(&name));
+        if_chain! {
+            if result.is_none();
+            if namespace.is_empty();
+            if let Some(module_data) = self.modules.get(&module);
+            then { result = module_data.values.get(&name); }
         }
-        if let Some(imports) = self.imports.get(&module) {
-            for ImportData { public, path, namespace:qual } in imports.iter() {
-                if (original || *public) && qual.is_none() {
-                    result = result
-                        .or_else(|| self.lookup_decl(false, *path, namespace, name));
+        if_chain! {
+            if result.is_none();
+            if let Some(module_data) = self.modules.get(&module);
+            then {
+                for ImportData { public, path, namespace:qual } in module_data.imports.iter() {
+                    if (original || *public) && qual.is_none() {
+                        result = result.or_else(|| self.lookup_decl(false, *path, namespace, name));
+                    }
                 }
             }
         }
         result
     }
 
-    pub fn lookup_def(&self, module: Symbol, id: &Id) -> Option<LazyValue> {
+    pub fn lookup_def(&self, id: &Id) -> Option<Rc<LazyValue>> {
+        let active = self.queued.last().unwrap();
         let mut namespace = id.namespace.clone();
-        let decl = self.lookup_decl(true, module, &mut namespace, id.name);
+        let decl = self.lookup_decl(true, *active, &mut namespace, id.name);
         decl.map(|decl| decl.def_value.clone())
     }
 
-    pub fn lookup_type(&self, module: Symbol, id: &Id) -> Option<LazyValue> {
+    pub fn lookup_type(&self, id: &Id) -> Option<Rc<LazyValue>> {
+        let active = self.queued.last().unwrap();
         let mut namespace = id.namespace.clone();
-        let decl = self.lookup_decl(true, module, &mut namespace, id.name);
+        let decl = self.lookup_decl(true, *active, &mut namespace, id.name);
         decl.map(|decl| decl.type_value.clone())
+    }
+
+    pub fn text(&self) -> &str {
+        let active = self.queued.last().unwrap();
+        &self.modules.get(active).unwrap().text
     }
 }

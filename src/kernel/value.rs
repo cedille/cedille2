@@ -7,8 +7,8 @@ use std::cell::RefCell;
 use once_cell::unsync::OnceCell;
 
 use crate::common::*;
-use crate::lang::elaborator::References;
 use crate::kernel::core::Term;
+use crate::database::Database;
 
 #[derive(Debug, Clone)]
 pub struct EnvEntry {
@@ -113,11 +113,11 @@ pub struct Closure {
 }
 
 impl Closure {
-    pub fn apply(&self, refs: References, arg: EnvEntry) -> Rc<Value> {
+    pub fn apply(&self, db: &Database, arg: EnvEntry) -> Rc<Value> {
         let Closure { env, code } = self;
         let mut env = env.clone();
         env.push_back(arg);
-        Value::eval(refs, env, code.clone())
+        Value::eval(db, env, code.clone())
     }
 }
 
@@ -164,13 +164,13 @@ impl LazyValue {
         }
     }
 
-    pub fn force(&self, refs: References) -> Rc<Value> {
+    pub fn force(&self, db: &Database) -> Rc<Value> {
         match self.value.get() {
             Some(value) => value.clone(),
             None => {
                 match self.code.take() {
                     Some(code) => {
-                        let result = Value::eval(refs, code.env, code.term);
+                        let result = Value::eval(db, code.env, code.term);
                         self.value.set(result.clone()).ok();
                         result
                     },
@@ -180,9 +180,9 @@ impl LazyValue {
         }
     }
 
-    pub fn apply(&self, refs: References, arg: EnvEntry) -> LazyValue {
-        let value = self.force(refs).apply(refs, arg);
-        LazyValue::computed(value)
+    pub fn apply(&self, db: &Database, arg: EnvEntry) -> Rc<LazyValue> {
+        let value = self.force(db).apply(db, arg);
+        Rc::new(LazyValue::computed(value))
     }
 }
 
@@ -195,7 +195,7 @@ pub enum Value {
     Reference {
         id: Id,
         spine: Spine,
-        unfolded: Option<LazyValue>
+        unfolded: Option<Rc<LazyValue>>
     },
     Lambda {
         mode: Mode,
@@ -228,8 +228,9 @@ impl fmt::Display for Value {
                 if spine.len() == 0 { write!(f, "{}", level) }
                 else { write!(f, "{} {}", level, spine) }
             },
-            Value::Reference { id, spine, .. } => {
-                if spine.len() == 0 { write!(f, "{}", id) }
+            Value::Reference { id, spine, unfolded } => {
+                if let Some(unfolded) = unfolded { write!(f, "{}", unfolded) }
+                else if spine.len() == 0 { write!(f, "{}", id) }
                 else { write!(f, "{} {}", id, spine) }
             },
             Value::Lambda { mode, name, closure } => {
@@ -259,73 +260,13 @@ impl fmt::Display for Value {
 }
 
 pub trait ValueEx {
-    fn apply(&self, refs: References, arg: EnvEntry) -> Rc<Value>;
-    fn apply_spine(&self, refs: References, spine: Spine) -> Rc<Value>;
-    fn quote(&self, refs: References, level: Level) -> Term;
+    fn apply_spine(&self, db: &Database, spine: Spine) -> Rc<Value>;
 }
 
 impl ValueEx for Rc<Value> {
-    fn apply(&self, refs: References, arg: EnvEntry) -> Rc<Value> {
-        match self.as_ref() {
-            Value::Variable { level, spine } => {
-                let mut spine = spine.clone();
-                spine.push_back(arg);
-                Value::variable_with_spine(*level, spine)
-            },
-            Value::Reference { id, spine, unfolded } => {
-                let unfolded = unfolded.as_ref()
-                    .map(|v| v.apply(refs, arg.clone()));
-                let mut spine = spine.clone();
-                spine.push_back(arg);
-                Value::reference(id.clone(), spine, unfolded)
-            },
-            Value::Lambda { closure, .. } => closure.apply(refs, arg),
-            _ => unreachable!()
-        }
-    }
-
-    fn apply_spine(&self, refs: References, spine: Spine) -> Rc<Value> {
+    fn apply_spine(&self, db: &Database, spine: Spine) -> Rc<Value> {
         spine.iter()
-            .fold(self.clone(), |ref acc, entry| acc.apply(refs, entry.clone()))
-    }
-
-    fn quote(&self, refs: References, level: Level) -> Term {
-        match self.as_ref() {
-            Value::Variable { level:vlvl, spine } => {
-                let var = Term::Bound { index: vlvl.to_index(*level) };
-                Value::quote_spine(refs, level, var, spine.clone())
-            }
-            Value::Reference { id, spine, .. } => {
-                let var = Term::Free { id:id.clone() };
-                Value::quote_spine(refs, level, var, spine.clone())
-            }
-            Value::Lambda { mode, name, closure } => {
-                let (mode, name, apply_type) = (*mode, *name, mode.to_apply_type(&Sort::Term));
-                let input = EnvEntry::new(apply_type, name, LazyValue::computed(Value::variable(level)));
-                let body = Rc::new(closure.apply(refs, input).quote(refs, level + 1));
-                Term::Lambda { mode, name, body }
-            }
-            Value::Pi { mode, name, domain, closure } => {
-                let (mode, name, apply_type) = (*mode, *name, ApplyType::TypeErased);
-                let input = EnvEntry::new(apply_type, name, LazyValue::computed(Value::variable(level)));
-                let domain = Rc::new(domain.quote(refs, level));
-                let body = Rc::new(closure.apply(refs, input).quote(refs, level + 1));
-                Term::Pi { mode, name, domain, body }
-            },
-            Value::IntersectType { name, first, second } => {
-                let input = EnvEntry::new(ApplyType::TypeErased, *name, LazyValue::computed(Value::variable(level)));
-                let first = Rc::new(first.quote(refs, level));
-                let second = Rc::new(second.apply(refs, input).quote(refs, level + 1));
-                Term::IntersectType { name:*name, first, second }
-            },
-            Value::Equality { left, right } => {
-                let left = Rc::new(left.quote(refs, level));
-                let right = Rc::new(right.quote(refs, level));
-                Term::Equality { left, right }
-            }
-            Value::Star => Term::Star,
-            Value::SuperStar => Term::SuperStar,
-        }
+            .fold(self.clone(), |ref acc, entry| acc.apply(db, entry.clone()))
     }
 }
 
@@ -338,7 +279,7 @@ impl Value {
         Rc::new(Value::Variable { level:level.into(), spine })
     }
 
-    pub fn reference(id: Id, spine: Spine, unfolded: Option<LazyValue>) -> Rc<Value> {
+    pub fn reference(id: Id, spine: Spine, unfolded: Option<Rc<LazyValue>>) -> Rc<Value> {
         Rc::new(Value::Reference { id, spine, unfolded })
     }
 
@@ -374,7 +315,76 @@ impl Value {
         }
     }
 
-    pub fn eval(refs: References, mut env: Environment, term: Rc<Term>) -> Rc<Value> {
+    fn apply(&self, db: &Database, arg: EnvEntry) -> Rc<Value> {
+        match self {
+            Value::Variable { level, spine } => {
+                let mut spine = spine.clone();
+                spine.push_back(arg);
+                Value::variable_with_spine(*level, spine)
+            },
+            Value::Reference { id, spine, unfolded } => {
+                let unfolded = unfolded.as_ref()
+                    .map(|v| v.apply(db, arg.clone()));
+                let mut spine = spine.clone();
+                spine.push_back(arg);
+                Value::reference(id.clone(), spine, unfolded)
+            },
+            Value::Lambda { closure, .. } => closure.apply(db, arg),
+            _ => unreachable!()
+        }
+    }
+
+    fn quote_spine(db: &Database, level: Level, head: Term, mut spine: Spine) -> Term {
+        if spine.is_empty() { head }
+        else {
+            spine.iter_mut().fold(head, |acc, arg| {
+                let (apply_type, fun) = (arg.apply_type, Rc::new(acc));
+                let arg = Rc::new(arg.value.force(db).quote(db, level));
+                Term::Apply { apply_type, fun, arg }
+            })
+        }
+    }
+
+    pub fn quote(&self, db: &Database, level: Level) -> Term {
+        match self {
+            Value::Variable { level:vlvl, spine } => {
+                let var = Term::Bound { index: vlvl.to_index(*level) };
+                Value::quote_spine(db, level, var, spine.clone())
+            }
+            Value::Reference { id, spine, .. } => {
+                let var = Term::Free { id:id.clone() };
+                Value::quote_spine(db, level, var, spine.clone())
+            }
+            Value::Lambda { mode, name, closure } => {
+                let (mode, name, apply_type) = (*mode, *name, mode.to_apply_type(&Sort::Term));
+                let input = EnvEntry::new(apply_type, name, LazyValue::computed(Value::variable(level)));
+                let body = Rc::new(closure.apply(db, input).quote(db, level + 1));
+                Term::Lambda { mode, name, body }
+            }
+            Value::Pi { mode, name, domain, closure } => {
+                let (mode, name, apply_type) = (*mode, *name, ApplyType::TypeErased);
+                let input = EnvEntry::new(apply_type, name, LazyValue::computed(Value::variable(level)));
+                let domain = Rc::new(domain.quote(db, level));
+                let body = Rc::new(closure.apply(db, input).quote(db, level + 1));
+                Term::Pi { mode, name, domain, body }
+            },
+            Value::IntersectType { name, first, second } => {
+                let input = EnvEntry::new(ApplyType::TypeErased, *name, LazyValue::computed(Value::variable(level)));
+                let first = Rc::new(first.quote(db, level));
+                let second = Rc::new(second.apply(db, input).quote(db, level + 1));
+                Term::IntersectType { name:*name, first, second }
+            },
+            Value::Equality { left, right } => {
+                let left = Rc::new(left.quote(db, level));
+                let right = Rc::new(right.quote(db, level));
+                Term::Equality { left, right }
+            }
+            Value::Star => Term::Star,
+            Value::SuperStar => Term::SuperStar,
+        }
+    }
+
+    pub fn eval(db: &Database, mut env: Environment, term: Rc<Term>) -> Rc<Value> {
         match term.as_ref() {
             Term::Lambda { mode, name, body } => {
                 let (mode, name) = (*mode, *name);
@@ -385,36 +395,36 @@ impl Value {
                 let apply_type = mode.to_apply_type(&Sort::Term);
                 let def_value = LazyValue::new(env.clone(), let_body.clone());
                 env.push_back(EnvEntry::new(apply_type, *name, def_value));
-                Value::eval(refs, env, body.clone())
+                Value::eval(db, env, body.clone())
             },
             Term::Pi { mode, name, domain, body } => {
                 let (mode, name) = (*mode, *name);
-                let domain = Value::eval(refs, env.clone(), domain.clone());
+                let domain = Value::eval(db, env.clone(), domain.clone());
                 let closure = Closure { env, code:body.clone() };
                 Value::pi(mode, name, domain, closure)
             },
             Term::IntersectType { name, first, second } => {
-                let first = Value::eval(refs, env.clone(), first.clone());
+                let first = Value::eval(db, env.clone(), first.clone());
                 let second = Closure { env, code:second.clone() };
                 Value::intersect_type(*name, first, second)
             },
             Term::Equality { left, right } => {
-                let left = Value::eval(refs, env.clone(), left.clone());
-                let right = Value::eval(refs, env, right.clone());
+                let left = Value::eval(db, env.clone(), left.clone());
+                let right = Value::eval(db, env, right.clone());
                 Value::equality(left, right)
             },
             Term::Rewrite { body, .. }
             | Term::Annotate { body, .. }
-            | Term::Project { body, .. } => Value::eval(refs, env, body.clone()),
-            Term::Intersect { first, .. } => Value::eval(refs, env, first.clone()),
-            Term::Separate { .. } => Value::eval(refs, env, Rc::new(Term::id())),
+            | Term::Project { body, .. } => Value::eval(db, env, body.clone()),
+            Term::Intersect { first, .. } => Value::eval(db, env, first.clone()),
+            Term::Separate { .. } => Value::eval(db, env, Rc::new(Term::id())),
             Term::Refl { erasure }
-            | Term::Cast { erasure, .. } => Value::eval(refs, env, erasure.clone()),
+            | Term::Cast { erasure, .. } => Value::eval(db, env, erasure.clone()),
             Term::Apply { apply_type, fun, arg } => {
                 let (apply_type, name) = (*apply_type, Symbol::default());
                 let arg = LazyValue::new(env.clone(), arg.clone());
                 let entry = EnvEntry::new(apply_type, name, arg);
-                let fun = Value::eval(refs, env.clone(), fun.clone());
+                let fun = Value::eval(db, env.clone(), fun.clone());
                 match fun.as_ref() {
                     Value::Variable { level, spine } => {
                         let mut spine = spine.clone();
@@ -423,19 +433,18 @@ impl Value {
                     }
                     Value::Reference { id, spine, unfolded } => {
                         let unfolded = unfolded.as_ref()
-                            .map(|v| v.apply(refs, entry.clone()));
+                            .map(|v| v.apply(db, entry.clone()));
                         let mut spine = spine.clone();
                         spine.push_back(entry);
                         Value::reference(id.clone(), spine, unfolded)
                     } 
-                    Value::Lambda { closure, .. } => closure.apply(refs, entry),
+                    Value::Lambda { closure, .. } => closure.apply(db, entry),
                     _ => unreachable!()
                 }
             },
-            Term::Bound { index, .. } => env[index.to_level(env.len())].value.force(refs),
+            Term::Bound { index, .. } => env[index.to_level(env.len())].value.force(db),
             Term::Free { id, .. } => {
-                let unfolded = refs.lookup_def(id).ok()
-                    .map(LazyValue::computed);
+                let unfolded = db.lookup_def(id);
                 Value::reference(id.clone(), Spine::new(), unfolded)
             }
             Term::Star => Value::star(),
@@ -443,31 +452,31 @@ impl Value {
         }
     }
 
-    pub fn unfold_to_head(refs: References, value: Rc<Value>) -> Rc<Value> {
+    pub fn unfold_to_head(db: &Database, value: Rc<Value>) -> Rc<Value> {
         match &*value {
             Value::Reference { unfolded, .. } => {
                 if let Some(unfolded) = unfolded {
-                    Value::unfold_to_head(refs, unfolded.force(refs))
+                    Value::unfold_to_head(db, unfolded.force(db))
                 } else { value }
             },
             _ => value
         }
     }
 
-    fn convertible_spine(refs: References, env: Level, mut left: Spine, mut right: Spine) -> bool {
+    fn convertible_spine(db: &Database, env: Level, mut left: Spine, mut right: Spine) -> bool {
         left.len() == right.len()
         && left.iter_mut()
         .zip(right.iter_mut())
         .fold(true, |acc, (l, r)| {
             if l.apply_type == r.apply_type && l.apply_type == ApplyType::Free {
-                let left = l.value.force(refs);
-                let right = r.value.force(refs);
-                acc && Value::convertible(refs, env, &left, &right)
+                let left = l.value.force(db);
+                let right = r.value.force(db);
+                acc && Value::convertible(db, env, &left, &right)
             } else { acc && l.apply_type == r.apply_type }
         })
     }
 
-    pub fn convertible(refs: References, env: Level, left: &Rc<Value>, right: &Rc<Value>) -> bool {
+    pub fn convertible(db: &Database, env: Level, left: &Rc<Value>, right: &Rc<Value>) -> bool {
         match (left.as_ref(), right.as_ref()) {
             // Type head conversion
             (Value::Star, Value::Star) => true,
@@ -476,55 +485,55 @@ impl Value {
                 Value::Pi { mode:m2, name:n2, domain:d2, closure:c2 }) =>
             {
                 let (mode, input) = (ApplyType::Free, LazyValue::computed(Value::variable(env)));
-                let c1 = c1.apply(refs, EnvEntry::new(mode, *n1, input.clone()));
-                let c2 = c2.apply(refs, EnvEntry::new(mode, *n2, input));
+                let c1 = c1.apply(db, EnvEntry::new(mode, *n1, input.clone()));
+                let c2 = c2.apply(db, EnvEntry::new(mode, *n2, input));
                 m1 == m2
-                && Value::convertible(refs, env, d1, d2)
-                && Value::convertible(refs, env + 1, &c1, &c2)
+                && Value::convertible(db, env, d1, d2)
+                && Value::convertible(db, env + 1, &c1, &c2)
             }
             (Value::IntersectType { name:n1, first:f1, second:s1 },
                 Value::IntersectType { name:n2, first:f2, second:s2 }) =>
             {
                 let (mode, input) = (ApplyType::Free, LazyValue::computed(Value::variable(env)));
-                let s1 = s1.apply(refs, EnvEntry::new(mode, *n1, input.clone()));
-                let s2 = s2.apply(refs, EnvEntry::new(mode, *n2, input));
-                Value::convertible(refs, env, f1, f2)
-                && Value::convertible(refs, env + 1, &s1, &s2)
+                let s1 = s1.apply(db, EnvEntry::new(mode, *n1, input.clone()));
+                let s2 = s2.apply(db, EnvEntry::new(mode, *n2, input));
+                Value::convertible(db, env, f1, f2)
+                && Value::convertible(db, env + 1, &s1, &s2)
             }
             (Value::Equality { left:l1, right:r1 },
                 Value::Equality { left:l2, right:r2 }) =>
             {
-                Value::convertible(refs, env, l1, l2)
-                && Value::convertible(refs, env, r1, r2)
+                Value::convertible(db, env, l1, l2)
+                && Value::convertible(db, env, r1, r2)
             }
             // Lambda conversion + eta conversion
             (Value::Lambda { mode:m1, name:n1, closure:c1 },
                 Value::Lambda { mode:m2, name:n2, closure:c2 }) => {
                 let (m1, m2) = (m1.to_apply_type(&Sort::Term), m2.to_apply_type(&Sort::Term));
                 let input= LazyValue::computed(Value::variable(env));
-                let c1 = c1.apply(refs, EnvEntry::new(m1, *n1, input.clone()));
-                let c2 = c2.apply(refs, EnvEntry::new(m2, *n2, input));
-                Value::convertible(refs, env + 1, &c1, &c2)
+                let c1 = c1.apply(db, EnvEntry::new(m1, *n1, input.clone()));
+                let c2 = c2.apply(db, EnvEntry::new(m2, *n2, input));
+                Value::convertible(db, env + 1, &c1, &c2)
             }
             (Value::Lambda { mode, name, closure }, _) => {
                 let mode = mode.to_apply_type(&Sort::Term);
                 let input= LazyValue::computed(Value::variable(env));
-                let closure = closure.apply(refs, EnvEntry::new(mode, *name, input.clone()));
-                let v = right.apply(refs, EnvEntry::new(mode, *name, input));
-                Value::convertible(refs, env + 1, &closure, &v)
+                let closure = closure.apply(db, EnvEntry::new(mode, *name, input.clone()));
+                let v = right.apply(db, EnvEntry::new(mode, *name, input));
+                Value::convertible(db, env + 1, &closure, &v)
             }
             (_, Value::Lambda { mode, name, closure }) => {
                 let mode = mode.to_apply_type(&Sort::Term);
                 let input = LazyValue::computed(Value::variable(env));
-                let closure = closure.apply(refs, EnvEntry::new(mode, *name, input.clone()));
-                let v = left.apply(refs, EnvEntry::new(mode, *name, input));
-                Value::convertible(refs, env + 1, &v, &closure)
+                let closure = closure.apply(db, EnvEntry::new(mode, *name, input.clone()));
+                let v = left.apply(db, EnvEntry::new(mode, *name, input));
+                Value::convertible(db, env + 1, &v, &closure)
             }
             // Spines
             (Value::Variable { level:l1, spine:s1},
                 Value::Variable { level:l2, spine:s2 }) =>
             {
-                l1 == l2 && Value::convertible_spine(refs, env, s1.clone(), s2.clone())
+                l1 == l2 && Value::convertible_spine(db, env, s1.clone(), s2.clone())
             }
             (Value::Reference { id:id1, spine:s1, unfolded:u1 },
                 Value::Reference { id:id2, spine:s2, unfolded:u2 }) =>
@@ -533,36 +542,25 @@ impl Value {
                     let mut result = false;
                     if let Some(u1) = u1 {
                         if let Some(u2) = u2 {
-                            let (u1, u2) = (u1.force(refs), u2.force(refs));
-                            result = Value::convertible(refs, env, &u1, &u2);
+                            let (u1, u2) = (u1.force(db), u2.force(db));
+                            result = Value::convertible(db, env, &u1, &u2);
                         }
                     }
                     result
                 };
-                (id1 == id2 && Value::convertible_spine(refs, env, s1.clone(), s2.clone()))
+                (id1 == id2 && Value::convertible_spine(db, env, s1.clone(), s2.clone()))
                     || check_unfolded()
             },
             (Value::Reference { unfolded, .. }, _) => {
                 unfolded.as_ref()
-                    .map_or(false, |u| Value::convertible(refs, env, &u.force(refs), right))
+                    .map_or(false, |u| Value::convertible(db, env, &u.force(db), right))
             }
             (_, Value::Reference { unfolded, .. }) => {
                 unfolded.as_ref()
-                    .map_or(false, |u| Value::convertible(refs, env, left, &u.force(refs)))
+                    .map_or(false, |u| Value::convertible(db, env, left, &u.force(db)))
             }
 
             _ => false
-        }
-    }
-
-    fn quote_spine(refs: References, level: Level, head: Term, mut spine: Spine) -> Term {
-        if spine.is_empty() { head }
-        else {
-            spine.iter_mut().fold(head, |acc, arg| {
-                let (apply_type, fun) = (arg.apply_type, Rc::new(acc));
-                let arg = Rc::new(arg.value.force(refs).quote(refs, level));
-                Term::Apply { apply_type, fun, arg }
-            })
         }
     }
 }

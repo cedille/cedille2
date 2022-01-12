@@ -2,6 +2,10 @@
 #[macro_use]
 extern crate pest_derive;
 extern crate derive_more;
+#[macro_use]
+extern crate if_chain;
+
+use paste::paste;
 
 pub mod repl;
 mod database;
@@ -24,8 +28,8 @@ mod tests {
         builder.push_str(path.as_str());
         builder.push_str(".ced");
         let path = Path::new(builder.as_str());
-        let result = db.load_module(path);
-        if expected_success { result }
+        let result = db.load_module_from_path(path);
+        if expected_success { result.map(|_| ()) }
         else {
             let error = ||
                 Err(anyhow::anyhow!("File succeeded when it should have failed."));
@@ -35,18 +39,22 @@ mod tests {
 
     macro_rules! test_file_success {
         ($path_with_underscores:ident) => {
+            paste! {
             #[test]
-            fn $path_with_underscores() -> Result<()> {
-                test_runner(stringify!($path_with_underscores), true)
+                fn [<success_$path_with_underscores>]() -> Result<()> {
+                    test_runner(stringify!($path_with_underscores), true)
+                }
             }
         }
     }
 
     macro_rules! test_file_failure {
         ($path_with_underscores:ident) => {
-            #[test]
-            fn $path_with_underscores() -> Result<()> {
-                test_runner(stringify!($path_with_underscores), false)
+            paste! {
+                #[test]
+                fn [<failure_$path_with_underscores>]() -> Result<()> {
+                    test_runner(stringify!($path_with_underscores), false)
+                }
             }
         }
     }
@@ -63,10 +71,16 @@ mod tests {
 
     test_file_success!(module_unqualified);
     test_file_success!(module_qualified);
+    test_file_success!(module_mixed);
     test_file_success!(module_transitive);
     test_file_success!(module_transitive2);
     test_file_success!(module_transitive3);
+    test_file_success!(module_transitive4);
 
     test_file_failure!(module_cycle);
+    test_file_failure!(module_mixed);
+    test_file_failure!(module_doubleimport);
+    test_file_failure!(module_redefined);
+    test_file_failure!(module_redefined2);
 }
 

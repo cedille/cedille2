@@ -1,0 +1,7 @@
+module mixed.
+
+import ../church/unit as U1.
+
+Unit2 : ★ = U2.Unit.
+
+import ../church/unit as U2.

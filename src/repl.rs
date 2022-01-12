@@ -119,7 +119,7 @@ fn repl_inner<H:Helper>(db: &mut Database, rl : &mut Editor<H>) -> Result<bool> 
                 Some(path) => {
                     let path = Path::new(path);
                     if path.is_file() {
-                        db.load_module(path)?;
+                        db.load_module_from_path(path)?;
                     } else {
                         db.load_dir(path)?;
                     }

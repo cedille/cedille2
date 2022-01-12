@@ -4,7 +4,8 @@ import ../unit as U.
 
 Inductive : U.Unit ➔ ★ = λ u. ∀ P:U.Unit ➔ ★. P U.unit ➔ P u.
 
-Unit : ★ = ι u:U.Unit. Inductive u.
+{- Unit : ★ = ι u:U.Unit. Inductive u.
 
 unit : Unit
 = [U.unit, Λ P. λ x. x].
+ -}
