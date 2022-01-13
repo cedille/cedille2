@@ -10,7 +10,7 @@
     - [x] Basic Type inference
     - [x] Basic Kind inference
 - [ ] Multiple binding lambdas (λ x -g ⋅T. ...)
-- [ ] Basic VSCode support
+- [x] Basic VSCode support
     - [x] syntax highlighting
     - [x] unicode input
 - [ ] Testing framework

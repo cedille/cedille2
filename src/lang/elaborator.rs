@@ -58,15 +58,17 @@ pub enum ElabError {
 struct Context {
     env: Environment,
     types: im_rc::Vector<(Symbol, Rc<Value>)>,
+    module: Symbol,
     mode: Mode,
     sort: Sort
 }
 
 impl Context {
-    fn new(sort: Sort) -> Context {
+    fn new(module: Symbol, sort: Sort) -> Context {
         Context {
             env: Environment::new(),
             types: im_rc::Vector::new(),
+            module,
             mode: Mode::Free,
             sort
         }
@@ -88,13 +90,13 @@ impl Context {
     fn env_lvl(&self) -> Level { self.env.len().into() }
 }
 
-pub fn elaborate(db: &mut Database, module: &syntax::Module) -> anyhow::Result<()> {
+pub fn elaborate(db: &mut Database, module: Symbol, syntax: &syntax::Module) -> anyhow::Result<()> {
     let mut errors = vec![];
-    module.header_imports.iter().map(|import| db.load_import(import))
+    syntax.header_imports.iter().map(|import| db.load_import(module, import))
         .collect::<Result<Vec<_>, _>>()?;
 
-    for decl in module.decls.iter() {
-        match elaborate_decl(db, &module.params, decl) {
+    for decl in syntax.decls.iter() {
+        match elaborate_decl(db, module, &syntax.params, decl) {
             Ok(_) =>  { },
             Err(error) => errors.push(error)
         }
@@ -104,37 +106,37 @@ pub fn elaborate(db: &mut Database, module: &syntax::Module) -> anyhow::Result<(
     else { Err(anyhow::Error::new(ElabError::Many { errors })) }
 }
 
-fn elaborate_decl(db: &mut Database, params: &[syntax::Parameter], decl: &syntax::Decl) -> anyhow::Result<()> {
-    fn elaborate_decl_helper(sort: Sort, db: &mut Database, params: &[syntax::Parameter], def: &syntax::DefineTerm) -> anyhow::Result<()> {
-        if db.lookup_type(&Id::from(def.name)).is_some() {
+fn elaborate_decl(db: &mut Database, module: Symbol, params: &[syntax::Parameter], decl: &syntax::Decl) -> anyhow::Result<()> {
+    fn elaborate_decl_helper(sort: Sort, db: &mut Database, module: Symbol, params: &[syntax::Parameter], def: &syntax::DefineTerm) -> anyhow::Result<()> {
+        if db.lookup_type(module, &Id::from(def.name)).is_some() {
             Err(anyhow::Error::new(ElabError::DefinitionCollision))
         } else {
-            let result = elaborate_define_term(sort, db, params, def);
+            let ctx = Context::new(module, sort);
+            let result = elaborate_define_term(db, ctx, params, def);
             if let Ok(ref elabed) = result {
-                log::info!("\n{}\n{}\n{}", def.as_str(db.text()), "elaborated to".green(), elabed);
+                log::info!("\n{}\n{}\n{}", def.as_str(db.text(module)), "elaborated to".green(), elabed);
             }
             match result {
-                Ok(decl) => db.insert_decl(decl),
+                Ok(decl) => db.insert_decl(module, decl),
                 e => e.map(|_| ()),
             }.map_err(anyhow::Error::new)
         }
     }
     match decl {
-        syntax::Decl::Type(ty) => elaborate_decl_helper(Sort::Type, db, params, ty),
-        syntax::Decl::Term(term) => elaborate_decl_helper(Sort::Term, db, params, term),
-        syntax::Decl::Import(import) => db.load_import(import),
+        syntax::Decl::Type(ty) => elaborate_decl_helper(Sort::Type, db, module, params, ty),
+        syntax::Decl::Term(term) => elaborate_decl_helper(Sort::Term, db, module, params, term),
+        syntax::Decl::Import(import) => db.load_import(module, import),
         syntax::Decl::Kind(_) => todo!(),
         syntax::Decl::Datatype(_) => todo!(),
     }
 }
 
-fn elaborate_define_term(sort: Sort, db: &Database, _params: &[syntax::Parameter], def: &syntax::DefineTerm) -> Result<core::Decl, ElabError> {
-    if def.body.sort() != sort {
-        Err(ElabError::SortMismatch { span: def.body.span(), expected: sort, provided: def.body.sort() })
+fn elaborate_define_term(db: &Database, ctx: Context, _params: &[syntax::Parameter], def: &syntax::DefineTerm) -> Result<core::Decl, ElabError> {
+    if def.body.sort() != ctx.sort {
+        Err(ElabError::SortMismatch { span: def.body.span(), expected: ctx.sort, provided: def.body.sort() })
     } else if let Some(anno) = &def.anno {
-        let ctx = Context::new(sort);
         let anno_elaborated = check(db, ctx.clone(), anno, Value::classifier(anno.sort()))?;
-        let anno_value = Value::eval(db, ctx.env(), anno_elaborated.clone());
+        let anno_value = Value::eval(db, ctx.module, ctx.env(), anno_elaborated.clone());
         let body = check(db, ctx, &def.body, anno_value)?;
         Ok(core::Decl { 
             name: def.name,
@@ -142,7 +144,6 @@ fn elaborate_define_term(sort: Sort, db: &Database, _params: &[syntax::Parameter
             body
         })
     } else {
-        let ctx = Context::new(sort);
         let (body, inferred) = infer(db, ctx.clone(), &def.body)?;
         Ok(core::Decl {
             name: def.name,
@@ -154,7 +155,7 @@ fn elaborate_define_term(sort: Sort, db: &Database, _params: &[syntax::Parameter
 
 fn check(db: &Database, mut ctx: Context, term: &syntax::Term, ty: Rc<Value>) -> Result<Rc<core::Term>, ElabError> {
     let ty = Value::unfold_to_head(db, ty);
-    log::debug!("\n{} {} {}", term.as_str(db.text()), "<=".bright_blue(), ty);
+    log::debug!("\n{} {} {}", term.as_str(db.text(ctx.module)), "<=".bright_blue(), ty);
     match (term, ty.as_ref()) {
         (syntax::Term::Lambda { mode
             , sort
@@ -169,7 +170,7 @@ fn check(db: &Database, mut ctx: Context, term: &syntax::Term, ty: Rc<Value>) ->
             if let Some(anno) = anno {
                 let span = anno.span();
                 let anno = check(db, ctx.clone(), anno, Value::classifier(anno.sort()))?;
-                let anno = Value::eval(db, ctx.env(), anno);
+                let anno = Value::eval(db, ctx.module, ctx.env(), anno);
                 convertible(db, ctx.clone(), span, &anno, domain)?;
             }
             let value = LazyValue::computed(Value::variable(ctx.env_lvl()));
@@ -183,11 +184,11 @@ fn check(db: &Database, mut ctx: Context, term: &syntax::Term, ty: Rc<Value>) ->
         {
             let (anno_elabed, anno_value) = if let Some(anno) = &def.anno {
                 let anno_elabed = check(db, ctx.clone(), anno, Value::star())?;
-                let anno_value = Value::eval(db, ctx.env(), anno_elabed.clone());
+                let anno_value = Value::eval(db, ctx.module, ctx.env(), anno_elabed.clone());
                 (anno_elabed, anno_value)
             } else { infer(db, ctx.clone(), &def.body)? };
             let def_body_elabed = check(db, ctx.clone(), &def.body, anno_value.clone())?;
-            let def_body_value = LazyValue::new(ctx.env(), def_body_elabed.clone());
+            let def_body_value = LazyValue::new(ctx.module, ctx.env(), def_body_elabed.clone());
             ctx.define(mode.to_apply_type(sort), def.name, def_body_value, anno_value);
             let body_elabed = check(db, ctx, body, ty)?;
             let result_let = Rc::new(core::Term::Let { 
@@ -207,11 +208,11 @@ fn check(db: &Database, mut ctx: Context, term: &syntax::Term, ty: Rc<Value>) ->
             Value::IntersectType { name, first:type1, second:type2 }) =>
         {
             let first_elabed = check(db, ctx.clone(), first, type1.clone())?;
-            let first_value = Value::eval(db, ctx.env(), first_elabed.clone());
+            let first_value = Value::eval(db, ctx.module, ctx.env(), first_elabed.clone());
             let closure_arg = EnvEntry::new(ApplyType::Free, *name, LazyValue::computed(first_value.clone()));
             let type2 = type2.apply(db, closure_arg);
             let second_elabed = check(db, ctx.clone(), second, type2)?;
-            let second_value = Value::eval(db, ctx.env(), second_elabed.clone());
+            let second_value = Value::eval(db, ctx.module, ctx.env(), second_elabed.clone());
             convertible(db, ctx, *span, &first_value, &second_value)?;
             Ok(Rc::new(core::Term::Intersect {
                 first: first_elabed,
@@ -252,9 +253,9 @@ fn check(db: &Database, mut ctx: Context, term: &syntax::Term, ty: Rc<Value>) ->
         (syntax::Term::Cast { equation, input, erasure, ..}, _) =>
         {
             let input_elabed = check(db, ctx.clone(), input, ty)?;
-            let input_value = Value::eval(db, ctx.env(), input_elabed.clone());
+            let input_value = Value::eval(db, ctx.module, ctx.env(), input_elabed.clone());
             let erasure_elabed = erase(db, ctx.clone(), erasure)?;
-            let erasure_value = Value::eval(db, ctx.env(), erasure_elabed.clone());
+            let erasure_value = Value::eval(db, ctx.module, ctx.env(), erasure_elabed.clone());
             let equality_type = Value::equality(input_value, erasure_value);
             let equation_elabed = check(db, ctx, equation, equality_type)?;
             Ok(Rc::new(core::Term::Cast { 
@@ -278,6 +279,7 @@ fn check(db: &Database, mut ctx: Context, term: &syntax::Term, ty: Rc<Value>) ->
 }
 
 fn infer(db: &Database, mut ctx: Context, term: &syntax::Term) -> Result<(Rc<core::Term>, Rc<Value>), ElabError> {
+    let module = ctx.module;
     let result = match term {
         syntax::Term::Pi { mode
             , sort
@@ -288,7 +290,7 @@ fn infer(db: &Database, mut ctx: Context, term: &syntax::Term) -> Result<(Rc<cor
         {
             let (mode, name) = (*mode, var.unwrap_or_default());
             let domain_elabed = check(db, ctx.clone(), domain, Value::classifier(domain.sort()))?;
-            let domain_value = Value::eval(db, ctx.env(), domain_elabed.clone());
+            let domain_value = Value::eval(db, module, ctx.env(), domain_elabed.clone());
             ctx.bind(ApplyType::Free, name, domain_value);
             let body_elabed = check(db, ctx, body, Value::classifier(body.sort()))?;
             let result = Rc::new(core::Term::Pi { 
@@ -302,7 +304,7 @@ fn infer(db: &Database, mut ctx: Context, term: &syntax::Term) -> Result<(Rc<cor
 
         syntax::Term::IntersectType { var, first, second, .. } => {
             let first_elabed = check(db, ctx.clone(), first, Value::star())?;
-            let first_value = Value::eval(db, ctx.env(), first_elabed.clone());
+            let first_value = Value::eval(db, module, ctx.env(), first_elabed.clone());
             let name = var.unwrap_or_default();
             ctx.bind(ApplyType::Free, name, first_value);
             let second_elabed = check(db, ctx, second, Value::star())?;
@@ -327,11 +329,11 @@ fn infer(db: &Database, mut ctx: Context, term: &syntax::Term) -> Result<(Rc<cor
         syntax::Term::Let { mode, sort, def, body, .. } => {
             let (anno_elabed, anno_value) = if let Some(anno) = &def.anno {
                 let anno_elabed = check(db, ctx.clone(), anno, Value::star())?;
-                let anno_value = Value::eval(db, ctx.env(), anno_elabed.clone());
+                let anno_value = Value::eval(db, module, ctx.env(), anno_elabed.clone());
                 (anno_elabed, anno_value)
             } else { infer(db, ctx.clone(), &def.body)? };
             let def_body_elabed = check(db, ctx.clone(), &def.body, anno_value.clone())?;
-            let def_body_value = LazyValue::new(ctx.env(), def_body_elabed.clone());
+            let def_body_value = LazyValue::new(module, ctx.env(), def_body_elabed.clone());
             ctx.define(mode.to_apply_type(sort), def.name, def_body_value, anno_value);
             let (body_elabed, type_value) = infer(db, ctx.clone(), body)?;
             let result_let = Rc::new(core::Term::Let { 
@@ -364,7 +366,7 @@ fn infer(db: &Database, mut ctx: Context, term: &syntax::Term) -> Result<(Rc<cor
                 Value::Pi { mode:type_mode, name, domain, closure } => {
                     if mode != type_mode { return Err(ElabError::ModeMismatch); }
                     let arg_elabed = check(db, ctx.clone(), arg, domain.clone())?;
-                    let arg_value = LazyValue::new(ctx.env(), arg_elabed.clone());
+                    let arg_value = LazyValue::new(module, ctx.env(), arg_elabed.clone());
                     let closure_arg = EnvEntry::new(mode.to_apply_type(&arg.sort()), *name, arg_value);
                     let result_type = closure.apply(db, closure_arg);
                     let result = Rc::new(core::Term::Apply {
@@ -383,7 +385,7 @@ fn infer(db: &Database, mut ctx: Context, term: &syntax::Term) -> Result<(Rc<cor
             match body_type.as_ref() {
                 Value::IntersectType { name, first, second } => {
                     let first_proj = Rc::new(core::Term::Project { variant:1, body: body_elabed.clone() });
-                    let first_value = Value::eval(db, ctx.env(), first_proj.clone());
+                    let first_value = Value::eval(db, module, ctx.env(), first_proj.clone());
                     match variant {
                         1 => Ok((first_proj, Value::unfold_to_head(db, first.clone()))),
                         2 => {
@@ -401,9 +403,9 @@ fn infer(db: &Database, mut ctx: Context, term: &syntax::Term) -> Result<(Rc<cor
 
         syntax::Term::Cast { equation, input, erasure, .. } => {
             let (input_elabed, result_type) = infer(db, ctx.clone(), input)?;
-            let input_value = Value::eval(db, ctx.env(), input_elabed.clone());
+            let input_value = Value::eval(db, module, ctx.env(), input_elabed.clone());
             let erasure_elabed = erase(db, ctx.clone(), erasure)?;
-            let erasure_value = Value::eval(db, ctx.env(), erasure_elabed.clone());
+            let erasure_value = Value::eval(db, module, ctx.env(), erasure_elabed.clone());
             let equality_type = Value::equality(input_value, erasure_value);
             let equation_elabed = check(db, ctx.clone(), equation, equality_type)?;
             let result = Rc::new(core::Term::Cast { 
@@ -422,7 +424,7 @@ fn infer(db: &Database, mut ctx: Context, term: &syntax::Term) -> Result<(Rc<cor
 
         syntax::Term::Annotate { anno, body, .. } => {
             let anno_elabed = check(db, ctx.clone(), anno, Value::star())?;
-            let anno_value = Value::eval(db, ctx.env(), anno_elabed.clone());
+            let anno_value = Value::eval(db, module, ctx.env(), anno_elabed.clone());
             let body_elabed = check(db, ctx.clone(), body, anno_value.clone())?;
             let result = Rc::new(core::Term::Annotate {
                 anno: anno_elabed,
@@ -434,7 +436,7 @@ fn infer(db: &Database, mut ctx: Context, term: &syntax::Term) -> Result<(Rc<cor
         _ => Err(ElabError::InferenceFailed { span:term.span() })
     };
     if let Ok((_, ref inferred_type)) = result {
-        log::debug!("\n{} {} {}", term.as_str(db.text()), "=>".bright_blue(), inferred_type);
+        log::debug!("\n{} {} {}", term.as_str(db.text(module)), "=>".bright_blue(), inferred_type);
     }
     result
 }
@@ -512,7 +514,7 @@ fn convertible(db: &Database, ctx: Context, span: Span, left: &Rc<Value>, right:
 
 fn lookup_type(db: &Database, ctx: &Context, id: &Id) -> Result<(Rc<Value>, Option<Level>), ElabError> {
     let has_namespace = if id.namespace.is_empty() { Some(()) } else { None };
-    let toplevel_type = db.lookup_type(id);
+    let toplevel_type = db.lookup_type(ctx.module, id);
     let context_type = has_namespace
         .and(ctx.types.iter().enumerate().find(|(_, (x, _))| *x == id.name))
         .map(|(level, (_, ty))| (ty.clone(), Some(level.into())));

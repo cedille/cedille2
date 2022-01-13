@@ -108,16 +108,21 @@ impl ops::DerefMut for Spine {
 
 #[derive(Debug, Clone)]
 pub struct Closure {
+    module: Symbol,
     env: Environment,
     code: Rc<Term>
 }
 
 impl Closure {
+    fn new(module: Symbol, env: Environment, code: Rc<Term>) -> Closure {
+        Closure { module, env, code }
+    }
+
     pub fn apply(&self, db: &Database, arg: EnvEntry) -> Rc<Value> {
-        let Closure { env, code } = self;
+        let Closure { module, env, code } = self;
         let mut env = env.clone();
         env.push_back(arg);
-        Value::eval(db, env, code.clone())
+        Value::eval(db, *module, env, code.clone())
     }
 }
 
@@ -129,6 +134,7 @@ impl fmt::Display for Closure {
 
 #[derive(Debug, Clone)]
 struct LazyValueCode {
+    module: Symbol,
     env: Environment,
     term: Rc<Term>
 }
@@ -150,10 +156,10 @@ impl fmt::Display for LazyValue {
 }
 
 impl LazyValue {
-    pub fn new(env: Environment, term: Rc<Term>) -> LazyValue {
+    pub fn new(module: Symbol, env: Environment, term: Rc<Term>) -> LazyValue {
         LazyValue { 
             value: OnceCell::new(),
-            code: RefCell::new(Some(LazyValueCode { env, term }))
+            code: RefCell::new(Some(LazyValueCode { module, env, term }))
         }
     }
 
@@ -170,7 +176,7 @@ impl LazyValue {
             None => {
                 match self.code.take() {
                     Some(code) => {
-                        let result = Value::eval(db, code.env, code.term);
+                        let result = Value::eval(db, code.module, code.env, code.term);
                         self.value.set(result.clone()).ok();
                         result
                     },
@@ -229,8 +235,8 @@ impl fmt::Display for Value {
                 else { write!(f, "{} {}", level, spine) }
             },
             Value::Reference { id, spine, unfolded } => {
-                if let Some(unfolded) = unfolded { write!(f, "{}", unfolded) }
-                else if spine.len() == 0 { write!(f, "{}", id) }
+                /* if let Some(unfolded) = unfolded { write!(f, "{}", unfolded) } */
+                if spine.len() == 0 { write!(f, "{}", id) }
                 else { write!(f, "{} {}", id, spine) }
             },
             Value::Lambda { mode, name, closure } => {
@@ -260,11 +266,11 @@ impl fmt::Display for Value {
 }
 
 pub trait ValueEx {
-    fn apply_spine(&self, db: &Database, spine: Spine) -> Rc<Value>;
+    fn apply_spine(&self, db: &Database, module: Symbol, spine: Spine) -> Rc<Value>;
 }
 
 impl ValueEx for Rc<Value> {
-    fn apply_spine(&self, db: &Database, spine: Spine) -> Rc<Value> {
+    fn apply_spine(&self, db: &Database, module: Symbol, spine: Spine) -> Rc<Value> {
         spine.iter()
             .fold(self.clone(), |ref acc, entry| acc.apply(db, entry.clone()))
     }
@@ -384,47 +390,47 @@ impl Value {
         }
     }
 
-    pub fn eval(db: &Database, mut env: Environment, term: Rc<Term>) -> Rc<Value> {
+    pub fn eval(db: &Database, module: Symbol, mut env: Environment, term: Rc<Term>) -> Rc<Value> {
         match term.as_ref() {
             Term::Lambda { mode, name, body } => {
                 let (mode, name) = (*mode, *name);
-                let closure = Closure { env, code:body.clone() };
+                let closure = Closure::new(module, env, body.clone());
                 Value::lambda(mode, name, closure)
             },
             Term::Let { mode, name, let_body, body } => {
                 let apply_type = mode.to_apply_type(&Sort::Term);
-                let def_value = LazyValue::new(env.clone(), let_body.clone());
+                let def_value = LazyValue::new(module, env.clone(), let_body.clone());
                 env.push_back(EnvEntry::new(apply_type, *name, def_value));
-                Value::eval(db, env, body.clone())
+                Value::eval(db, module, env, body.clone())
             },
             Term::Pi { mode, name, domain, body } => {
                 let (mode, name) = (*mode, *name);
-                let domain = Value::eval(db, env.clone(), domain.clone());
-                let closure = Closure { env, code:body.clone() };
+                let domain = Value::eval(db, module, env.clone(), domain.clone());
+                let closure = Closure::new(module, env, body.clone());
                 Value::pi(mode, name, domain, closure)
             },
             Term::IntersectType { name, first, second } => {
-                let first = Value::eval(db, env.clone(), first.clone());
-                let second = Closure { env, code:second.clone() };
+                let first = Value::eval(db, module, env.clone(), first.clone());
+                let second = Closure::new(module, env, second.clone());
                 Value::intersect_type(*name, first, second)
             },
             Term::Equality { left, right } => {
-                let left = Value::eval(db, env.clone(), left.clone());
-                let right = Value::eval(db, env, right.clone());
+                let left = Value::eval(db, module, env.clone(), left.clone());
+                let right = Value::eval(db, module, env, right.clone());
                 Value::equality(left, right)
             },
             Term::Rewrite { body, .. }
             | Term::Annotate { body, .. }
-            | Term::Project { body, .. } => Value::eval(db, env, body.clone()),
-            Term::Intersect { first, .. } => Value::eval(db, env, first.clone()),
-            Term::Separate { .. } => Value::eval(db, env, Rc::new(Term::id())),
+            | Term::Project { body, .. } => Value::eval(db, module, env, body.clone()),
+            Term::Intersect { first, .. } => Value::eval(db, module, env, first.clone()),
+            Term::Separate { .. } => Value::eval(db, module, env, Rc::new(Term::id())),
             Term::Refl { erasure }
-            | Term::Cast { erasure, .. } => Value::eval(db, env, erasure.clone()),
+            | Term::Cast { erasure, .. } => Value::eval(db, module, env, erasure.clone()),
             Term::Apply { apply_type, fun, arg } => {
                 let (apply_type, name) = (*apply_type, Symbol::default());
-                let arg = LazyValue::new(env.clone(), arg.clone());
+                let arg = LazyValue::new(module, env.clone(), arg.clone());
                 let entry = EnvEntry::new(apply_type, name, arg);
-                let fun = Value::eval(db, env.clone(), fun.clone());
+                let fun = Value::eval(db, module, env.clone(), fun.clone());
                 match fun.as_ref() {
                     Value::Variable { level, spine } => {
                         let mut spine = spine.clone();
@@ -443,8 +449,8 @@ impl Value {
                 }
             },
             Term::Bound { index, .. } => env[index.to_level(env.len())].value.force(db),
-            Term::Free { id, .. } => {
-                let unfolded = db.lookup_def(id);
+            Term::Free { id } => {
+                let unfolded = db.lookup_def(module, id);
                 Value::reference(id.clone(), Spine::new(), unfolded)
             }
             Term::Star => Value::star(),
@@ -553,11 +559,13 @@ impl Value {
             },
             (Value::Reference { unfolded, .. }, _) => {
                 unfolded.as_ref()
-                    .map_or(false, |u| Value::convertible(db, env, &u.force(db), right))
+                    .map_or(false,
+                        |u| Value::convertible(db, env, &u.force(db), right))
             }
             (_, Value::Reference { unfolded, .. }) => {
                 unfolded.as_ref()
-                    .map_or(false, |u| Value::convertible(db, env, left, &u.force(db)))
+                    .map_or(false,
+                        |u| Value::convertible(db, env, left, &u.force(db)))
             }
 
             _ => false

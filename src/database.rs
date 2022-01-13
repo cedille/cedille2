@@ -77,17 +77,16 @@ impl Database {
         }
     }
 
-    pub fn insert_decl(&mut self, decl: core::Decl) -> Result<(), ElabError> {
-        let active = self.queued.last().unwrap();
-        let module_data = self.modules.get_mut(active).unwrap();
+    pub fn insert_decl(&mut self, module: Symbol, decl: core::Decl) -> Result<(), ElabError> {
+        let module_data = self.modules.get_mut(&module).unwrap();
         let id = Id::from(decl.name);
         if module_data.scope.contains(&id) || module_data.exports.contains(&id) {
             Err(ElabError::DefinitionCollision)
         } else {
             module_data.scope.insert(id.clone());
             module_data.exports.insert(id);
-            let type_value = Rc::new(LazyValue::new(Environment::new(), decl.ty.clone()));
-            let def_value = Rc::new(LazyValue::new(Environment::new(), decl.body.clone()));
+            let type_value = Rc::new(LazyValue::new(module, Environment::new(), decl.ty.clone()));
+            let def_value = Rc::new(LazyValue::new(module, Environment::new(), decl.body.clone()));
             let decl_values = DeclValues { type_value, def_value };
             module_data.values.insert(decl.name, decl_values);
             Ok(())
@@ -110,12 +109,11 @@ impl Database {
         } else { false }
     }
 
-    pub fn load_import(&mut self, import: &syntax::Import) -> Result<()> {
-        let active = self.queued.last().copied().unwrap();
+    pub fn load_import(&mut self, module: Symbol, import: &syntax::Import) -> Result<()> {
         let path = {
-            let module_data = self.modules.get(&active).unwrap();
+            let module_data = self.modules.get(&module).unwrap();
             let (start, end) = import.path;
-            let parent_path = Path::new(&**active).parent().unwrap();
+            let parent_path = Path::new(&**module).parent().unwrap();
             let path = Path::new(&module_data.text[start..end]).with_extension("ced");
             path_to_module_symbol(parent_path, &path)?
         };
@@ -124,7 +122,7 @@ impl Database {
         let import_module_data = self.modules.remove(&path).unwrap();
         
         let result = {
-            let module_data = self.modules.get_mut(&active).unwrap();
+            let module_data = self.modules.get_mut(&module).unwrap();
             let import_data = ImportData { public: import.public, path, namespace: import.namespace };
             module_data.imports.push(import_data);
 
@@ -190,9 +188,9 @@ impl Database {
             last_modified
         });
 
-        let tree = parser::parse(self.text())?;
+        let tree = parser::parse(self.text(sym))?;
         let ast = parser::module(tree);
-        elaborator::elaborate(self, &ast)?;
+        elaborator::elaborate(self, sym, &ast)?;
         Ok(())
     }
 
@@ -254,22 +252,19 @@ impl Database {
         result
     }
 
-    pub fn lookup_def(&self, id: &Id) -> Option<Rc<LazyValue>> {
-        let active = self.queued.last().unwrap();
+    pub fn lookup_def(&self, module: Symbol, id: &Id) -> Option<Rc<LazyValue>> {
         let mut namespace = id.namespace.clone();
-        let decl = self.lookup_decl(true, *active, &mut namespace, id.name);
+        let decl = self.lookup_decl(true, module, &mut namespace, id.name);
         decl.map(|decl| decl.def_value.clone())
     }
 
-    pub fn lookup_type(&self, id: &Id) -> Option<Rc<LazyValue>> {
-        let active = self.queued.last().unwrap();
+    pub fn lookup_type(&self, module: Symbol, id: &Id) -> Option<Rc<LazyValue>> {
         let mut namespace = id.namespace.clone();
-        let decl = self.lookup_decl(true, *active, &mut namespace, id.name);
+        let decl = self.lookup_decl(true, module, &mut namespace, id.name);
         decl.map(|decl| decl.type_value.clone())
     }
 
-    pub fn text(&self) -> &str {
-        let active = self.queued.last().unwrap();
-        &self.modules.get(active).unwrap().text
+    pub fn text(&self, module: Symbol) -> &str {
+        &self.modules.get(&module).unwrap().text
     }
 }

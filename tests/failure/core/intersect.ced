@@ -1,0 +1,6 @@
+module intersect.
+
+import ../church/bool.
+
+bad : ι x:Bool. Bool
+= [tt, ff].

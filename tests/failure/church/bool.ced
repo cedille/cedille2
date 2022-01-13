@@ -1,0 +1,9 @@
+module bool.
+
+Bool : ★ = ∀ X:★. X ➔ X ➔ X.
+
+tt : Bool
+= Λ X. λ tt. λ ff. tt.
+
+ff : Bool
+= Λ X. λ tt. λ ff. ff.
