@@ -51,6 +51,16 @@ pub enum ApplyType {
     TypeErased
 }
 
+impl ApplyType {
+    pub fn to_mode(self) -> Mode {
+        match self {
+            ApplyType::Free => Mode::Free,
+            ApplyType::TermErased => Mode::Erased,
+            ApplyType::TypeErased => Mode::Erased,
+        }
+    }
+}
+
 #[derive(Debug, Hash, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Mode {
     Erased,
@@ -58,7 +68,7 @@ pub enum Mode {
 }
 
 impl Mode {
-    pub fn to_apply_type(&self, sort: &Sort) -> ApplyType {
+    pub fn to_apply_type(self, sort: &Sort) -> ApplyType {
         if *sort == Sort::Term { 
             match self {
                 Mode::Free => ApplyType::Free,
@@ -74,6 +84,16 @@ pub enum Sort {
     Term,
     Type,
     Kind
+}
+
+impl Sort {
+    pub fn promote(self) -> Sort {
+        match self {
+            Sort::Term => Sort::Type,
+            Sort::Type => Sort::Kind,
+            Sort::Kind => Sort::Kind,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord, From, AsRef, AsMut, Deref, Display)]

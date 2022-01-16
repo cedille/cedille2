@@ -1,0 +1,6 @@
+module nothingtoproject.
+
+import ../church/bool.
+
+bad : Bool ➔ Bool
+= λ b. b.1.

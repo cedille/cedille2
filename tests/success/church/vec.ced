@@ -9,4 +9,4 @@ vnil : ∀ A:★. Vec·A zero
 = Λ A. Λ X. λ nil. λ cons. nil.
 
 vcons : ∀ A:★. ∀ n:Nat. A ➔ Vec·A n ➔ Vec·A (succ n)
-= Λ A. Λ n. λ a. λ l. Λ X. λ nil. λ cons. cons -(succ n) a (l·X nil cons).
+= Λ A. Λ n. λ a. λ l. Λ X. λ nil. λ cons. cons -n a (l·X nil cons).

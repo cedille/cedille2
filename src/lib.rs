@@ -5,6 +5,7 @@ extern crate derive_more;
 #[macro_use]
 extern crate if_chain;
 
+#[allow(unused_imports)]
 use paste::paste;
 
 pub mod repl;
