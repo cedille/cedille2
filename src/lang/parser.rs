@@ -245,7 +245,7 @@ fn term(pairs: Pair<Rule>) -> Term {
 }
 
 fn term_binder(body: Term, binder: Pair<Rule>) -> Term {
-    fn term_lambda_relevant_var(var: Pair<Rule>) -> LambdaVar {
+    fn term_lambda_var(var: Pair<Rule>) -> LambdaVar {
         let mut inner = var.into_inner();
         let mode = Mode::Free;
         let var = inner.required(bound_id);
@@ -276,7 +276,8 @@ fn term_binder(body: Term, binder: Pair<Rule>) -> Term {
     match rule {
         Rule::term_lambda => {
             let vars = inner.variant_list(|p| match p.as_rule() {
-                Rule::term_lambda_relevant_var => Some(term_lambda_relevant_var(p)),
+                Rule::term_lambda_single_var => Some(term_lambda_var(p)),
+                Rule::term_lambda_relevant_var => Some(term_lambda_var(p)),
                 Rule::term_lambda_erased_var => Some(term_lambda_erased_var(p)),
                 _ => None
             });

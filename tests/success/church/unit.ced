@@ -7,3 +7,9 @@ unit : Unit
 
 unit2 : Unit
 = λ -X x. x.
+
+unit3 : Unit
+= Λ X:★. λ x:X. x.
+
+unit4 : Unit
+= λ -(X:★) (x:X). x.
