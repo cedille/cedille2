@@ -1,0 +1,15 @@
+module church/inductive/bool.
+
+import ../bool as B.
+
+Inductive : B.Bool ➔ ★ = λ b. ∀ P:B.Bool ➔ ★. P B.tt ➔ P B.ff ➔ P b.
+
+Bool : ★ = ι b:B.Bool. Inductive b.
+
+tt : Bool
+= [B.tt, Λ P. λ tt. λ ff. tt].
+
+ff : Bool
+= [B.ff, Λ P. λ tt. λ ff. ff].
+
+

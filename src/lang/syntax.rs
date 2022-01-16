@@ -97,13 +97,18 @@ pub struct Constructor {
 }
 
 #[derive(Debug, Clone)]
+pub struct LambdaVar {
+    pub mode: Mode,
+    pub var: Option<Symbol>,
+    pub anno: Option<Term>
+}
+
+#[derive(Debug, Clone)]
 pub enum Term {
     Lambda {
         span: Span,
-        mode: Mode,
         sort: Sort,
-        var: Option<Symbol>,
-        anno: Option<Box<Term>>,
+        vars: Vec<LambdaVar>,
         body: Box<Term>
     },
     Let {

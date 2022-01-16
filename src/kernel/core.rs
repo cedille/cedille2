@@ -29,7 +29,7 @@ pub struct Decl {
 
 #[derive(Debug, Hash, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct RewriteGuide {
-    pub id: Id,
+    pub name: Symbol,
     pub hint: Rc<Term>,
     pub equation: Rc<Term>
 }
@@ -105,7 +105,7 @@ impl RewriteGuide {
     pub fn to_string_with_context(&self, ctx: im_rc::Vector<Symbol>) -> String {
         let hint = self.hint.to_string_with_context(ctx.clone());
         let equation = self.equation.to_string_with_context(ctx);
-        format!("@ {} <{}>. {}", self.id, hint, equation)
+        format!("@ {} <{}>. {}", self.name, hint, equation)
     }
 }
 

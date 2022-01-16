@@ -159,31 +159,43 @@ fn elaborate_define_term(db: &Database, ctx: Context, _params: &[syntax::Paramet
 }
 
 fn check(db: &Database, ctx: Context, term: &syntax::Term, ty: Rc<Value>) -> Result<Rc<core::Term>, ElabError> {
+    fn check_lambda(db: &Database
+        , ctx: Context
+        , sort: Sort
+        , index: usize
+        , vars: &[syntax::LambdaVar]
+        , body: &syntax::Term
+        , ty: Rc<Value>)
+        -> Result<Rc<core::Term>, ElabError>
+    {
+        if let Some(var) = vars.get(index) {
+            let ty = Value::unfold_to_head(db, ty);
+            match ty.as_ref() {
+                Value::Pi { mode:type_mode, domain, closure, .. } => {
+                    if sort == Sort::Term && var.mode != *type_mode { return Err(ElabError::ModeMismatch) }
+                    let name = var.var.unwrap_or_default();
+                    if let Some(ref anno) = var.anno {
+                        let span = anno.span();
+                        let anno_elabed = check(db, ctx.clone(), anno, Value::classifier(anno.sort()))?;
+                        let anno_value = Value::eval(db, ctx.module, ctx.env(), anno_elabed);
+                        convertible(db, anno.sort(), ctx.clone(), span, &anno_value, domain)?;
+                    }
+                    let value = LazyValue::computed(Value::variable(ctx.env_lvl()));
+                    let ctx = ctx.bind(name, domain.clone());
+                    let body_type = closure.eval(db, EnvEntry::new(name, value));
+                    let body_elabed = check_lambda(db, ctx, sort, index + 1, vars, body, body_type)?;
+                    Ok(Rc::new(core::Term::Lambda { mode: var.mode, name, body: body_elabed }))
+                }
+                _ => Err(ElabError::ExpectedFunctionType)
+            }
+        } else { check(db, ctx, body, ty) }
+    }
+
     let ty = Value::unfold_to_head(db, ty);
     log::trace!("\n{}\n  {}\n{} {}", ctx.env(), term.as_str(db.text(ctx.module)), "<=".bright_blue(), ty);
     match (term, ty.as_ref()) {
-        (syntax::Term::Lambda { mode
-            , sort
-            , var
-            , anno
-            , body
-            , .. },
-            Value::Pi { mode:type_mode, domain, closure, .. }) =>
-        {
-            if *sort == Sort::Term && mode != type_mode { return Err(ElabError::ModeMismatch) }
-            let name = var.unwrap_or_default();
-            if let Some(anno) = anno {
-                let span = anno.span();
-                let anno_elabed = check(db, ctx.clone(), anno, Value::classifier(anno.sort()))?;
-                let anno_value = Value::eval(db, ctx.module, ctx.env(), anno_elabed);
-                convertible(db, anno.sort(), ctx.clone(), span, &anno_value, domain)?;
-            }
-            let value = LazyValue::computed(Value::variable(ctx.env_lvl()));
-            let ctx = ctx.bind(name, domain.clone());
-            let body_type = closure.eval(db, EnvEntry::new(name, value));
-            let elaborated_body = check(db, ctx, body, body_type)?;
-            Ok(Rc::new(core::Term::Lambda { mode:*mode, name, body: elaborated_body }))
-        }
+        (syntax::Term::Lambda { sort, vars, body, .. }, _) =>
+            check_lambda(db, ctx, *sort, 0, vars, body, ty),
 
         (syntax::Term::Let { mode, sort, def, body, .. }, _) =>
         {
@@ -249,10 +261,39 @@ fn check(db: &Database, ctx: Context, term: &syntax::Term, ty: Rc<Value>) -> Res
             }
         }
 
-        (syntax::Term::Rewrite { .. },
+        (syntax::Term::Rewrite { equation, guide, body, .. },
             _) =>
         {
-            todo!()
+            let (equation_elabed, equality, _) = infer(db, ctx.clone(), equation)?;
+            match equality.as_ref() {
+                Value::Equality { left, right } => {
+                    if let Some(guide) = guide {
+                        let left_entry = LazyValue::computed(left.clone());
+                        let ctx_left = ctx.define(guide.name, left_entry, Value::top_type());
+                        let right_entry = LazyValue::computed(right.clone());
+                        let ctx_right = ctx.define(guide.name, right_entry, Value::top_type());
+
+                        let guide_eq_elabed = check(db, ctx.clone(), &guide.equation, Value::star())?;
+                        let guide_eq_value_left = Value::eval(db, ctx.module, ctx_left.env(), guide_eq_elabed.clone());
+                        let guide_eq_value_right = Value::eval(db, ctx.module, ctx_right.env(), guide_eq_elabed.clone());
+
+                        convertible(db, Sort::Type, ctx_right, (0, 0), &guide_eq_value_right, &ty)?;
+                        let body_elabed = check(db, ctx_left, body, guide_eq_value_left)?;
+                        Ok(Rc::new(core::Term::Rewrite {
+                            equation: equation_elabed,
+                            guide: core::RewriteGuide {
+                                name: guide.name,
+                                hint: Rc::new(right.quote(db, ctx.env_lvl())),
+                                equation: guide_eq_elabed
+                            },
+                            body: body_elabed
+                        }))
+                    } else {
+                        todo!()
+                    }
+                }
+                _ => Err(ElabError::ExpectedEqualityType)
+            }
         }
 
         (syntax::Term::Cast { equation, input, erasure, ..}, _) =>
@@ -451,17 +492,28 @@ fn infer(db: &Database, ctx: Context, term: &syntax::Term) -> Result<(Rc<core::T
 
 fn erase(db: &Database, ctx: Context, term: &syntax::Term) -> Result<Rc<core::Term>, ElabError> {
     use syntax::Term;
-    match term {
-        Term::Lambda { mode, sort, var, body, .. } => {
-            let (mode, sort) = (*mode, *sort);
-            if mode == Mode::Erased || sort != Sort::Term { erase(db, ctx, body) }
-            else {
-                let name = var.unwrap_or_default();
-                let ctx = ctx.bind(name, Value::star());
-                let body = erase(db, ctx, body)?;
-                Ok(Rc::new(core::Term::Lambda { mode, name, body }))
+    fn erase_lambda(db: &Database
+        , ctx: Context
+        , sort: Sort
+        , index: usize
+        , vars: &[syntax::LambdaVar] 
+        , body: &syntax::Term)
+        -> Result<Rc<core::Term>, ElabError>
+    {
+        if let Some(var) = vars.get(index) {
+            if var.mode == Mode::Erased || sort != Sort::Term {
+                erase_lambda(db, ctx, sort, index + 1, vars, body)
+            } else {
+                let name = var.var.unwrap_or_default();
+                let ctx = ctx.bind(name, Value::top_type());
+                let body = erase_lambda(db, ctx, sort, index + 1, vars, body)?;
+                Ok(Rc::new(core::Term::Lambda { mode: var.mode, name, body }))
             }
-        },
+        } else { erase(db, ctx, body) }
+    }
+    match term {
+        Term::Lambda { sort, vars, body, .. } =>
+            erase_lambda(db, ctx, *sort, 0, vars, body),
         Term::Let { mode, sort, def, body, .. } => {
             let (mode, sort) = (*mode, *sort);
             if mode == Mode::Erased || sort != Sort::Term { erase(db, ctx, body) }

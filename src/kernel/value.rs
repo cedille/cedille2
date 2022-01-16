@@ -342,6 +342,16 @@ impl Value {
         Rc::new(Value::SuperStar)
     }
 
+    pub fn id() -> Rc<Value> {
+        let body_term = Rc::new(Term::Bound { index:0.into() });
+        let body = Closure::new(Symbol::default(), Environment::new(), body_term);
+        Value::lambda(Mode::Free, Symbol::from("x"), body)
+    }
+
+    pub fn top_type() -> Rc<Value> {
+        Value::equality(Value::id(), Value::id())
+    }
+
     pub fn classifier(sort: Sort) -> Rc<Value> {
         match sort {
             Sort::Term => unreachable!(),

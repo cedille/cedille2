@@ -35,7 +35,9 @@ term_binder = _{
     | term_annotate
 }
 
-term_lambda = { "λ" ~ bound_id ~ (":" ~ type_)? ~ "." }
+term_lambda_relevant_var = { bound_id | ("(" ~ bound_id ~ (":" ~ type_)? ~ ")") }
+term_lambda_erased_var = { "-" ~ (bound_id | ("(" ~ bound_id ~ (":" ~ (kind | type_))? ~ ")")) }
+term_lambda = { "λ" ~ (term_lambda_relevant_var | term_lambda_erased_var)+ ~ "." }
 term_erased_lambda = { "Λ" ~ bound_id ~ (":" ~ (kind | type_))? ~ "." }
 term_let = { "[" ~ (define_term | define_type) ~ "]" ~ "-" }
 term_erased_let = { "{" ~ define_term ~ "}" ~ "-" }
@@ -80,9 +82,10 @@ type_binder = _{
     | type_let
 }
 
+type_lambda_var = { bound_id | ("(" ~ bound_id ~ (":" ~ (kind | type_))? ~ ")") }
+type_lambda = { "λ" ~ type_lambda_var+ ~ "." }
 type_forall = { "Π" ~ bound_id ~ ":" ~ type_ ~ "." }
 type_erased_forall = { "∀" ~ bound_id ~ ":" ~ (kind | type_) ~ "." }
-type_lambda = { "λ" ~ bound_id ~ (":" ~ (kind | type_))? ~ "." }
 type_intersection = { "ι" ~ bound_id ~ ":" ~ type_ ~ "." }
 type_let = { "[" ~ (define_term | define_type) ~ "]" ~ "-" }
 
@@ -92,6 +95,7 @@ type_atom = {
     | hole
     | qual_id
 }
+
 
 kind = { 
     (kind_binder | type_application ~ "➔")*

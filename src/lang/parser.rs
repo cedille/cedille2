@@ -245,6 +245,22 @@ fn term(pairs: Pair<Rule>) -> Term {
 }
 
 fn term_binder(body: Term, binder: Pair<Rule>) -> Term {
+    fn term_lambda_relevant_var(var: Pair<Rule>) -> LambdaVar {
+        let mut inner = var.into_inner();
+        let mode = Mode::Free;
+        let var = inner.required(bound_id);
+        let anno = inner.optional(Rule::type_, type_);
+        LambdaVar { mode, var, anno }
+    }
+    fn term_lambda_erased_var(var: Pair<Rule>) -> LambdaVar {
+        let mut inner = var.into_inner();
+        let mode = Mode::Erased;
+        let var = inner.required(bound_id);
+        let anno =
+            if let Some(ty) = inner.optional(Rule::type_, type_) { Some(ty) }
+            else { inner.optional(Rule::kind, kind) };
+        LambdaVar { mode, var, anno }
+    }
     fn num(num: Pair<Rule>) -> usize {
         let num = num.as_str().parse::<usize>();
         // The grammar guarantees this is a usize
@@ -258,15 +274,25 @@ fn term_binder(body: Term, binder: Pair<Rule>) -> Term {
     let rule = binder.as_rule();
     let mut inner = binder.into_inner();
     match rule {
-        Rule::term_lambda | Rule::term_erased_lambda => {
-            let mode = if rule == Rule::term_lambda { Mode::Free } else { Mode::Erased };
+        Rule::term_lambda => {
+            let vars = inner.variant_list(|p| match p.as_rule() {
+                Rule::term_lambda_relevant_var => Some(term_lambda_relevant_var(p)),
+                Rule::term_lambda_erased_var => Some(term_lambda_erased_var(p)),
+                _ => None
+            });
+            Term::Lambda { span, sort, vars, body }
+        }
+        Rule::term_erased_lambda => {
+            let mode = Mode::Erased;
             let var= inner.required(bound_id);
             if let Some(k) = inner.optional(Rule::kind, kind) {
-                let anno = Some(Box::new(k));
-                Term::Lambda { span, mode, sort, var, anno, body }
+                let anno = Some(k);
+                let var = LambdaVar { mode, var, anno };
+                Term::Lambda { span, sort, vars: vec![var], body }
             } else {
-                let anno = inner.optional(Rule::type_, type_).map(Box::new);
-                Term::Lambda { span, mode, sort, var, anno, body }
+                let anno = inner.optional(Rule::type_, type_);
+                let var = LambdaVar { mode, var, anno };
+                Term::Lambda { span, sort, vars: vec![var], body }
             }
         },
         Rule::term_let | Rule::term_erased_let => {
@@ -467,6 +493,15 @@ fn type_(pairs: Pair<Rule>) -> Term {
 }
 
 fn type_binder(body: Term, binder: Pair<Rule>) -> Term {
+    fn type_lambda_var(var: Pair<Rule>) -> LambdaVar {
+        let mut inner = var.into_inner();
+        let mode = Mode::Free;
+        let var = inner.required(bound_id);
+        let anno =
+            if let Some(ty) = inner.optional(Rule::kind, kind) { Some(ty) }
+            else { inner.optional(Rule::type_, type_) };
+        LambdaVar { mode, var, anno }
+    }
     let (binder_start, _) = span(binder.as_span());
     let (_, binder_end) = body.span();
     let span = (binder_start, binder_end);
@@ -493,15 +528,8 @@ fn type_binder(body: Term, binder: Pair<Rule>) -> Term {
             }
         },
         Rule::type_lambda => {
-            let var = inner.required(bound_id);
-            let mode = Mode::Free;
-            if let Some(k) = inner.optional(Rule::kind, kind) {
-                let anno = Some(Box::new(k));
-                Term::Lambda { span, mode, sort, var, anno, body }
-            } else {
-                let anno = inner.optional(Rule::type_, type_).map(Box::new);
-                Term::Lambda { span, mode, sort, var, anno, body }
-            }
+            let vars = inner.list(Rule::type_lambda_var, type_lambda_var);
+            Term::Lambda { span, sort, vars, body }
         },
         Rule::type_intersection => {
             let var = inner.required(bound_id);
@@ -551,7 +579,7 @@ fn type_body(pairs: Pair<Rule>) -> Term {
                 let fun = Box::new(result);
                 let arg = Box::new(term_atom(p));
                 let span = (outer_span.0, arg.span().1);
-                let apply_type = ApplyType::TermErased;
+                let apply_type = ApplyType::Free;
                 result = Term::Apply { span, apply_type, sort, fun, arg }
             },
             _ => unreachable!()

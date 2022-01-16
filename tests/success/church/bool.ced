@@ -2,8 +2,8 @@ module church/bool.
 
 Bool : ★ = ∀ X:★. X ➔ X ➔ X.
 
-true : Bool
+tt : Bool
 = Λ X. λ x. λ y. x.
 
-false : Bool
+ff : Bool
 = Λ X. λ x. λ y. y.

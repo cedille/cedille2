@@ -4,3 +4,6 @@ Unit : ★ = ∀ X:★. X ➔ X.
 
 unit : Unit
 = Λ X. λ x. x.
+
+unit2 : Unit
+= λ -X x. x.

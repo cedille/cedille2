@@ -1,0 +1,16 @@
+module equality.
+
+Top : ★ = {β ≃ β}.
+
+_ : { λ x. x ≃ λ x. x } = β.
+
+_ : { Λ x. λ x. x ≃ λ x. x } = β.
+
+_ : ∀ a:Top. ∀ b:Top. { a b ≃ a b } = Λ a. Λ b. β.
+
+_ : ∀ a:Top. { a ≃ λ x. a x } = Λ a. β.
+
+import not.
+
+_ : Not·{ λ x. λ y. x ≃ λ x. λ y. y }
+= Λ eq. δ - eq.

@@ -78,6 +78,7 @@ impl Database {
     }
 
     pub fn insert_decl(&mut self, module: Symbol, decl: core::Decl) -> Result<(), ElabError> {
+        if decl.name == Symbol::from("_") { return Ok(()) }
         let module_data = self.modules.get_mut(&module).unwrap();
         let id = Id::from(decl.name);
         if module_data.scope.contains(&id) || module_data.exports.contains(&id) {
