@@ -66,7 +66,7 @@ pub struct DefineDatatype {
 pub struct RewriteGuide {
     pub name: Symbol,
     pub hint: Option<Box<Term>>,
-    pub equation: Box<Term>
+    pub ty: Box<Term>
 }
 
 #[derive(Debug, Clone)]

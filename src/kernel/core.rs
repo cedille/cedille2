@@ -31,7 +31,7 @@ pub struct Decl {
 pub struct RewriteGuide {
     pub name: Symbol,
     pub hint: Rc<Term>,
-    pub equation: Rc<Term>
+    pub ty: Rc<Term>
 }
 
 #[derive(Debug, Hash, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -102,10 +102,11 @@ pub enum Term {
 }
 
 impl RewriteGuide {
-    pub fn to_string_with_context(&self, ctx: im_rc::Vector<Symbol>) -> String {
+    pub fn to_string_with_context(&self, mut ctx: im_rc::Vector<Symbol>) -> String {
         let hint = self.hint.to_string_with_context(ctx.clone());
-        let equation = self.equation.to_string_with_context(ctx);
-        format!("@ {} <{}>. {}", self.name, hint, equation)
+        ctx.push_back(self.name);
+        let ty = self.ty.to_string_with_context(ctx);
+        format!("@ {} <{}>. {}", self.name, hint, ty)
     }
 }
 

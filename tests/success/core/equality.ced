@@ -1,6 +1,6 @@
 module equality.
 
-Top : ★ = {β ≃ β}.
+import top.
 
 _ : { λ x. x ≃ λ x. x } = β.
 

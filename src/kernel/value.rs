@@ -33,8 +33,8 @@ impl From<SpineEntry> for EnvEntry {
 }
 
 impl EnvEntry {
-    pub fn new(name: Symbol, value: LazyValue) -> EnvEntry {
-        EnvEntry { name, value }
+    pub fn new(name: Symbol, value: impl Into<LazyValue>) -> EnvEntry {
+        EnvEntry { name, value: value.into() }
     }
 }
 
@@ -80,8 +80,8 @@ impl ops::Index<Level> for Environment {
 
 #[derive(Debug, Clone)]
 pub struct SpineEntry {
-    apply_type: ApplyType,
-    value: LazyValue,
+    pub apply_type: ApplyType,
+    pub value: LazyValue,
 }
 
 impl fmt::Display for SpineEntry {
@@ -141,7 +141,7 @@ pub struct Closure {
 }
 
 impl Closure {
-    fn new(module: Symbol, env: Environment, code: Rc<Term>) -> Closure {
+    pub fn new(module: Symbol, env: Environment, code: Rc<Term>) -> Closure {
         Closure { module, env, code }
     }
 
@@ -181,6 +181,18 @@ impl fmt::Display for LazyValue {
             let code = code.as_ref().unwrap();
             write!(f, "<{};{}>", code.env, code.term)
         }
+    }
+}
+
+impl From<&Rc<Value>> for LazyValue {
+    fn from(value: &Rc<Value>) -> Self {
+        Self::computed(value.clone())
+    }
+}
+
+impl From<Rc<Value>> for LazyValue {
+    fn from(value: Rc<Value>) -> Self {
+        Self::computed(value)
     }
 }
 
@@ -342,6 +354,13 @@ impl Value {
         Rc::new(Value::SuperStar)
     }
 
+    pub fn get_ref_id(&self) -> Option<Id> {
+        match self {
+            Value::Reference { id, .. } => Some(id.clone()),
+            _ => None
+        }
+    }
+
     pub fn id() -> Rc<Value> {
         let body_term = Rc::new(Term::Bound { index:0.into() });
         let body = Closure::new(Symbol::default(), Environment::new(), body_term);
@@ -374,7 +393,16 @@ impl Value {
                 spine.push_back(arg);
                 Value::reference(id.clone(), spine, unfolded)
             },
-            Value::Lambda { closure, .. } => closure.eval(db, arg),
+            Value::Lambda { mode, closure, .. } => {
+                match (*mode, arg.apply_type.to_mode()) {
+                    (Mode::Erased, Mode::Free) => {
+                        let input = LazyValue::computed(Value::variable(closure.env.len()));
+                        let body = closure.eval(db, SpineEntry::new(arg.apply_type, input));
+                        body.apply(db, arg)
+                    }
+                    _ => closure.eval(db, arg)
+                }
+            }
             _ => unreachable!()
         }
     }
@@ -466,24 +494,8 @@ impl Value {
             | Term::Cast { erasure, .. } => Value::eval(db, module, env.clone(), erasure.clone()),
             Term::Apply { apply_type, fun, arg } => {
                 let arg = LazyValue::new(module, env.clone(), arg.clone());
-                let entry = SpineEntry::new(*apply_type, arg);
                 let fun = Value::eval(db, module, env.clone(), fun.clone());
-                match fun.as_ref() {
-                    Value::Variable { level, spine } => {
-                        let mut spine = spine.clone();
-                        spine.push_back(entry);
-                        Value::variable_with_spine(*level, spine)
-                    }
-                    Value::Reference { id, spine, unfolded } => {
-                        let unfolded = unfolded.as_ref()
-                            .map(|v| v.apply(db, entry.clone()));
-                        let mut spine = spine.clone();
-                        spine.push_back(entry);
-                        Value::reference(id.clone(), spine, unfolded)
-                    } 
-                    Value::Lambda { closure, .. } => closure.eval(db, entry),
-                    _ => unreachable!()
-                }
+                fun.apply(db, SpineEntry::new(*apply_type, arg))
             },
             Term::Bound { index, .. } => env[index.to_level(env.len())].value.force(db),
             Term::Free { id } => {

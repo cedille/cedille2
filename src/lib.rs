@@ -63,6 +63,7 @@ mod tests {
     test_file_success!(core_false);
     test_file_success!(core_true);
     test_file_success!(core_equality);
+    test_file_success!(core_rewrites);
 
     test_file_success!(church_bool);
     test_file_success!(church_inductive_bool);

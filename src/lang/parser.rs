@@ -469,8 +469,8 @@ fn guide(guide: Pair<Rule>) -> RewriteGuide {
     let mut inner = guide.into_inner();
     let name = inner.required(id);
     let hint = inner.optional(Rule::term_guide, term_guide).map(Box::new);
-    let equation = Box::new(inner.required(type_));
-    RewriteGuide { name, hint, equation }
+    let ty = Box::new(inner.required(type_));
+    RewriteGuide { name, hint, ty }
 }
 
 fn type_(pairs: Pair<Rule>) -> Term {
@@ -590,9 +590,9 @@ fn type_body(pairs: Pair<Rule>) -> Term {
 }
 
 fn type_atom(pairs: Pair<Rule>) -> Term {
+    let span = span(pairs.as_span());
     let mut inner = pairs.into_inner();
     let p = inner.next().unwrap();
-    let span = span(p.as_span());
     match p.as_rule() {
         Rule::term => {
             let left = Box::new(term(p));

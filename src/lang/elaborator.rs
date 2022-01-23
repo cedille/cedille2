@@ -6,8 +6,9 @@ use thiserror::Error;
 
 use crate::common::*;
 use crate::lang::syntax;
+use crate::lang::rewriter;
 use crate::kernel::core;
-use crate::kernel::value::{Value, LazyValue, EnvEntry, Environment};
+use crate::kernel::value::{Value, Closure, LazyValue, EnvEntry, Environment};
 use crate::database::Database;
 
 type Span = (usize, usize);
@@ -46,8 +47,8 @@ pub enum ElabError {
     Hole { span: Span },
     #[error("DefinitionCollision")]
     DefinitionCollision,
-    #[error("MissingName")]
-    MissingName,
+    #[error("MissingName {span:?}")]
+    MissingName { span: Span },
     #[error("Inference failed {span:?}")]
     InferenceFailed { span: Span },
     #[error("UnsupportedProjection")]
@@ -55,11 +56,11 @@ pub enum ElabError {
 }
 
 #[derive(Debug, Clone)]
-struct Context {
+pub struct Context {
     env: Environment,
     types: im_rc::Vector<(Symbol, Rc<Value>)>,
-    module: Symbol,
-    sort: Sort
+    pub module: Symbol,
+    pub sort: Sort
 }
 
 impl Context {
@@ -72,7 +73,7 @@ impl Context {
         }
     }
 
-    fn bind(&self, name: Symbol, value_type: Rc<Value>) -> Context {
+    pub fn bind(&self, name: Symbol, value_type: Rc<Value>) -> Context {
         let mut result = self.clone();
         let level = self.env_lvl();
         let value = LazyValue::computed(Value::variable(level));
@@ -82,7 +83,7 @@ impl Context {
         result
     }
 
-    fn define(&self, name: Symbol, value: LazyValue, value_type: Rc<Value>) -> Context {
+    pub fn define(&self, name: Symbol, value: LazyValue, value_type: Rc<Value>) -> Context {
         let mut result = self.clone();
         log::trace!("\n{}\n{} {} {} {} {}", self.env, "define".bright_blue(), name, value, ":".bright_blue(), value_type);
         result.env.push_back(EnvEntry::new(name, value));
@@ -90,9 +91,9 @@ impl Context {
         result
     }
 
-    fn env(&self) -> Environment { self.env.clone() }
+    pub fn env(&self) -> Environment { self.env.clone() }
 
-    fn env_lvl(&self) -> Level { self.env.len().into() }
+    pub fn env_lvl(&self) -> Level { self.env.len().into() }
 }
 
 pub fn elaborate(db: &mut Database, module: Symbol, syntax: &syntax::Module) -> anyhow::Result<()> {
@@ -261,36 +262,42 @@ fn check(db: &Database, ctx: Context, term: &syntax::Term, ty: Rc<Value>) -> Res
             }
         }
 
-        (syntax::Term::Rewrite { equation, guide, body, .. },
+        (syntax::Term::Rewrite { equation, guide, body, occurrence, .. },
             _) =>
         {
             let (equation_elabed, equality, _) = infer(db, ctx.clone(), equation)?;
             match equality.as_ref() {
                 Value::Equality { left, right } => {
-                    if let Some(guide) = guide {
-                        let left_entry = LazyValue::computed(left.clone());
-                        let ctx_left = ctx.define(guide.name, left_entry, Value::top_type());
-                        let right_entry = LazyValue::computed(right.clone());
-                        let ctx_right = ctx.define(guide.name, right_entry, Value::top_type());
-
-                        let guide_eq_elabed = check(db, ctx.clone(), &guide.equation, Value::star())?;
-                        let guide_eq_value_left = Value::eval(db, ctx.module, ctx_left.env(), guide_eq_elabed.clone());
-                        let guide_eq_value_right = Value::eval(db, ctx.module, ctx_right.env(), guide_eq_elabed.clone());
-
-                        convertible(db, Sort::Type, ctx_right, (0, 0), &guide_eq_value_right, &ty)?;
-                        let body_elabed = check(db, ctx_left, body, guide_eq_value_left)?;
-                        Ok(Rc::new(core::Term::Rewrite {
-                            equation: equation_elabed,
-                            guide: core::RewriteGuide {
-                                name: guide.name,
-                                hint: Rc::new(right.quote(db, ctx.env_lvl())),
-                                equation: guide_eq_elabed
-                            },
-                            body: body_elabed
-                        }))
+                    let guide_name = guide.as_ref().map(|g| g.name).unwrap_or_default();
+                    let guide_ctx = ctx.bind(guide_name, Value::top_type());
+                    let guide_ty_elabed = if let Some(guide) = guide {
+                        check(db, guide_ctx, &guide.ty, Value::star())?
                     } else {
-                        todo!()
-                    }
+                        rewriter::match_term(db, guide_ctx, *occurrence, left, &ty)?
+                    };
+                    let guide_ty_closure = Closure::new(ctx.module, ctx.env(), guide_ty_elabed.clone());
+
+                    convertible(db
+                        , Sort::Type
+                        , ctx.clone()
+                        , (0, 0)
+                        , &guide_ty_closure.eval(db, EnvEntry::new(guide_name, left))
+                        , &ty)?;
+
+                    let body_elabed = check(db
+                        , ctx.clone()
+                        , body
+                        , guide_ty_closure.eval(db, EnvEntry::new(guide_name, right)))?;
+
+                    Ok(Rc::new(core::Term::Rewrite {
+                        equation: equation_elabed,
+                        guide: core::RewriteGuide {
+                            name: guide_name,
+                            hint: Rc::new(right.quote(db, ctx.env_lvl())),
+                            ty: guide_ty_elabed
+                        },
+                        body: body_elabed
+                    }))
                 }
                 _ => Err(ElabError::ExpectedEqualityType)
             }
@@ -370,6 +377,17 @@ fn infer(db: &Database, ctx: Context, term: &syntax::Term) -> Result<(Rc<core::T
                 right: right_elabed
             });
             Ok((result, Value::star(), Sort::Type))
+        }
+
+        syntax::Term::Symmetry { equation, .. } => {
+            let (equation_elabed, eq_ty, eq_sort) = infer(db, ctx.clone(), equation)?;
+            match eq_ty.as_ref() {
+                Value::Equality { left, right } => {
+                    let result_ty = Rc::new(Value::Equality { left:right.clone(), right:left.clone() });
+                    Ok((equation_elabed, result_ty, eq_sort))
+                }
+                _ => Err(ElabError::ExpectedEqualityType)
+            }
         }
 
         syntax::Term::Let { mode, sort, def, body, .. } => {
@@ -490,7 +508,7 @@ fn infer(db: &Database, ctx: Context, term: &syntax::Term) -> Result<(Rc<core::T
     result
 }
 
-fn erase(db: &Database, ctx: Context, term: &syntax::Term) -> Result<Rc<core::Term>, ElabError> {
+pub fn erase(db: &Database, ctx: Context, term: &syntax::Term) -> Result<Rc<core::Term>, ElabError> {
     use syntax::Term;
     fn erase_lambda(db: &Database
         , ctx: Context
@@ -578,6 +596,6 @@ fn lookup_type(db: &Database, ctx: &Context, id: &Id) -> Result<(Rc<Value>, Opti
     match (toplevel_type, context_type) {
         (_, Some((v, level))) => Ok((v, level)),
         (Some(v), None) => Ok((v.force(db), None)),
-        (None, None) => Err(ElabError::MissingName)
+        (None, None) => { Err(ElabError::MissingName { span: (0, 0) }) }
     }
 }

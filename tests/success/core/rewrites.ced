@@ -1,0 +1,24 @@
+module rewrites.
+
+import top.
+
+_ : Π t1:Top. Π t2:Top. Π t3:Top. {t1 ≃ t2} ➾ {t2 ≃ t3} ➾ {t1 ≃ t3}
+= λ t1 t2 t3 -e1 -e2. ρ e1 @ x. {x ≃ t3} - ρ ς e2 @ x. {t2 ≃ x} - β.
+
+_ : Π t1:Top. Π t2:Top. Π t3:Top. {t1 ≃ t2} ➾ {t2 ≃ t3} ➾ {t1 ≃ t3}
+= λ t1 t2 t3 -e1 -e2. ρ e1 - ρ ς e2 - β.
+
+_ : Π t1:Top. Π t2:Top. {t1 ≃ t2} ➾ {λ x. t1 ≃ λ x. t2}
+= λ t1 t2 -e. ρ e @ x. {λ y. x ≃ λ x. t2} - β.
+
+_ : Π t1:Top. Π t2:Top. {t1 ≃ t2} ➾ {λ x. t1 ≃ λ x. t2}
+= λ t1 t2 -e. ρ e - β.
+
+id : ∀ X:★. X ➔ X
+= λ -X x. x.
+
+_ : Π a:Top. Π b:Top. {a ≃ b} ➾ {id a ≃ b}
+= λ a b -e. ρ e @ x. {x ≃ b} - β.
+
+_ : Π a:Top. Π b:Top. {a ≃ b} ➾ {id a ≃ b}
+= λ a b -e. ρ e - β.
