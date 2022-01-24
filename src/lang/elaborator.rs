@@ -19,9 +19,11 @@ pub enum ElabError {
     Many {
         errors: Vec<anyhow::Error>
     },
-    #[error("Terms are inconvertible at {span:?}")]
+    #[error("{left} ≠ {right} at {span:?}")]
     Inconvertible { 
-        span: Span,
+        span: Option<Span>,
+        left: String,
+        right: String
     },
     #[error("Terms are convertible at {span:?} when they should not be")]
     Convertible {
@@ -43,8 +45,11 @@ pub enum ElabError {
     ExpectedIntersectionType,
     #[error("ModeMismatch")]
     ModeMismatch,
-    #[error("Hole at {span:?}")]
-    Hole { span: Span },
+    #[error("{expected_ty} was expected at {span:?}")]
+    Hole { 
+        span: Span,
+        expected_ty: String
+    },
     #[error("DefinitionCollision")]
     DefinitionCollision,
     #[error("MissingName {span:?}")]
@@ -179,7 +184,7 @@ fn check(db: &Database, ctx: Context, term: &syntax::Term, ty: Rc<Value>) -> Res
                         let span = anno.span();
                         let anno_elabed = check(db, ctx.clone(), anno, Value::classifier(anno.sort()))?;
                         let anno_value = Value::eval(db, ctx.module, ctx.env(), anno_elabed);
-                        convertible(db, anno.sort(), ctx.clone(), span, &anno_value, domain)?;
+                        convertible(db, anno.sort(), ctx.clone(), Some(span), &anno_value, domain)?;
                     }
                     let value = LazyValue::computed(Value::variable(ctx.env_lvl()));
                     let ctx = ctx.bind(name, domain.clone());
@@ -231,7 +236,7 @@ fn check(db: &Database, ctx: Context, term: &syntax::Term, ty: Rc<Value>) -> Res
             let type2 = type2.eval(db, closure_arg);
             let second_elabed = check(db, ctx.clone(), second, type2)?;
             let second_value = Value::eval(db, ctx.module, ctx.env(), second_elabed.clone());
-            convertible(db, Sort::Term, ctx, *span, &first_value, &second_value)?;
+            convertible(db, Sort::Term, ctx, Some(*span), &first_value, &second_value)?;
             Ok(Rc::new(core::Term::Intersect {
                 first: first_elabed,
                 second: second_elabed
@@ -243,7 +248,7 @@ fn check(db: &Database, ctx: Context, term: &syntax::Term, ty: Rc<Value>) -> Res
         {
             let erasure_elabed = if let Some(t) = erasure { erase(db, ctx.clone(), t)? }
                 else { Rc::new(core::Term::id()) };
-            convertible(db, Sort::Term, ctx, *span, left, right)?;
+            convertible(db, Sort::Term, ctx, Some(*span), left, right)?;
             Ok(Rc::new(core::Term::Refl { erasure: erasure_elabed }))
         }
 
@@ -252,7 +257,7 @@ fn check(db: &Database, ctx: Context, term: &syntax::Term, ty: Rc<Value>) -> Res
             let (equation_elabed, equality, _) = infer(db, ctx.clone(), equation)?;
             match equality.as_ref() {
                 Value::Equality { left, right } => {
-                    if convertible(db, Sort::Term, ctx, *span, left, right).is_ok() {
+                    if convertible(db, Sort::Term, ctx, Some(*span), left, right).is_ok() {
                         Err(ElabError::Convertible { span:*span })
                     } else {
                         Ok(Rc::new(core::Term::Separate { equation: equation_elabed }))
@@ -280,7 +285,7 @@ fn check(db: &Database, ctx: Context, term: &syntax::Term, ty: Rc<Value>) -> Res
                     convertible(db
                         , Sort::Type
                         , ctx.clone()
-                        , (0, 0)
+                        , None
                         , &guide_ty_closure.eval(db, EnvEntry::new(guide_name, left))
                         , &ty)?;
 
@@ -319,13 +324,16 @@ fn check(db: &Database, ctx: Context, term: &syntax::Term, ty: Rc<Value>) -> Res
         }
 
         (syntax::Term::Hole { span, .. }, _) => {
-            Err(ElabError::Hole { span:*span })
+            Err(ElabError::Hole { 
+                span: *span,
+                expected_ty: ty.quote(db, ctx.env_lvl()).to_string()
+            })
         }
 
         // change direction
         _ => {
             let (result, inferred_type, sort) = infer(db, ctx.clone(), term)?;
-            convertible(db, sort.promote(), ctx, term.span(), &ty, &inferred_type)?;
+            convertible(db, sort.promote(), ctx, Some(term.span()), &ty, &inferred_type)?;
             Ok(result)
         }
     }
@@ -486,7 +494,10 @@ fn infer(db: &Database, ctx: Context, term: &syntax::Term) -> Result<(Rc<core::T
         syntax::Term::Star { .. } => Ok((Rc::new(core::Term::Star), Value::super_star(), Sort::Kind)),
 
         syntax::Term::Hole { span, .. } => {
-            Err(ElabError::Hole { span: *span })
+            Err(ElabError::Hole { 
+                span: *span,
+                expected_ty: String::from("")
+            })
         }
 
         syntax::Term::Annotate { anno, body, .. } => {
@@ -578,13 +589,23 @@ pub fn erase(db: &Database, ctx: Context, term: &syntax::Term) -> Result<Rc<core
             }
         },
         Term::Star { .. } => Err(ElabError::ExpectedTerm { span:term.span() }),
-        Term::Hole { span, .. } => Err(ElabError::Hole { span:*span }),
+        Term::Hole { span, .. } =>
+            Err(ElabError::Hole { 
+                span: *span,
+                expected_ty: String::from("")
+            }),
     }
 }
 
-fn convertible(db: &Database, sort: Sort, ctx: Context, span: Span, left: &Rc<Value>, right: &Rc<Value>) -> Result<(), ElabError> {
+fn convertible(db: &Database, sort: Sort, ctx: Context, span: Option<Span>, left: &Rc<Value>, right: &Rc<Value>) -> Result<(), ElabError> {
     if Value::convertible(db, sort, ctx.env_lvl(), left, right) { Ok(()) }
-    else { Err(ElabError::Inconvertible { span }) }
+    else { 
+        Err(ElabError::Inconvertible { 
+            span,
+            left: left.quote(db, ctx.env_lvl()).to_string(),
+            right: right.quote(db, ctx.env_lvl()).to_string()
+        })
+    }
 }
 
 fn lookup_type(db: &Database, ctx: &Context, id: &Id) -> Result<(Rc<Value>, Option<Level>), ElabError> {

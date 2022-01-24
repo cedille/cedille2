@@ -2,7 +2,7 @@
 use std::rc::Rc;
 use std::io::prelude::*;
 use std::fs::{self, File};
-use std::time::SystemTime;
+use std::time;
 use std::path::{Path, PathBuf};
 use std::collections::{HashSet, HashMap};
 
@@ -43,7 +43,7 @@ struct ModuleData {
     imports: Vec<ImportData>,
     exports: HashSet<Id>,
     scope: HashSet<Id>,
-    last_modified: SystemTime,
+    last_modified: time::SystemTime,
 }
 
 #[derive(Debug)]
@@ -104,7 +104,7 @@ impl Database {
             let current_modified = Path::new(module.as_ref())
                 .metadata()
                 .and_then(|m| m.modified())
-                .unwrap_or_else(|_| SystemTime::now());
+                .unwrap_or_else(|_| time::SystemTime::now());
             
             imports_loaded && current_modified <= data.last_modified
         } else { false }
@@ -160,10 +160,11 @@ impl Database {
             log::info!("Skipped {}", *sym);
             Ok(())
         } else {
+            let now = time::Instant::now();
             self.queued.push(sym);
             let result = self.load_module_inner(sym);
             self.queued.pop();
-            log::info!("Loaded {}", *sym);
+            log::info!("\nLoaded {}\nin {}ms", *sym, now.elapsed().as_millis());
             result
         }
     }
@@ -172,7 +173,7 @@ impl Database {
         let path = Path::new(&*sym);
         let metadata = path.metadata()
             .with_context(|| format!("Failed to extract metadata of path {}", path.display()))?;
-        let last_modified = metadata.modified().unwrap_or_else(|_| SystemTime::now());
+        let last_modified = metadata.modified().unwrap_or_else(|_| time::SystemTime::now());
         
         let mut file = File::open(path)
             .with_context(|| format!("Failed to open file with path {}", path.display()))?;

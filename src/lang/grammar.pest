@@ -162,7 +162,7 @@ num = @{ '1'..'9' ~ '0'..'9'* }
 
 multiline_comment = @{ "{-" ~ (!"-}" ~ ANY)* ~ "-}" }
 suffix_comment = @{ "{-" ~ ANY* ~ EOI }
-line_comment = @{ "--" ~ (!NEWLINE ~ ANY)* ~ NEWLINE }
+line_comment = @{ "--" ~ (!NEWLINE ~ ANY)* ~ (NEWLINE | EOI) }
 
 WHITESPACE = _{ " " | "\t" | NEWLINE }
 COMMENT = _{ line_comment | multiline_comment | suffix_comment }

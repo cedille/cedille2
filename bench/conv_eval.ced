@@ -1,0 +1,160 @@
+{-
+
+Copyright 2021 András Kovács
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software is furnished to do so,
+subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+-}
+
+module conv_eval.
+
+Bool : ★
+= ∀ X:★. X ➔ X ➔ X.
+
+true : Bool
+= λ -X t f. t.
+
+and : Bool ➔ Bool ➔ Bool
+= λ a b -X t f. a ·X (b ·X t f) f.
+
+Nat : ★
+= ∀ X:★. (X ➔ X) ➔ X ➔ X.
+
+add : Nat ➔ Nat ➔ Nat
+= λ a b -X s z. a ·X s (b ·X s z).
+
+mul : Nat ➔ Nat ➔ Nat
+= λ a b -X s. a ·X (b ·X s).
+
+suc : Nat ➔ Nat
+= λ a -X s z. s (a ·X s z).
+
+n2 : Nat = λ -X s z. s (s z).
+n3 : Nat = λ -X s z. s (s (s z)).
+n4 : Nat = λ -X s z. s (s (s (s z))).
+n5 : Nat = λ -X s z. s (s (s (s (s z)))).
+n10    = mul n2 n5.
+n10b   = mul n5 n2.
+n15    = add n10  n5.
+n15b   = add n10b n5.
+n18    = add n15  n3.
+n18b   = add n15b n3.
+n19    = add n15  n4.
+n19b   = add n15b n4.
+n20    = mul n2 n10.
+n20b   = mul n2 n10b.
+n21    = suc n20.
+n21b   = suc n20b.
+n22    = suc n21.
+n22b   = suc n21b.
+n23    = suc n22.
+n23b   = suc n22b.
+n100   = mul n10   n10.
+n100b  = mul n10b  n10b.
+n10k   = mul n100  n100.
+n10kb  = mul n100b n100b.
+n100k  = mul n10k  n10.
+n100kb = mul n10kb n10b.
+n1M    = mul n10k  n100.
+n1Mb   = mul n10kb n100b.
+n5M    = mul n1M   n5.
+n5Mb   = mul n1Mb  n5.
+n10M   = mul n5M   n2.
+n10Mb  = mul n5Mb  n2.
+
+Tree : ★ = ∀ X:★. (X ➔ X ➔ X) ➔ X ➔ X.
+leaf : Tree = λ -X n l. l.
+node : Tree ➔ Tree ➔ Tree
+= λ t1 t2 -X n l. n (t1 ·X n l) (t2 ·X n l).
+
+fullTree : Nat ➔ Tree
+= λ n. n ·Tree (λ t. node t t) leaf.
+
+fullTreeWithLeaf : Tree ➔ Nat ➔ Tree
+= λ bottom n. n ·Tree (λ t. node t t) bottom.
+
+forceTree : Tree ➔ Bool
+= λ t. t ·Bool and true.
+
+t15  = fullTree n15.
+t15b = fullTree n15b.
+t18  = fullTree n18.
+t18b = fullTree n18b.
+t19  = fullTree n19.
+t19b = fullTree n19b.
+t20  = fullTree n20.
+t20b = fullTree n20b.
+t21  = fullTree n21.
+t21b = fullTree n21b.
+t22  = fullTree n22.
+t22b = fullTree n22b.
+t23  = fullTree n23.
+t23b = fullTree n23b.
+
+-- Nat conversion
+--------------------------------------------------------------------------------
+
+{- convn1M  : { n1M ≃ n1Mb }   = β. -}
+{- convn5M  : { n5M ≃ n5Mb }   = β. -}
+{- convn10M : { n10M ≃ n10Mb } = β. -}
+
+-- Full tree conversion
+--------------------------------------------------------------------------------
+
+{- convt15  : { t15 ≃ t15b } = β. -}
+{- convt18  : { t18 ≃ t18b } = β. -}
+{- convt19  : { t19 ≃ t19b } = β. -}
+{- convt20  : { t20 ≃ t20b } = β. -}
+{- convt21  : { t21 ≃ t21b } = β. -}
+{- convt22  : { t22 ≃ t22b } = β. -}
+{- convt23  : { t23 ≃ t23b } = β. -}
+
+-- Full meta-containing tree conversion
+--------------------------------------------------------------------------------
+
+-- convmt15 [elabtime] : Eq t15b (fullTreeWithLeaf _ n15 ) = refl
+-- convmt18 [elabtime] : Eq t18b (fullTreeWithLeaf _ n18 ) = refl
+-- convmt19 [elabtime] : Eq t19b (fullTreeWithLeaf _ n19 ) = refl
+-- convmt20 [elabtime] : Eq t20b (fullTreeWithLeaf _ n20 ) = refl
+-- convmt21 [elabtime] : Eq t21b (fullTreeWithLeaf _ n21 ) = refl
+-- convmt22 [elabtime] : Eq t22b (fullTreeWithLeaf _ n22 ) = refl
+-- convmt23 [elabtime] : Eq t23b (fullTreeWithLeaf _ n23 ) = refl
+
+-- Full tree forcing
+--------------------------------------------------------------------------------
+
+forcet15 : { forceTree t15 ≃ true } = β.
+{- forcet18 : { forceTree t18 ≃ true } = β. -}
+{- forcet19 : { forceTree t19 ≃ true } = β. -}
+{- forcet20 : { forceTree t20 ≃ true } = β. -}
+{- forcet21 : { forceTree t21 ≃ true } = β. -}
+{- forcet22 : { forceTree t22 ≃ true } = β. -}
+{- forcet23 : { forceTree t23 ≃ true } = β. -}
+
+{- nft15 = t15
+nft18 = t18
+nft19 = t19
+nft20 = t20
+nft21 = t21
+nft22 = t22
+nft23 = t23 -}
+
+-- Approximate conversion
+--------------------------------------------------------------------------------
+
+approxConvt22 : { t23 ≃ t23 } = β.

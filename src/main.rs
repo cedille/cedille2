@@ -1,5 +1,7 @@
 
 fn main() {
     env_logger::init();
-    cedille2::repl::repl();
+    stacker::grow(25*1024*1024, || {
+        cedille2::repl::repl();
+    });
 }

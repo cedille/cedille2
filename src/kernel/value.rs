@@ -457,7 +457,11 @@ impl Value {
         }
     }
 
-    pub fn eval(db: &Database, module: Symbol, mut env: Environment, term: Rc<Term>) -> Rc<Value> {
+    pub fn eval(db: &Database, module: Symbol, env: Environment, term: Rc<Term>) -> Rc<Value> {
+        Value::eval_naive(db, module, env, term)
+    }
+
+    fn eval_naive(db: &Database, module: Symbol, mut env: Environment, term: Rc<Term>) -> Rc<Value> {
         let result = match term.as_ref() {
             Term::Lambda { mode, name, body } => {
                 let (mode, name) = (*mode, *name);
@@ -467,34 +471,34 @@ impl Value {
             Term::Let { name, let_body, body, .. } => {
                 let def_value = LazyValue::new(module, env.clone(), let_body.clone());
                 env.push_back(EnvEntry::new(*name, def_value));
-                Value::eval(db, module, env.clone(), body.clone())
+                Value::eval_naive(db, module, env.clone(), body.clone())
             },
             Term::Pi { mode, name, domain, body } => {
                 let (mode, name) = (*mode, *name);
-                let domain = Value::eval(db, module, env.clone(), domain.clone());
+                let domain = Value::eval_naive(db, module, env.clone(), domain.clone());
                 let closure = Closure::new(module, env.clone(), body.clone());
                 Value::pi(mode, name, domain, closure)
             },
             Term::IntersectType { name, first, second } => {
-                let first = Value::eval(db, module, env.clone(), first.clone());
+                let first = Value::eval_naive(db, module, env.clone(), first.clone());
                 let second = Closure::new(module, env.clone(), second.clone());
                 Value::intersect_type(*name, first, second)
             },
             Term::Equality { left, right } => {
-                let left = Value::eval(db, module, env.clone(), left.clone());
-                let right = Value::eval(db, module, env.clone(), right.clone());
+                let left = Value::eval_naive(db, module, env.clone(), left.clone());
+                let right = Value::eval_naive(db, module, env.clone(), right.clone());
                 Value::equality(left, right)
             },
             Term::Rewrite { body, .. }
             | Term::Annotate { body, .. }
-            | Term::Project { body, .. } => Value::eval(db, module, env.clone(), body.clone()),
-            Term::Intersect { first, .. } => Value::eval(db, module, env.clone(), first.clone()),
-            Term::Separate { .. } => Value::eval(db, module, env.clone(), Rc::new(Term::id())),
+            | Term::Project { body, .. } => Value::eval_naive(db, module, env.clone(), body.clone()),
+            Term::Intersect { first, .. } => Value::eval_naive(db, module, env.clone(), first.clone()),
+            Term::Separate { .. } => Value::eval_naive(db, module, env.clone(), Rc::new(Term::id())),
             Term::Refl { erasure }
-            | Term::Cast { erasure, .. } => Value::eval(db, module, env.clone(), erasure.clone()),
+            | Term::Cast { erasure, .. } => Value::eval_naive(db, module, env.clone(), erasure.clone()),
             Term::Apply { apply_type, fun, arg } => {
                 let arg = LazyValue::new(module, env.clone(), arg.clone());
-                let fun = Value::eval(db, module, env.clone(), fun.clone());
+                let fun = Value::eval_naive(db, module, env.clone(), fun.clone());
                 fun.apply(db, SpineEntry::new(*apply_type, arg))
             },
             Term::Bound { index, .. } => env[index.to_level(env.len())].value.force(db),
