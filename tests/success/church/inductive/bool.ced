@@ -12,4 +12,12 @@ tt : Bool
 ff : Bool
 = [B.ff, Λ P. λ tt. λ ff. ff].
 
+toBool : B.Bool ➔ Bool
+= λ x. x ·Bool tt ff.
 
+reflectBool : Π b:Bool. { toBool b ≃ b }
+= λ b. b.2 ·(λ x. {toBool x ≃ x}) β β.
+
+inductBool : Π b:Bool. ∀ P:Bool ➔ ★. P tt ➔ P ff ➔ P b
+= λ b -P tt ff. ρ (ς (reflectBool b))
+    - (b.2 ·(λ x. P (toBool x)) tt ff).

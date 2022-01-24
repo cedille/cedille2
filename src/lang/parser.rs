@@ -529,7 +529,11 @@ fn type_binder(body: Term, binder: Pair<Rule>) -> Term {
             }
         },
         Rule::type_lambda => {
-            let vars = inner.list(Rule::type_lambda_var, type_lambda_var);
+            let vars = inner.variant_list(|p| match p.as_rule() {
+                Rule::type_lambda_var => Some(type_lambda_var(p)),
+                Rule::type_lambda_single_var => Some(type_lambda_var(p)),
+                _ => None
+            });
             Term::Lambda { span, sort, vars, body }
         },
         Rule::type_intersection => {

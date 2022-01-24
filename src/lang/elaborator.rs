@@ -596,6 +596,6 @@ fn lookup_type(db: &Database, ctx: &Context, id: &Id) -> Result<(Rc<Value>, Opti
     match (toplevel_type, context_type) {
         (_, Some((v, level))) => Ok((v, level)),
         (Some(v), None) => Ok((v.force(db), None)),
-        (None, None) => { Err(ElabError::MissingName { span: (0, 0) }) }
+        (None, None) => { dbg!(id); Err(ElabError::MissingName { span: (0, 0) }) }
     }
 }
