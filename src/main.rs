@@ -1,7 +1,10 @@
+use std::thread;
 
 fn main() {
     env_logger::init();
-    stacker::grow(8*1024*1024, || {
+    let child = thread::Builder::new().stack_size(1024 * 1024 * 1024).spawn(|| {
         cedille2::repl::repl();
-    });
+    }).unwrap();
+
+    child.join().unwrap();
 }
