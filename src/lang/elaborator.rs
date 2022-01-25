@@ -1,5 +1,6 @@
 
 use std::rc::Rc;
+use std::time;
 
 use colored::Colorize;
 use thiserror::Error;
@@ -8,7 +9,7 @@ use crate::common::*;
 use crate::lang::syntax;
 use crate::lang::rewriter;
 use crate::kernel::core;
-use crate::kernel::value::{Value, Closure, LazyValue, EnvEntry, Environment};
+use crate::kernel::value::{Value, ValueEx, Closure, LazyValue, EnvEntry, Environment};
 use crate::database::Database;
 
 type Span = (usize, usize);
@@ -139,6 +140,15 @@ fn elaborate_decl(db: &mut Database, module: Symbol, params: &[syntax::Parameter
         syntax::Decl::Import(import) => db.load_import(module, import),
         syntax::Decl::Kind(_) => todo!(),
         syntax::Decl::Datatype(_) => todo!(),
+        syntax::Decl::NormalizeCommand(term) => {
+            let (start, end) = term.span();
+            let now = time::Instant::now();
+            let erased = erase(db, Context::new(module, Sort::Term), term)?;
+            let value = Value::eval(db, module, Environment::new(), erased);
+            let _normal_form = Value::reify(value, db, 0.into(), true);
+            log::info!("Normalized {} in {}ms", &db.text(module)[start..end], now.elapsed().as_millis());
+            Ok(())
+        }
     }
 }
 

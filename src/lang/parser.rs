@@ -100,6 +100,11 @@ pub fn module(pairs: Pairs<Rule>) -> Module {
             Rule::define_kind => Some(Decl::Kind(define_kind(decl))),
             Rule::define_datatype => Some(Decl::Datatype(define_datatype(decl))),
             Rule::import => Some(Decl::Import(import(decl))),
+            Rule::normalize_command => {
+                let mut inner = decl.into_inner();
+                let term = inner.required(term_atom);
+                Some(Decl::NormalizeCommand(term))
+            }
             _ => None
         }
     }
@@ -325,8 +330,9 @@ fn term_application(pairs: Pair<Rule>) -> Term {
     let mut iter = pairs.into_inner();
     let mut result = iter.required(term_atom);
     let (mut apply_type, sort) = (ApplyType::Free, Sort::Term);
+    let mut outer_span = result.span();
     for p in iter {
-        let outer_span = span(p.as_span());
+        let p_span = span(p.as_span());
         match p.as_rule() {
             Rule::erased_op => apply_type = ApplyType::TermErased,
             Rule::term_atom | Rule::term => {
@@ -349,6 +355,7 @@ fn term_application(pairs: Pair<Rule>) -> Term {
             }
             _ => unreachable!()
         };
+        outer_span = p_span;
     }
     result
 }

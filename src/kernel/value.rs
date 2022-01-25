@@ -133,6 +133,13 @@ impl ops::DerefMut for Spine {
     fn deref_mut(&mut self) -> &mut Self::Target { &mut self.0 }
 }
 
+impl FromIterator<SpineEntry> for Spine {
+    fn from_iter<T: IntoIterator<Item = SpineEntry>>(iter: T) -> Self {
+        let inner = im_rc::Vector::from_iter(iter);
+        Spine(inner)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Closure {
     module: Symbol,
@@ -308,12 +315,17 @@ impl fmt::Display for Value {
 
 pub trait ValueEx {
     fn apply_spine(&self, db: &Database, spine: Spine) -> Rc<Value>;
+    fn quote(&self, db: &Database, level: Level) -> Term;
 }
 
 impl ValueEx for Rc<Value> {
     fn apply_spine(&self, db: &Database, spine: Spine) -> Rc<Value> {
         spine.iter()
             .fold(self.clone(), |ref acc, entry| acc.apply(db, entry.clone()))
+    }
+
+    fn quote(&self, db: &Database, level: Level) -> Term {
+        Value::reify(self.clone(), db, level, false)
     }
 }
 
@@ -407,49 +419,52 @@ impl Value {
         }
     }
 
-    fn quote_spine(db: &Database, level: Level, head: Term, mut spine: Spine) -> Term {
+    fn reify_spine(db: &Database, level: Level, head: Term, mut spine: Spine, unfold: bool) -> Term {
         if spine.is_empty() { head }
         else {
             spine.iter_mut().fold(head, |acc, arg| {
                 let (apply_type, fun) = (arg.apply_type, Rc::new(acc));
-                let arg = Rc::new(arg.value.force(db).quote(db, level));
+                let arg = Rc::new(Value::reify(arg.value.force(db), db, level, unfold));
                 Term::Apply { apply_type, fun, arg }
             })
         }
     }
 
-    pub fn quote(&self, db: &Database, level: Level) -> Term {
-        match self {
+    pub fn reify(value: Rc<Value>, db: &Database, level: Level, unfold: bool) -> Term {
+        let value =
+            if unfold { Value::unfold_to_head(db, value) }
+            else { value };
+        match value.as_ref() {
             Value::Variable { level:vlvl, spine } => {
                 let var = Term::Bound { index: vlvl.to_index(*level) };
-                Value::quote_spine(db, level, var, spine.clone())
+                Value::reify_spine(db, level, var, spine.clone(), unfold)
             }
             Value::Reference { id, spine, .. } => {
                 let var = Term::Free { id:id.clone() };
-                Value::quote_spine(db, level, var, spine.clone())
+                Value::reify_spine(db, level, var, spine.clone(), unfold)
             }
             Value::Lambda { mode, name, closure } => {
                 let (mode, name) = (*mode, *name);
                 let input = EnvEntry::new(name, LazyValue::computed(Value::variable(level)));
-                let body = Rc::new(closure.eval(db, input).quote(db, level + 1));
+                let body = Rc::new(Value::reify(closure.eval(db, input), db, level + 1, unfold));
                 Term::Lambda { mode, name, body }
             }
             Value::Pi { mode, name, domain, closure } => {
                 let (mode, name) = (*mode, *name);
                 let input = EnvEntry::new(name, LazyValue::computed(Value::variable(level)));
-                let domain = Rc::new(domain.quote(db, level));
-                let body = Rc::new(closure.eval(db, input).quote(db, level + 1));
+                let domain = Rc::new(Value::reify(domain.clone(), db, level, unfold));
+                let body = Rc::new(Value::reify(closure.eval(db, input), db, level + 1, unfold));
                 Term::Pi { mode, name, domain, body }
             },
             Value::IntersectType { name, first, second } => {
                 let input = EnvEntry::new(*name, LazyValue::computed(Value::variable(level)));
-                let first = Rc::new(first.quote(db, level));
-                let second = Rc::new(second.eval(db, input).quote(db, level + 1));
+                let first = Rc::new(Value::reify(first.clone(), db, level, unfold));
+                let second = Rc::new(Value::reify(second.eval(db, input), db, level + 1, unfold));
                 Term::IntersectType { name:*name, first, second }
             },
             Value::Equality { left, right } => {
-                let left = Rc::new(left.quote(db, level));
-                let right = Rc::new(right.quote(db, level));
+                let left = Rc::new(Value::reify(left.clone(), db, level, unfold));
+                let right = Rc::new(Value::reify(right.clone(), db, level, unfold));
                 Term::Equality { left, right }
             }
             Value::Star => Term::Star,

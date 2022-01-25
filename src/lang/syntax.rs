@@ -25,7 +25,8 @@ pub enum Decl {
     Term(DefineTerm),
     Kind(DefineKind),
     Import(Import),
-    Datatype(DefineDatatype)
+    Datatype(DefineDatatype),
+    NormalizeCommand(Term)
 }
 
 #[derive(Debug, Clone)]

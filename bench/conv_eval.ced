@@ -109,9 +109,9 @@ t23b = fullTree n23b.
 -- Nat conversion
 --------------------------------------------------------------------------------
 
-{- convn1M  : { n1M ≃ n1Mb }   = β. -}
-{- convn5M  : { n5M ≃ n5Mb }   = β. -}
-{- convn10M : { n10M ≃ n10Mb } = β. -}
+-- convn1M  : { n1M ≃ n1Mb }   = β.
+-- convn5M  : { n5M ≃ n5Mb }   = β.
+-- convn10M : { n10M ≃ n10Mb } = β.
 
 -- Full tree conversion
 --------------------------------------------------------------------------------
@@ -138,13 +138,13 @@ t23b = fullTree n23b.
 -- Full tree forcing
 --------------------------------------------------------------------------------
 
-forcet15 : { forceTree t15 ≃ true } = β.
-{- forcet18 : { forceTree t18 ≃ true } = β. -}
-{- forcet19 : { forceTree t19 ≃ true } = β. -}
-{- forcet20 : { forceTree t20 ≃ true } = β. -}
-{- forcet21 : { forceTree t21 ≃ true } = β. -}
-{- forcet22 : { forceTree t22 ≃ true } = β. -}
-{- forcet23 : { forceTree t23 ≃ true } = β. -}
+#normalize (forceTree t15).
+-- #normalize (forceTree t18).
+-- #normalize (forceTree t19).
+-- #normalize (forceTree t20).
+-- #normalize (forceTree t21).
+-- #normalize (forceTree t22).
+-- #normalize (forceTree t23).
 
 {- nft15 = t15
 nft18 = t18

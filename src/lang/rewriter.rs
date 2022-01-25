@@ -5,7 +5,7 @@ use crate::common::*;
 use crate::database::Database;
 use crate::lang::elaborator::{Context, ElabError};
 use crate::kernel::core::Term;
-use crate::kernel::value::{Value, Spine, SpineEntry, EnvEntry};
+use crate::kernel::value::{Value, ValueEx, Spine, SpineEntry, EnvEntry};
 
 #[derive(Debug, Clone, Copy)]
 struct MatchArg<'a> {

@@ -10,6 +10,7 @@ decl = _{
     | define_type ~ "."
     | define_kind ~ "."
     | define_datatype ~ "."
+    | normalize_command ~ "."
 }
 
 import = { "import" ~ public? ~ path ~ ("as" ~ id)? ~ import_argument* }
@@ -17,6 +18,7 @@ define_term = { bound_id ~ ((":" | "◂") ~ type_)? ~ "=" ~ term }
 define_type = { bound_id ~ ((":" | "◂") ~ kind)? ~ "=" ~ type_ }
 define_kind = { kind_id ~ kind_arg* ~ "=" ~ kind }
 define_datatype = { "data" ~ id ~ param* ~ ":" ~ kind ~ "=" ~ ctors }
+normalize_command = { "#normalize" ~ term_atom }
 
 term = { term_binder* ~ term_application }
 
