@@ -2,9 +2,10 @@ use std::thread;
 
 fn main() {
     env_logger::init();
-    let child = thread::Builder::new().stack_size(1024 * 1024 * 1024).spawn(|| {
-        cedille2::repl::repl();
+    cedille2::repl::repl();
+/*     let child = thread::Builder::new().stack_size(1024 * 1024 * 1024).spawn(|| {
+        
     }).unwrap();
 
-    child.join().unwrap();
+    child.join().unwrap(); */
 }

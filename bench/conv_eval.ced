@@ -48,9 +48,9 @@ n2 : Nat = λ -X s z. s (s z).
 n3 : Nat = λ -X s z. s (s (s z)).
 n4 : Nat = λ -X s z. s (s (s (s z))).
 n5 : Nat = λ -X s z. s (s (s (s (s z)))).
-n10    = mul n2 n5.
-n10b   = mul n5 n2.
-n15    = add n10  n5.
+n10   = mul n2 n5.
+n10b  = mul n5 n2.
+n15   = add n10  n5.
 n15b   = add n10b n5.
 n18    = add n15  n3.
 n18b   = add n15b n3.
@@ -139,22 +139,22 @@ t23b = fullTree n23b.
 --------------------------------------------------------------------------------
 
 #normalize (forceTree t15).
--- #normalize (forceTree t18).
--- #normalize (forceTree t19).
--- #normalize (forceTree t20).
--- #normalize (forceTree t21).
--- #normalize (forceTree t22).
--- #normalize (forceTree t23).
-
-{- nft15 = t15
-nft18 = t18
-nft19 = t19
-nft20 = t20
-nft21 = t21
-nft22 = t22
-nft23 = t23 -}
+#normalize (forceTree t18).
+{- #normalize (forceTree t19).
+#normalize (forceTree t20).
+#normalize (forceTree t21).
+#normalize (forceTree t22).
+#normalize (forceTree t23). -}
+{- 
+#normalize t15.
+#normalize t18.
+#normalize t19.
+#normalize t20.
+#normalize t21.
+#normalize t22.
+#normalize t23. -}
 
 -- Approximate conversion
 --------------------------------------------------------------------------------
 
-approxConvt22 : { t23 ≃ t23 } = β.
+{- approxConvt22 : { t23 ≃ t23 } = β. -}

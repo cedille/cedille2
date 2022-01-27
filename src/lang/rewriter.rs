@@ -5,7 +5,7 @@ use crate::common::*;
 use crate::database::Database;
 use crate::lang::elaborator::{Context, ElabError};
 use crate::kernel::core::Term;
-use crate::kernel::value::{Value, ValueEx, Spine, SpineEntry, EnvEntry};
+use crate::kernel::value::{Value, ValueEx, LazyValue, LazyValueEx, Spine, SpineEntry, EnvEntry};
 
 #[derive(Debug, Clone, Copy)]
 struct MatchArg<'a> {
@@ -106,7 +106,7 @@ fn match_term_helper(arg: MatchArg, mut_arg: &mut MatchMutArg) -> Term
                 }
             }
             Value::Lambda { mode, name, closure } => {
-                let closure = closure.eval(arg.db, EnvEntry::new(*name, Value::variable(arg.level)));
+                let closure = closure.eval(arg.db, EnvEntry::new(*name, LazyValue::computed(Value::variable(arg.level))));
                 let closure = match_term_helper(arg.update(&closure).increment(), mut_arg);
                 Term::Lambda {
                     mode: *mode,
@@ -115,7 +115,7 @@ fn match_term_helper(arg: MatchArg, mut_arg: &mut MatchMutArg) -> Term
                 }
             }
             Value::Pi { mode, name, domain, closure } => {
-                let closure = closure.eval(arg.db, EnvEntry::new(*name, Value::variable(arg.level)));
+                let closure = closure.eval(arg.db, EnvEntry::new(*name, LazyValue::computed(Value::variable(arg.level))));
                 let domain = match_term_helper(arg.update(domain), mut_arg);
                 let closure = match_term_helper(arg.update(&closure).increment(), mut_arg);
                 Term::Pi {
@@ -126,7 +126,7 @@ fn match_term_helper(arg: MatchArg, mut_arg: &mut MatchMutArg) -> Term
                 }
             }
             Value::IntersectType { name, first, second } => {
-                let second = second.eval(arg.db, EnvEntry::new(*name, Value::variable(arg.level)));
+                let second = second.eval(arg.db, EnvEntry::new(*name, LazyValue::computed(Value::variable(arg.level))));
                 let first = match_term_helper(arg.update(first), mut_arg);
                 let second = match_term_helper(arg.update(&second).increment(), mut_arg);
                 Term::IntersectType {
