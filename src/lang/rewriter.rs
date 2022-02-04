@@ -92,18 +92,13 @@ fn match_term_helper(arg: MatchArg, mut_arg: &mut MatchMutArg) -> Term
             Value::Reference { id, spine, .. } if spine.len() == 0 => {
                 Term::Free { id: id.clone() }
             }
-            Value::Reference { id, spine, unfolded } => {
-                if let Some(unfolded) = unfolded {
-                    let unfolded = unfolded.force(arg.db);
-                    match_term_helper(arg.update(&unfolded).increment(), mut_arg)
-                } else {
-                    let head = Value::reference(id.clone(), Spine::new(), None);
-                    let head = match_term_helper(arg.update(&head), mut_arg);
-                    let result = spine.iter()
-                        .map(|s| process_spine_entry(arg, mut_arg, s))
-                        .fold(head, build_apply);
-                    result
-                }
+            Value::Reference { id, spine, .. } => {
+                let head = Value::reference(id.clone(), Spine::new(), None);
+                let head = match_term_helper(arg.update(&head), mut_arg);
+                let result = spine.iter()
+                    .map(|s| process_spine_entry(arg, mut_arg, s))
+                    .fold(head, build_apply);
+                result
             }
             Value::Lambda { mode, name, closure } => {
                 let closure = closure.eval(arg.db, EnvEntry::new(*name, Value::variable(arg.level)));

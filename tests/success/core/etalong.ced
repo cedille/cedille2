@@ -1,0 +1,4 @@
+module etalong.
+
+_ : ∀ X:(★ ➔ ★) ➔ ★. ∀ F:★ ➔ ★. X ·F ➔ X ·(λ Y. F ·Y)
+= λ -X -F x. x.

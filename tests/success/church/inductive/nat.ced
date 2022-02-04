@@ -1,0 +1,31 @@
+module church/inductive/nat.
+
+import ../nat as Ch.
+
+Inductive : Ch.Nat ➔ ★
+= λ n. ∀ P:Ch.Nat ➔ ★. P Ch.zero ➔ (∀ x:Ch.Nat. P x ➔ P (Ch.succ x)) ➔ P n.
+
+Nat : ★ = ι n:Ch.Nat. Inductive n.
+
+zero : Nat
+= [Ch.zero, λ -P z s. z].
+
+succ : Nat ➔ Nat
+= λ n. [Ch.succ n.1, λ -P z s. s -n.1 (n.2 ·P z s)].
+
+to : Ch.Nat ➔ Nat
+= λ x. x ·Nat zero succ.
+
+reflect : Π n:Nat. { to n ≃ n }
+= λ n. n.2 ·(λ x. {to x ≃ x}) β
+    (λ -x ih. χ({Ch.succ (to x) ≃ Ch.succ x}) - ρ ih - β).
+
+induct : Π n:Nat. ∀ P:Nat ➔ ★. P zero ➔ (∀ m:Nat. P m ➔ P (succ m)) ➔ P n
+= λ n -P z s. ρ ς (reflect n)
+    - (n.2 · (λ x. P (to x)) z (λ -p q. s -(to p) q)).
+
+rec : Π n:Nat. ∀ X:★. X ➔ (X ➔ X) ➔ X
+= λ n. n.1.
+
+add : Nat ➔ Nat ➔ Nat
+= λ n m. rec n ·Nat m succ.

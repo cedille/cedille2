@@ -366,13 +366,6 @@ impl Value {
         Rc::new(Value::SuperStar)
     }
 
-    pub fn get_ref_id(&self) -> Option<Id> {
-        match self {
-            Value::Reference { id, .. } => Some(id.clone()),
-            _ => None
-        }
-    }
-
     pub fn id() -> Rc<Value> {
         let body_term = Rc::new(Term::Bound { index:0.into() });
         let body = Closure::new(Symbol::default(), Environment::new(), body_term);
@@ -540,25 +533,36 @@ impl Value {
     }
 
     fn convertible_spine(db: &Database, sort: Sort, env: Level, mut left: Spine, mut right: Spine) -> bool {
-        left.len() == right.len()
-        && left.iter_mut()
-        .zip(right.iter_mut())
-        .fold(true, |acc, (l, r)| {
+        let mut result = true;
+        let (mut i, mut j) = (0, 0);
+
+        while i < left.len() && j < right.len() {
+            let (l, r) = (&mut left[i], &mut right[j]);
             match sort {
                 Sort::Term => {
-                    if l.apply_type == r.apply_type && l.apply_type == ApplyType::Free {
+                    let l_is_erased = l.apply_type.to_mode() == Mode::Erased;
+                    let r_is_erased = r.apply_type.to_mode() == Mode::Erased;
+                    i += if l_is_erased { 1 } else { 0 };
+                    j += if r_is_erased { 1 } else { 0 };
+                    if !l_is_erased && !r_is_erased {
                         let left = l.value.force(db);
                         let right = r.value.force(db);
-                        acc && Value::convertible(db, sort, env, &left, &right)
-                    } else { acc && l.apply_type == r.apply_type }
+                        result &= Value::convertible(db, sort, env, &left, &right);
+                        i += 1;
+                        j += 1;
+                    }
                 }
                 Sort::Type | Sort::Kind => {
                     let left = l.value.force(db);
                     let right = r.value.force(db);
-                    acc && l.apply_type == r.apply_type && Value::convertible(db, sort, env, &left, &right)
+                    result &= l.apply_type == r.apply_type;
+                    result &= Value::convertible(db, sort, env, &left, &right);
+                    i += 1;
+                    j += 1;
                 }
             }
-        })
+        }
+        result && i == left.len() && j == right.len()
     }
 
     pub fn convertible(db: &Database, sort: Sort, env: Level, left: &Rc<Value>, right: &Rc<Value>) -> bool {
@@ -593,13 +597,6 @@ impl Value {
                 && Value::convertible(db, Sort::Term, env, r1, r2)
             }
             // Lambda conversion + eta conversion
-            (Value::Lambda { mode:m1, name:n1, closure:c1 },
-                Value::Lambda { mode:m2, name:n2, closure:c2 }) => {
-                let input= LazyValue::computed(Value::variable(env));
-                let c1 = c1.eval(db, EnvEntry::new(*n1, input.clone()));
-                let c2 = c2.eval(db, EnvEntry::new(*n2, input));
-                m1 == m2 && Value::convertible(db, sort, env + 1, &c1, &c2)
-            }
             (Value::Lambda { mode, name, closure }, _) => {
                 let apply_type = mode.to_apply_type(&sort);
                 let input= LazyValue::computed(Value::variable(env));
