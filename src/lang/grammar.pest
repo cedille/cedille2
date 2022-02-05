@@ -57,6 +57,7 @@ term_atom = {
     | term_symmetry
     | "(" ~ term ~ ")" ~ proj*
     | hole
+    | omission
     | qual_id ~ proj*
 }
 
@@ -97,6 +98,7 @@ type_atom = {
     "{" ~ term ~ "≃" ~ term ~ "}"
     | "(" ~ type_ ~ ")"
     | hole
+    | omission
     | qual_id
 }
 

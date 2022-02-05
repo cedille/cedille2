@@ -449,6 +449,7 @@ fn term_atom(atom: Pair<Rule>) -> Term {
             },
             Rule::term => Some(term(p)),
             Rule::hole => Some(Term::Hole { span, sort: Sort::Term }),
+            Rule::omission => Some(Term::Omission { span, sort: Sort::Term }),
             Rule::qual_id => {
                 let id = qual_id(p);
                 let sort = Sort::Term;
@@ -612,6 +613,7 @@ fn type_atom(pairs: Pair<Rule>) -> Term {
         },
         Rule::type_ => type_(p),
         Rule::hole => Term::Hole { span, sort: Sort::Type },
+        Rule::omission => Term::Omission { span, sort: Sort::Type },
         Rule::qual_id => {
             let sort = Sort::Type;
             let id = qual_id(p);

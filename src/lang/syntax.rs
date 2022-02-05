@@ -214,6 +214,10 @@ pub enum Term {
         span: Span,
         sort: Sort
     },
+    Omission {
+        span: Span,
+        sort: Sort
+    }
 }
 
 impl DefineTerm {
@@ -245,6 +249,7 @@ impl Term {
             | Term::Variable { span, .. }
             | Term::Star { span }
             | Term::Hole { span, .. }
+            | Term::Omission { span, .. }
             => *span,
         }
     }
@@ -275,6 +280,7 @@ impl Term {
             | Term::Variable { sort, .. } => *sort,
             Term::Star { .. } => Sort::Kind,
             Term::Hole { sort, .. } => *sort,
+            Term::Omission { sort, .. } => *sort,
         }
     }
 }

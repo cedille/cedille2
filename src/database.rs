@@ -12,7 +12,8 @@ use normpath::PathExt;
 
 use crate::common::*;
 use crate::kernel::core;
-use crate::kernel::value::{Environment, LazyValue};
+use crate::kernel::metavar::MetaState;
+use crate::kernel::value::{Environment, LazyValue, Value};
 use crate::lang::syntax;
 use crate::lang::parser;
 use crate::lang::elaborator::{self, ElabError};
@@ -40,6 +41,9 @@ struct ImportData {
 struct ModuleData {
     text: String,
     values: HashMap<Symbol, DeclValues>,
+    metas: HashMap<Symbol, MetaState>,
+    active_metas: HashSet<Symbol>,
+    next_meta: usize,
     imports: Vec<ImportData>,
     exports: HashSet<Id>,
     scope: HashSet<Id>,
@@ -78,6 +82,7 @@ impl Database {
     }
 
     pub fn insert_decl(&mut self, module: Symbol, decl: core::Decl) -> Result<(), ElabError> {
+        self.freeze_active_metas(module);
         if decl.name == Symbol::from("_") { return Ok(()) }
         let module_data = self.modules.get_mut(&module).unwrap();
         let id = Id::from(decl.name);
@@ -184,6 +189,9 @@ impl Database {
         self.modules.insert(sym, ModuleData { 
             text,
             values: HashMap::new(),
+            metas: HashMap::new(),
+            active_metas: HashSet::new(),
+            next_meta: 0,
             imports: Vec::new(),
             exports: HashSet::new(),
             scope: HashSet::new(),
@@ -268,5 +276,43 @@ impl Database {
 
     pub fn text(&self, module: Symbol) -> &str {
         &self.modules.get(&module).unwrap().text
+    }
+
+    pub fn fresh_meta(&mut self, module: Symbol) -> Symbol {
+        let mut module_data = self.modules.get_mut(&module).unwrap();
+        let next = module_data.next_meta;
+        module_data.next_meta += 1;
+        let name = format!("meta/{}", next);
+        Symbol::from(name.as_str())
+    }
+
+    pub fn lookup_meta(&self, module: Symbol, name: Symbol) -> MetaState {
+        let module_data = self.modules.get(&module).unwrap();
+        module_data.metas.get(&name).map(|x| x.clone())
+            .expect("Impossible, any created meta must exist.")
+    }
+
+    pub fn insert_meta(&mut self, module: Symbol, name: Symbol, value: Rc<Value>) -> Result<()> {
+        let module_data = self.modules.get_mut(&module).unwrap();
+        match module_data.metas.get_mut(&name) {
+            None | Some(MetaState::Frozen) | Some(MetaState::Solved(_)) =>
+                Err(anyhow!("TODO: meta insertion error, replace this with an error variant")),
+            | Some(meta @ MetaState::Unsolved) => {
+                *meta = MetaState::Solved(value);
+                Ok(())
+            }
+        }
+    }
+
+    fn freeze_active_metas(&mut self, module: Symbol) {
+        let module_data = self.modules.get_mut(&module).unwrap();
+        for active in module_data.active_metas.drain() {
+            let meta = module_data.metas.entry(active)
+                .or_insert(MetaState::Frozen);
+            match meta {
+                MetaState::Unsolved => *meta = MetaState::Frozen,
+                _ => { }
+            }
+        }
     }
 }

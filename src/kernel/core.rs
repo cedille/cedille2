@@ -3,6 +3,7 @@ use std::rc::Rc;
 use std::fmt;
 
 use crate::common::*;
+use crate::kernel::value::EnvBound;
 
 type Span = (usize, usize);
 
@@ -97,6 +98,12 @@ pub enum Term {
     },
     Bound { index: Index },
     Free { id: Id },
+    Meta { name: Symbol },
+    InsertedMeta {
+        name: Symbol,
+        sort: Sort,
+        mask: Vec<EnvBound>
+    },
     Star,
     SuperStar,
 }
@@ -140,6 +147,8 @@ impl Term {
             Term::Apply { .. } => true,
             Term::Bound { .. }
             | Term::Free { .. }
+            | Term::Meta { .. }
+            | Term::InsertedMeta { .. }
             | Term::Star
             | Term::SuperStar => false,
         }
@@ -250,6 +259,10 @@ impl Term {
                     }
                 }
                 result
+            }
+            Term::Meta { name } => name.to_string(),
+            Term::InsertedMeta { name, .. } => {
+                format!("{} [...]", name)
             }
             Term::Free { id } => id.to_string(),
             Term::Star => "★".to_string(),
