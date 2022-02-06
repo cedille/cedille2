@@ -580,6 +580,12 @@ impl Value {
                         result = Value::unfold_to_head(db, unfolded.force(db));
                     } else { break }
                 },
+                Value::MetaVariable { name, module, spine } => {
+                    match db.lookup_meta(*module, *name) {
+                        MetaState::Solved(v) => result = v.apply_spine(db, spine.clone()),
+                        MetaState::Unsolved | MetaState::Frozen => break
+                    }
+                },
                 _ => break
             }
         }

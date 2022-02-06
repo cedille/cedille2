@@ -17,13 +17,13 @@ pub enum MetaState {
 struct PartialRenaming {
     domain: Level,
     codomain: Level,
-    renaming: HashMap<Level, (Level, Mode)>
+    renaming: HashMap<Level, Level>
 }
 
 fn lift(mode: Mode, renaming: &PartialRenaming) -> PartialRenaming {
     let PartialRenaming { domain , codomain, renaming } = renaming;
     let mut renaming = renaming.clone();
-    renaming.insert(*codomain, (*domain, mode));
+    renaming.insert(*codomain, *domain);
     PartialRenaming {
         domain: *domain + 1,
         codomain: *codomain + 1,
@@ -31,27 +31,29 @@ fn lift(mode: Mode, renaming: &PartialRenaming) -> PartialRenaming {
     }
 }
 
-fn invert(db: &Database, env: Level, spine: Spine) -> Result<PartialRenaming, ()> {
+fn invert(db: &Database, env: Level, spine: Spine) -> Result<(PartialRenaming, Vec<Mode>), ()> {
     let mut result = PartialRenaming { 
         domain: 0.into(),
         codomain: env,
         renaming: HashMap::new()
     };
+    let mut modes = vec![];
     for entry in spine.iter() {
         let mode = entry.apply_type.to_mode();
+        modes.push(mode);
         let value = entry.value.force(db);
         let value = Value::unfold_meta_to_head(db, value);
         match value.as_ref() {
             Value::Variable { level, spine }
             if spine.is_empty() && !result.renaming.contains_key(level) =>
             {
-                result.renaming.insert(*level, (result.domain, mode));
+                result.renaming.insert(*level, result.domain);
                 result.domain = result.domain + 1;
             },
             _ => return Err(())
         }
     }
-    Ok(result)
+    Ok((result, modes))
 }
 
 fn rename(db: &Database, meta: Symbol, renaming: &PartialRenaming, value: Rc<Value>) -> Result<Rc<Term>, ()> {
@@ -71,7 +73,7 @@ fn rename(db: &Database, meta: Symbol, renaming: &PartialRenaming, value: Rc<Val
     let value = Value::unfold_meta_to_head(db, value);
     match value.as_ref() {
         Value::Variable { level, spine } => {
-            if let Some((renamed, mode)) = renaming.renaming.get(level) {
+            if let Some(renamed) = renaming.renaming.get(level) {
                 let head = Term::Bound { index: renamed.to_index(*renaming.domain) };
                 rename_spine(db, meta, renaming, head, spine.clone())
             } else {
@@ -133,11 +135,11 @@ fn rename(db: &Database, meta: Symbol, renaming: &PartialRenaming, value: Rc<Val
     }
 }
 
-fn wrap_in_lambdas(env: Level, renaming: &PartialRenaming, term: Rc<Term>) -> Rc<Term> {
+fn wrap_in_lambdas(env: Level, modes: Vec<Mode>, term: Rc<Term>) -> Rc<Term> {
     let mut result = term;
     for i in 0..*env {
         result = Rc::new(Term::Lambda {
-            mode: renaming.renaming.get(&i.into()).unwrap().1,
+            mode: modes[i],
             name: Symbol::from(format!("x{}", i).as_str()),
             body: result
         })
@@ -146,10 +148,10 @@ fn wrap_in_lambdas(env: Level, renaming: &PartialRenaming, term: Rc<Term>) -> Rc
 }
 
 pub fn solve(db: &mut Database, module: Symbol, env: Level, meta: Symbol, spine: Spine, rhs: Rc<Value>) -> Result<(), ()> {
-    let renaming = invert(db, env, spine)?;
+    let (renaming, modes) = invert(db, env, spine)?;
     let domain = renaming.domain;
     let rhs = rename(db, meta, &renaming, rhs)?;
-    let solution = wrap_in_lambdas(domain, &renaming, rhs);
+    let solution = wrap_in_lambdas(domain, modes, rhs);
     let solution = Value::eval(db, module, Environment::new(), solution);
     db.insert_meta(module, meta, solution)
         .map_err(|_| ())?;

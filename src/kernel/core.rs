@@ -261,8 +261,15 @@ impl Term {
                 result
             }
             Term::Meta { name } => name.to_string(),
-            Term::InsertedMeta { name, .. } => {
-                format!("{} [...]", name)
+            Term::InsertedMeta { name, mask, .. } => {
+                let mut args = String::new();
+                for i in 0..mask.len() {
+                    if mask[i] == EnvBound::Bound {
+                        args.push(' ');
+                        args.push_str(ctx[i].as_str());
+                    }
+                }
+                format!("({}{})", name, args)
             }
             Term::Free { id } => id.to_string(),
             Term::Star => "★".to_string(),

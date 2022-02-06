@@ -196,7 +196,9 @@ fn check(db: &mut Database, ctx: Context, term: &syntax::Term, ty: Rc<Value>) ->
             let ty = Value::unfold_to_head(db, ty);
             match ty.as_ref() {
                 Value::Pi { mode:type_mode, domain, closure, .. } => {
-                    if sort == Sort::Term && var.mode != *type_mode { return Err(ElabError::ModeMismatch) }
+                    if sort == Sort::Term && var.mode != *type_mode {
+                        return Err(ElabError::ModeMismatch)
+                    }
                     let name = var.var.unwrap_or_default();
                     if let Some(ref anno) = var.anno {
                         let span = anno.span();
@@ -453,7 +455,31 @@ fn infer(db: &mut Database, ctx: Context, term: &syntax::Term) -> Result<(Rc<cor
         }
 
         syntax::Term::Apply { apply_type, sort, fun, arg, .. } => {
-            let (fun_elabed, fun_type, _) = infer(db, ctx.clone(), fun)?;
+            let (mut fun_elabed, mut fun_type, _) = infer(db, ctx.clone(), fun)?;
+
+            loop {
+                fun_type = Value::unfold_to_head(db, fun_type);
+                match fun_type.as_ref() {
+                    Value::Pi { mode:type_mode, name, closure, .. }
+                    if *type_mode != apply_type.to_mode()
+                    && *type_mode == Mode::Erased
+                    && *sort == Sort::Term =>
+                    {
+                        let meta = Rc::new(fresh_meta(db, ctx.clone()));
+                        fun_elabed = Rc::new(core::Term::Apply {
+                            apply_type: type_mode.to_apply_type(sort),
+                            fun: fun_elabed,
+                            arg: meta.clone()
+                        });
+                        let arg = LazyValue::new(module, ctx.env(), meta);
+                        let arg = EnvEntry::new(*name, *type_mode, arg);
+                        fun_type = closure.eval(db, arg);
+                    },
+                    _ => break
+                }
+            }
+
+            fun_type = Value::unfold_to_head(db, fun_type);
             match fun_type.as_ref() {
                 Value::Pi { mode:type_mode, name, domain, closure } => {
                     if *sort == Sort::Term && apply_type.to_mode() != *type_mode {

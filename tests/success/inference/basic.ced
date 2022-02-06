@@ -1,8 +1,72 @@
 module basic.
 
-import ../church/inductive/nat as Nat.
+{- import ../church/inductive/nat as Nat.
 
 Nat = Nat.Nat.
-
+succ = Nat.succ.
+zero = Nat.zero. -}
+{- 
 add : Nat ➔ Nat ➔ Nat
-= λ n m. Nat.rec n ·_ m Nat.succ.
+= λ n m. Nat.rec n m Nat.succ.
+
+id : ∀ X:★. X ➔ X
+= λ -X x. x.
+
+_ : ∀ X:★. X ➔ X
+= id id id id id id id id id id id id id id id id id id id id
+    id id id id id id id id id id id id id id id id id id id id
+    id id id id id id id id id id id id id id id id id id id id
+    id id id id id id id id id id id id id id id id id id id id.
+
+Pair : ★ ➔ ★ ➔ ★ = λ A B. ∀ X:★. (A ➔ B ➔ X) ➔ X.
+
+dup : ∀ X:★. X ➔ Pair·X·X
+= λ -X a -P p. p a a. -}
+
+-- meta solutions explode, need smarter (i.e. smaller) meta solutions
+{- _ =
+    [x0 = dup id] -
+    [x1 = dup x0] -
+    [x2 = dup x1] -
+    [x3 = dup x2] -
+    [x4 = dup x3] -
+    [x5 = dup x4] -
+    [x6 = dup x5] -
+    [x7 = dup x6] -
+    [x8 = dup x7] -
+    [x9 = dup x8] -
+    [x10 = dup x9] -
+    [x11 = dup x10] -
+    [x12 = dup x11] -
+    [x13 = dup x12] -(succ zero)
+    [x14 = dup x13] -
+    [x15 = dup x14] -
+    [x16 = dup x15] -
+    [x17 = dup x16] -
+    [x18 = dup x17] -
+    [x19 = dup x18] -
+    [x20 = dup x19] -
+    [x21 = dup x20] -
+    [x22 = dup x21] -
+    [x23 = dup x22] -
+    [x24 = dup x23] -
+    [x25 = dup x24] -
+    [x26 = dup x25] -
+    [x27 = dup x26] -
+    [x28 = dup x27] -
+    [x29 = dup x28] -
+    [x30 = dup x29] -
+    x30. -}
+
+import ../church/nat.
+import ../church/vec.
+
+_
+= vcons zero (vcons zero (vnil ·Nat)).
+
+{- _ : {Nat.succ Nat.zero ≃ Nat.zero} ➾ {
+        add (Nat.succ Nat.zero)
+            (Nat.succ (Nat.succ (Nat.succ (Nat.succ (Nat.succ Nat.zero)))))
+        ≃ Nat.succ (Nat.succ (Nat.succ (Nat.succ (Nat.succ Nat.zero))))}
+= Λ e. ρ e @ x. { add _ x ≃ _ } - β.
+ -}
