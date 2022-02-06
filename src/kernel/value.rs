@@ -413,6 +413,11 @@ impl Value {
                 spine.push_back(arg);
                 Value::variable_with_spine(*level, spine)
             },
+            Value::MetaVariable { name, module, spine } => {
+                let mut spine = spine.clone();
+                spine.push_back(arg);
+                Value::meta(*name, *module, spine)
+            }
             Value::Reference { id, spine, unfolded } => {
                 let unfolded = unfolded.as_ref()
                     .map(|v| v.apply(db, arg.clone()));
@@ -581,7 +586,7 @@ impl Value {
         result
     }
 
-    fn unfold_meta_to_head(db: &Database, value: Rc<Value>) -> Rc<Value> {
+    pub fn unfold_meta_to_head(db: &Database, value: Rc<Value>) -> Rc<Value> {
         let mut result = value;
         loop {
             match result.as_ref() {
@@ -597,7 +602,7 @@ impl Value {
         result
     }
 
-    fn unify_spine(db: &Database, sort: Sort, env: Level, mut left: Spine, mut right: Spine) -> Result<bool, ()> {
+    fn unify_spine(db: &mut Database, sort: Sort, env: Level, mut left: Spine, mut right: Spine) -> Result<bool, ()> {
         let mut result = true;
         let (mut i, mut j) = (0, 0);
 
@@ -630,7 +635,7 @@ impl Value {
         Ok(result && i == left.len() && j == right.len())
     }
 
-    pub fn unify(db: &Database, sort: Sort, env: Level, left: &Rc<Value>, right: &Rc<Value>) -> Result<bool, ()> {
+    pub fn unify(db: &mut Database, sort: Sort, env: Level, left: &Rc<Value>, right: &Rc<Value>) -> Result<bool, ()> {
         log::trace!("\n   {}\n{} {}", left, "=?".bright_blue(), right);
         let left = Value::unfold_meta_to_head(db, left.clone());
         let right = Value::unfold_meta_to_head(db, right.clone());
@@ -687,7 +692,8 @@ impl Value {
             (Value::Reference { id:id1, spine:s1, unfolded:u1 },
                 Value::Reference { id:id2, spine:s2, unfolded:u2 }) =>
             {
-                let check_unfolded = || {
+                let folded_check = id1 == id2 && Value::unify_spine(db, sort, env, s1.clone(), s2.clone())?;
+                let mut check_unfolded = || {
                     let mut result = Ok(false);
                     if let Some(u1) = u1 {
                         if let Some(u2) = u2 {
@@ -697,8 +703,7 @@ impl Value {
                     }
                     result
                 };
-                Ok((id1 == id2 && Value::unify_spine(db, sort, env, s1.clone(), s2.clone())?)
-                    || check_unfolded()?)
+                Ok(folded_check || check_unfolded()?)
             },
             (Value::Reference { unfolded, .. }, _) => {
                 unfolded.as_ref()
@@ -716,12 +721,12 @@ impl Value {
             {
                 Ok(n1 == n2 && Value::unify_spine(db, sort, env, s1.clone(), s2.clone())?)
             }
-            (Value::MetaVariable { name, spine, .. }, _) => {
-                metavar::solve(env, *name, spine.clone(), right.clone())?;
+            (Value::MetaVariable { name, module, spine }, _) => {
+                metavar::solve(db, *module, env, *name, spine.clone(), right.clone())?;
                 Ok(true)
             }
-            (_, Value::MetaVariable { name, spine, .. }) => {
-                metavar::solve(env, *name, spine.clone(), left.clone())?;
+            (_, Value::MetaVariable { name, module, spine }) => {
+                metavar::solve(db, *module, env, *name, spine.clone(), left.clone())?;
                 Ok(true)
             }
 

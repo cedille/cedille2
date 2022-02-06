@@ -1,0 +1,8 @@
+module basic.
+
+import ../church/inductive/nat as Nat.
+
+Nat = Nat.Nat.
+
+add : Nat ➔ Nat ➔ Nat
+= λ n m. Nat.rec n ·_ m Nat.succ.

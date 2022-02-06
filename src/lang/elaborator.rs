@@ -633,7 +633,7 @@ pub fn erase(db: &mut Database, ctx: Context, term: &syntax::Term) -> Result<Rc<
     }
 }
 
-fn unify(db: &Database, sort: Sort, ctx: Context, span: Option<Span>, left: &Rc<Value>, right: &Rc<Value>) -> Result<(), ElabError> {
+fn unify(db: &mut Database, sort: Sort, ctx: Context, span: Option<Span>, left: &Rc<Value>, right: &Rc<Value>) -> Result<(), ElabError> {
     match Value::unify(db, sort, ctx.env_lvl(), left, right) {
         Ok(true) => Ok(()),
         Ok(false) | Err(_) => Err(ElabError::Inconvertible { 

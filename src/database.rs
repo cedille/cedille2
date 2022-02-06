@@ -6,6 +6,7 @@ use std::time;
 use std::path::{Path, PathBuf};
 use std::collections::{HashSet, HashMap};
 
+use colored::Colorize;
 use anyhow::{Context, Result, anyhow};
 use thiserror::Error;
 use normpath::PathExt;
@@ -13,7 +14,7 @@ use normpath::PathExt;
 use crate::common::*;
 use crate::kernel::core;
 use crate::kernel::metavar::MetaState;
-use crate::kernel::value::{Environment, LazyValue, Value};
+use crate::kernel::value::{Environment, LazyValue, Value, ValueEx};
 use crate::lang::syntax;
 use crate::lang::parser;
 use crate::lang::elaborator::{self, ElabError};
@@ -283,7 +284,9 @@ impl Database {
         let next = module_data.next_meta;
         module_data.next_meta += 1;
         let name = format!("meta/{}", next);
-        Symbol::from(name.as_str())
+        let name = Symbol::from(name.as_str());
+        module_data.metas.insert(name, MetaState::Unsolved);
+        name
     }
 
     pub fn lookup_meta(&self, module: Symbol, name: Symbol) -> MetaState {
@@ -296,12 +299,13 @@ impl Database {
         let module_data = self.modules.get_mut(&module).unwrap();
         match module_data.metas.get_mut(&name) {
             None | Some(MetaState::Frozen) | Some(MetaState::Solved(_)) =>
-                Err(anyhow!("TODO: meta insertion error, replace this with an error variant")),
+                return Err(anyhow!("TODO: meta insertion error, replace this with an error variant")),
             | Some(meta @ MetaState::Unsolved) => {
-                *meta = MetaState::Solved(value);
-                Ok(())
+                *meta = MetaState::Solved(value.clone());
             }
         }
+        log::info!("\n{}\n{}\n{}", name, "solved to".green(), value.quote(self, 0.into()));
+        Ok(())
     }
 
     fn freeze_active_metas(&mut self, module: Symbol) {
