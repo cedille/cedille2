@@ -1,9 +1,13 @@
 
 use std::rc::Rc;
+use std::sync::Arc;
 use std::time;
+use std::fmt;
+use std::error;
 
 use colored::Colorize;
 use thiserror::Error;
+use miette::{Diagnostic, SourceSpan, SourceOffset};
 
 use crate::common::*;
 use crate::lang::syntax;
@@ -11,55 +15,79 @@ use crate::lang::rewriter;
 use crate::kernel::core;
 use crate::kernel::value::{Value, ValueEx, Closure, LazyValue, EnvEntry, Environment, EnvBound};
 use crate::database::Database;
+use crate::error::CedilleError;
 
 type Span = (usize, usize);
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, Diagnostic)]
+#[error("Elaboration error")]
 pub enum ElabError {
-    #[error("errors:\n{errors:?}")]
-    Many {
-        errors: Vec<anyhow::Error>
-    },
-    #[error("{left} ≠ {right} at {span:?}")]
-    Inconvertible { 
+    #[diagnostic()]
+    Inconvertible {
         span: Option<Span>,
         left: String,
         right: String
     },
-    #[error("Terms are convertible at {span:?} when they should not be")]
+    #[diagnostic()]
     Convertible {
         span: Span,
     },
-    #[error("Sort checking failed, expected {expected:?} but have {provided:?} at {span:?}")]
+    #[diagnostic()]
     SortMismatch { 
         span: Span,
         expected: Sort,
         provided: Sort
     },
-    #[error("Expected term {span:?}")]
+    #[diagnostic()]
     ExpectedTerm { span: Span },
-    #[error("ExpectedFunctionType")]
+    #[diagnostic()]
     ExpectedFunctionType,
-    #[error("ExpectedEqualityType")]
+    #[diagnostic()]
     ExpectedEqualityType,
-    #[error("ExpectedIntersectionType")]
-    ExpectedIntersectionType,
-    #[error("ModeMismatch")]
-    ModeMismatch,
-    #[error("{expected_ty} was expected at {span:?}")]
-    Hole { 
-        span: Span,
-        expected_ty: String
+    #[diagnostic()]
+    ExpectedIntersectionType {
+        #[source_code]
+        src: Arc<String>,
+        #[label("Type must be a intersection but found {inferred_type}")]
+        span: SourceSpan,
+        inferred_type: String,
     },
-    #[error("DefinitionCollision")]
+    #[diagnostic()]
+    ModeMismatch,
+    #[diagnostic(
+        help("Context at hole: {context}")
+    )]
+    Hole {
+        #[source_code]
+        src: Arc<String>,
+        #[label("Expected {expected_type}")]
+        span: SourceSpan,
+        expected_type: String,
+        context: String
+    },
+    #[diagnostic()]
     DefinitionCollision,
-    #[error("MissingName {span:?}")]
-    MissingName { span: Span },
-    #[error("Inference failed {span:?}")]
+    #[diagnostic()]
+    MissingName {
+        #[source_code]
+        source_code: Arc<String>,
+        #[label("Identifier undefined")]
+        span: SourceSpan
+    },
+    #[diagnostic()]
+    IntersectionInconvertible {
+        #[source_code]
+        src: Arc<String>,
+        #[label("(lhs) Must be convertible with")]
+        left: SourceSpan,
+        #[label("(rhs) this")]
+        right: SourceSpan,
+    },
+    #[diagnostic()]
     InferenceFailed { span: Span },
-    #[error("UnsupportedProjection")]
+    #[diagnostic()]
     UnsupportedProjection,
-    #[error("RewriteFailed")]
+    #[diagnostic()]
     RewriteFailed
 }
 
@@ -67,7 +95,8 @@ pub enum ElabError {
 pub struct Context {
     env: Environment,
     env_mask: Vec<EnvBound>,
-    types: im_rc::Vector<(Symbol, Rc<Value>)>,
+    names: im_rc::Vector<Symbol>,
+    types: im_rc::Vector<Rc<Value>>,
     pub module: Symbol,
     pub sort: Sort
 }
@@ -77,6 +106,7 @@ impl Context {
         Context {
             env: Environment::new(),
             env_mask: Vec::new(),
+            names: im_rc::Vector::new(),
             types: im_rc::Vector::new(),
             module,
             sort
@@ -90,7 +120,8 @@ impl Context {
         log::trace!("\n{}\n{} {} {} {} {}", self.env, "bind".bright_blue(), name, value, ":".bright_blue(), value_type);
         result.env.push_back(EnvEntry::new(name, mode, value));
         result.env_mask.push(EnvBound::Bound);
-        result.types.push_back((name, value_type));
+        result.names.push_back(name);
+        result.types.push_back(value_type);
         result
     }
 
@@ -99,7 +130,19 @@ impl Context {
         log::trace!("\n{}\n{} {} {} {} {}", self.env, "define".bright_blue(), name, value, ":".bright_blue(), value_type);
         result.env.push_back(EnvEntry::new(name, mode, value));
         result.env_mask.push(EnvBound::Defined);
-        result.types.push_back((name, value_type));
+        result.names.push_back(name);
+        result.types.push_back(value_type);
+        result
+    }
+
+    pub fn to_string(&self, db: &Database) -> String {
+        let mut result = String::new();
+        for i in 0..self.names.len() {
+            result.push('\n');
+            let type_string = self.types[i].quote(db, self.env_lvl())
+                .to_string_with_context(self.names.clone());
+            result.push_str(format!("{}: {}", self.names[i], type_string).as_str());
+        }
         result
     }
 
@@ -110,10 +153,12 @@ impl Context {
     pub fn env_lvl(&self) -> Level { self.env.len().into() }
 }
 
-pub fn elaborate(db: &mut Database, module: Symbol, syntax: &syntax::Module) -> anyhow::Result<()> {
+pub fn elaborate(db: &mut Database, module: Symbol, syntax: &syntax::Module) -> Result<(), CedilleError> {
     let mut errors = vec![];
-    syntax.header_imports.iter().map(|import| db.load_import(module, import))
-        .collect::<Result<Vec<_>, _>>()?;
+
+    for import in syntax.header_imports.iter() {
+        db.load_import(module, import)?;
+    }
 
     for decl in syntax.decls.iter() {
         match elaborate_decl(db, module, &syntax.params, decl) {
@@ -123,23 +168,23 @@ pub fn elaborate(db: &mut Database, module: Symbol, syntax: &syntax::Module) -> 
     }
 
     if errors.is_empty() { Ok(()) }
-    else { Err(anyhow::Error::new(ElabError::Many { errors })) }
+    else { Err(CedilleError::Collection(errors)) }
 }
 
-fn elaborate_decl(db: &mut Database, module: Symbol, params: &[syntax::Parameter], decl: &syntax::Decl) -> anyhow::Result<()> {
-    fn elaborate_decl_helper(sort: Sort, db: &mut Database, module: Symbol, params: &[syntax::Parameter], def: &syntax::DefineTerm) -> anyhow::Result<()> {
+fn elaborate_decl(db: &mut Database, module: Symbol, params: &[syntax::Parameter], decl: &syntax::Decl) -> Result<(), CedilleError> {
+    fn elaborate_decl_helper(sort: Sort, db: &mut Database, module: Symbol, params: &[syntax::Parameter], def: &syntax::DefineTerm) -> Result<(), CedilleError> {
         if db.lookup_type(module, &Id::from(def.name)).is_some() {
-            Err(anyhow::Error::new(ElabError::DefinitionCollision))
+            Err(ElabError::DefinitionCollision.into())
         } else {
             let ctx = Context::new(module, sort);
             let result = elaborate_define_term(db, ctx, params, def);
             if let Ok(ref elabed) = result {
-                log::info!("\n{}\n{}\n{}", def.as_str(db.text(module)), "elaborated to".green(), elabed);
+                log::info!("\n{}\n{}\n{}", def.as_str(db.text_ref(module)), "elaborated to".green(), elabed);
             }
             match result {
                 Ok(decl) => db.insert_decl(module, decl),
-                e => e.map(|_| ()),
-            }.map_err(anyhow::Error::new)
+                e => e.map(|_| ()).map_err(|e| e.into()),
+            }
         }
     }
     match decl {
@@ -218,7 +263,7 @@ fn check(db: &mut Database, ctx: Context, term: &syntax::Term, ty: Rc<Value>) ->
     }
 
     let ty = Value::unfold_to_head(db, ty);
-    log::trace!("\n{}\n  {}\n{} {}", ctx.env(), term.as_str(db.text(ctx.module)), "<=".bright_blue(), ty);
+    log::trace!("\n{}\n  {}\n{} {}", ctx.env(), term.as_str(db.text_ref(ctx.module)), "<=".bright_blue(), ty);
     match (term, ty.as_ref()) {
         (syntax::Term::Lambda { sort, vars, body, .. }, _) =>
             check_lambda(db, ctx, *sort, 0, vars, body, ty),
@@ -256,7 +301,12 @@ fn check(db: &mut Database, ctx: Context, term: &syntax::Term, ty: Rc<Value>) ->
             let type2 = type2.eval(db, closure_arg);
             let second_elabed = check(db, ctx.clone(), second, type2)?;
             let second_value = Value::eval(db, ctx.module, ctx.env(), second_elabed.clone());
-            unify(db, Sort::Term, ctx, Some(*span), &first_value, &second_value)?;
+            unify(db, Sort::Term, ctx.clone(), Some(*span), &first_value, &second_value)
+                .map_err(|_| ElabError::IntersectionInconvertible {
+                        src: db.text(ctx.module),
+                        left: source_span(first.span()),
+                        right: source_span(second.span())
+                    })?;
             Ok(Rc::new(core::Term::Intersect {
                 first: first_elabed,
                 second: second_elabed
@@ -275,6 +325,7 @@ fn check(db: &mut Database, ctx: Context, term: &syntax::Term, ty: Rc<Value>) ->
         (syntax::Term::Separate { span, equation, .. }, _) =>
         {
             let (equation_elabed, equality, _) = infer(db, ctx.clone(), equation)?;
+            let equality = Value::unfold_to_head(db, equality);
             match equality.as_ref() {
                 Value::Equality { left, right } => {
                     if unify(db, Sort::Term, ctx, Some(*span), left, right).is_ok() {
@@ -291,6 +342,7 @@ fn check(db: &mut Database, ctx: Context, term: &syntax::Term, ty: Rc<Value>) ->
             _) =>
         {
             let (equation_elabed, equality, _) = infer(db, ctx.clone(), equation)?;
+            let equality = Value::unfold_to_head(db, equality);
             match equality.as_ref() {
                 Value::Equality { left, right } => {
                     let guide_name = guide.as_ref().map(|g| g.name).unwrap_or_default();
@@ -344,9 +396,12 @@ fn check(db: &mut Database, ctx: Context, term: &syntax::Term, ty: Rc<Value>) ->
         }
 
         (syntax::Term::Hole { span, .. }, _) => {
-            Err(ElabError::Hole { 
-                span: *span,
-                expected_ty: ty.quote(db, ctx.env_lvl()).to_string()
+            Err(ElabError::Hole {
+                src: db.text(ctx.module),
+                span: source_span(*span),
+                expected_type: ty.quote(db, ctx.env_lvl())
+                    .to_string_with_context(ctx.names.clone()),
+                context: ctx.to_string(db)
             })
         }
 
@@ -440,12 +495,11 @@ fn infer(db: &mut Database, ctx: Context, term: &syntax::Term) -> Result<(Rc<cor
                 anno: anno_elabed,
                 body: result_let
             });
-            Ok((result, Value::unfold_to_head(db, type_value), *sort))
+            Ok((result, type_value, *sort))
         }
 
-        syntax::Term::Variable { sort, id, .. } => {
-            let (var_type, level) = lookup_type(db, &ctx, id)?;
-            let var_type = Value::unfold_to_head(db, var_type);
+        syntax::Term::Variable { span, sort, id, .. } => {
+            let (var_type, level) = lookup_type(db, &ctx, *span, id)?;
             if let Some(level) = level {
                 let index = level.to_index(ctx.env.len());
                 Ok((Rc::new(core::Term::Bound { index }), var_type, *sort))
@@ -480,45 +534,62 @@ fn infer(db: &mut Database, ctx: Context, term: &syntax::Term) -> Result<(Rc<cor
             }
 
             fun_type = Value::unfold_to_head(db, fun_type);
-            match fun_type.as_ref() {
+            let (name, type_mode, domain, closure) = match fun_type.as_ref() {
                 Value::Pi { mode:type_mode, name, domain, closure } => {
                     if *sort == Sort::Term && apply_type.to_mode() != *type_mode {
                         log::debug!("{:?} {} {:?}", apply_type.to_mode() , "=?".bright_blue(), type_mode);
                         return Err(ElabError::ModeMismatch);
                     }
-                    let arg_elabed = check(db, ctx.clone(), arg, domain.clone())?;
-                    let arg_value = LazyValue::new(module, ctx.env(), arg_elabed.clone());
-                    let closure_arg = EnvEntry::new(*name, *type_mode, arg_value);
-                    let result_type = closure.eval(db, closure_arg);
-                    let result = Rc::new(core::Term::Apply {
-                        apply_type: *apply_type,
-                        fun: fun_elabed,
-                        arg: arg_elabed
-                    });
-                    Ok((result, Value::unfold_to_head(db, result_type), *sort))
+                    (*name, *type_mode, domain.clone(), closure.clone())
                 },
-                _ => Err(ElabError::ExpectedFunctionType)
-            }
+                _ => {
+                    let name = Symbol::from("x");
+                    let type_mode = apply_type.to_mode();
+                    let domain = Rc::new(fresh_meta(db, ctx.clone()));
+                    let domain = Value::eval(db, ctx.module, ctx.env(), domain);
+                    let meta = Rc::new(fresh_meta(db, ctx.bind(name, Mode::Free, domain.clone())));
+                    let closure = Closure::new(ctx.module, ctx.env(), meta);
+                    let candidate_type = Value::pi(type_mode, name, domain.clone(), closure.clone());
+                    unify(db, *sort, ctx.clone(), None, &fun_type, &candidate_type)?;
+                    (name, type_mode, domain, closure)
+                }
+            };
+
+            let arg_elabed = check(db, ctx.clone(), arg, domain.clone())?;
+            let arg_value = LazyValue::new(module, ctx.env(), arg_elabed.clone());
+            let closure_arg = EnvEntry::new(name, type_mode, arg_value);
+            let result_type = closure.eval(db, closure_arg);
+            let result = Rc::new(core::Term::Apply {
+                apply_type: *apply_type,
+                fun: fun_elabed,
+                arg: arg_elabed
+            });
+            Ok((result, result_type, *sort))
         }
 
-        syntax::Term::Project { variant, body, .. } => {
+        syntax::Term::Project { span, variant, body, .. } => {
             let (body_elabed, body_type, _) = infer(db, ctx.clone(), body)?;
-            match body_type.as_ref() {
+            let body_type_unfolded = Value::unfold_to_head(db, body_type.clone());
+            match body_type_unfolded.as_ref() {
                 Value::IntersectType { name, first, second } => {
                     let first_proj = Rc::new(core::Term::Project { variant:1, body: body_elabed.clone() });
                     let first_value = Value::eval(db, module, ctx.env(), first_proj.clone());
                     match variant {
-                        1 => Ok((first_proj, Value::unfold_to_head(db, first.clone()), Sort::Term)),
+                        1 => Ok((first_proj, first.clone(), Sort::Term)),
                         2 => {
                             let second_proj = Rc::new(core::Term::Project { variant:2, body: body_elabed });
                             let closure_arg = EnvEntry::new(*name, Mode::Free, LazyValue::computed(first_value));
-                            let result_type = Value::unfold_to_head(db, second.eval(db, closure_arg));
+                            let result_type = second.eval(db, closure_arg);
                             Ok((second_proj, result_type, Sort::Term))
                         }
                         _ => Err(ElabError::UnsupportedProjection)
                     }
                 },
-                _ => Err(ElabError::ExpectedIntersectionType)
+                _ => Err(ElabError::ExpectedIntersectionType {
+                    src: db.text(ctx.module),
+                    span: source_span(*span),
+                    inferred_type: body_type.quote(db, ctx.env_lvl()).to_string()
+                })
             }
         }
 
@@ -534,15 +605,17 @@ fn infer(db: &mut Database, ctx: Context, term: &syntax::Term) -> Result<(Rc<cor
                 input: input_elabed,
                 erasure: erasure_elabed
             });
-            Ok((result, Value::unfold_to_head(db, result_type), Sort::Term))
+            Ok((result, result_type, Sort::Term))
         }
 
         syntax::Term::Star { .. } => Ok((Rc::new(core::Term::Star), Value::super_star(), Sort::Kind)),
 
         syntax::Term::Hole { span, .. } => {
-            Err(ElabError::Hole { 
-                span: *span,
-                expected_ty: String::from("")
+            Err(ElabError::Hole {
+                src: db.text(ctx.module),
+                span: source_span(*span),
+                expected_type: String::from(""),
+                context: ctx.to_string(db)
             })
         }
 
@@ -562,13 +635,13 @@ fn infer(db: &mut Database, ctx: Context, term: &syntax::Term) -> Result<(Rc<cor
                 anno: anno_elabed,
                 body: body_elabed
             });
-            Ok((result, Value::unfold_to_head(db, anno_value), Sort::Term))
+            Ok((result, anno_value, Sort::Term))
         }
 
         _ => Err(ElabError::InferenceFailed { span:term.span() })
     };
     if let Ok((_, ref inferred_type, _)) = result {
-        log::trace!("\n{}\n  {}\n{} {}", ctx.env(), term.as_str(db.text(module)), "=>".bright_blue(), inferred_type);
+        log::trace!("\n{}\n  {}\n{} {}", ctx.env(), term.as_str(db.text_ref(module)), "=>".bright_blue(), inferred_type);
     }
     result
 }
@@ -633,8 +706,8 @@ pub fn erase(db: &mut Database, ctx: Context, term: &syntax::Term) -> Result<Rc<
                 Ok(Rc::new(core::Term::Apply { apply_type, fun, arg }))
             }
         },
-        Term::Variable { id, .. } => {
-            let (_, level) = lookup_type(db, &ctx, id)?;
+        Term::Variable { span, id, .. } => {
+            let (_, level) = lookup_type(db, &ctx, *span, id)?;
             if let Some(level) = level {
                 let index = level.to_index(ctx.env.len());
                 Ok(Rc::new(core::Term::Bound { index }))
@@ -644,9 +717,11 @@ pub fn erase(db: &mut Database, ctx: Context, term: &syntax::Term) -> Result<Rc<
         },
         Term::Star { .. } => Err(ElabError::ExpectedTerm { span:term.span() }),
         Term::Hole { span, .. } =>
-            Err(ElabError::Hole { 
-                span: *span,
-                expected_ty: String::from("")
+            Err(ElabError::Hole {
+                src: db.text(ctx.module),
+                span: source_span(*span),
+                expected_type: String::from(""),
+                context: ctx.to_string(db)
             }),
         Term::Omission { .. } => {
             let fresh_meta_name = db.fresh_meta(ctx.module);
@@ -679,15 +754,20 @@ fn fresh_meta(db: &mut Database, ctx: Context) -> core::Term {
     }
 }
 
-fn lookup_type(db: &Database, ctx: &Context, id: &Id) -> Result<(Rc<Value>, Option<Level>), ElabError> {
+fn lookup_type(db: &Database, ctx: &Context, span: Span, id: &Id) -> Result<(Rc<Value>, Option<Level>), ElabError> {
     let has_namespace = if id.namespace.is_empty() { Some(()) } else { None };
     let toplevel_type = db.lookup_type(ctx.module, id);
     let context_type = has_namespace
-        .and(ctx.types.iter().enumerate().rev().find(|(_, (x, _))| *x == id.name))
+        .and(ctx.names.iter().zip(ctx.types.iter()).enumerate().rev().find(|(_, (x, _))| **x == id.name))
         .map(|(level, (_, ty))| (ty.clone(), Some(level.into())));
     match (toplevel_type, context_type) {
         (_, Some((v, level))) => Ok((v, level)),
         (Some(v), None) => Ok((v.force(db), None)),
-        (None, None) => { dbg!(id); Err(ElabError::MissingName { span: (0, 0) }) }
+        (None, None) => { Err(ElabError::MissingName { source_code: db.text(ctx.module), span: source_span(span) }) }
     }
+}
+
+fn source_span(span: Span) -> SourceSpan {
+    let (start, end) = span;
+    (start, end - start).into()
 }

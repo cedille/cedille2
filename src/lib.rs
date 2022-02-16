@@ -5,22 +5,22 @@ extern crate derive_more;
 #[macro_use]
 extern crate if_chain;
 
-#[allow(unused_imports)]
-use paste::paste;
-
 pub mod repl;
 mod database;
 mod common;
 mod kernel;
 mod lang;
+mod error;
 
 #[cfg(test)]
 mod tests {
     use std::path::Path;
-    use anyhow::Result;
-    use super::*;
 
-    fn test_runner(path: &'static str, expected_success: bool) -> Result<()> {
+    use paste::paste;
+
+    use crate::database;
+
+    fn test_runner(path: &'static str, expected_success: bool) {
         let mut db = database::Database::new();
         let mut builder = String::new();
         if expected_success { builder.push_str("tests/success/"); }
@@ -30,11 +30,11 @@ mod tests {
         builder.push_str(".ced");
         let path = Path::new(builder.as_str());
         let result = db.load_module_from_path(path);
-        if expected_success { result.map(|_| ()) }
-        else {
-            let error = ||
-                Err(anyhow::anyhow!("File succeeded when it should have failed."));
-            result.err().map_or_else(error, |e| { eprintln!("{:?}", e); Ok(()) })
+
+        if expected_success {
+            assert!(result.is_ok())
+        } else {
+            assert!(result.is_err())
         }
     }
 
@@ -42,7 +42,7 @@ mod tests {
         ($path_with_underscores:ident) => {
             paste! {
             #[test]
-                fn [<success_$path_with_underscores>]() -> Result<()> {
+                fn [<success_$path_with_underscores>]() {
                     test_runner(stringify!($path_with_underscores), true)
                 }
             }
@@ -53,7 +53,7 @@ mod tests {
         ($path_with_underscores:ident) => {
             paste! {
                 #[test]
-                fn [<failure_$path_with_underscores>]() -> Result<()> {
+                fn [<failure_$path_with_underscores>]() {
                     test_runner(stringify!($path_with_underscores), false)
                 }
             }
@@ -86,6 +86,7 @@ mod tests {
     test_file_success!(inference_basic);
 
     test_file_failure!(core_intersect);
+    test_file_failure!(core_delta);
 
     test_file_failure!(module_cycle);
     test_file_failure!(module_mixed);

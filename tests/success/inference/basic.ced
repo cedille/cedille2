@@ -1,27 +1,27 @@
 module basic.
 
-{- import ../church/inductive/nat as Nat.
+import ../church/inductive/nat as Nat.
 
 Nat = Nat.Nat.
-succ = Nat.succ.
-zero = Nat.zero. -}
-{- 
+
 add : Nat ➔ Nat ➔ Nat
 = λ n m. Nat.rec n m Nat.succ.
 
-id : ∀ X:★. X ➔ X
+IdT : ★ = ∀ X:★. X ➔ X.
+
+id : IdT
 = λ -X x. x.
 
-_ : ∀ X:★. X ➔ X
+{- _ : IdT
 = id id id id id id id id id id id id id id id id id id id id
     id id id id id id id id id id id id id id id id id id id id
     id id id id id id id id id id id id id id id id id id id id
-    id id id id id id id id id id id id id id id id id id id id.
+    id id id id id id id id id id id id id id id id id id id id. -}
 
 Pair : ★ ➔ ★ ➔ ★ = λ A B. ∀ X:★. (A ➔ B ➔ X) ➔ X.
 
 dup : ∀ X:★. X ➔ Pair·X·X
-= λ -X a -P p. p a a. -}
+= λ -X a -P p. p a a.
 
 -- meta solutions explode, need smarter (i.e. smaller) meta solutions
 {- _ =
@@ -38,7 +38,7 @@ dup : ∀ X:★. X ➔ Pair·X·X
     [x10 = dup x9] -
     [x11 = dup x10] -
     [x12 = dup x11] -
-    [x13 = dup x12] -(succ zero)
+    [x13 = dup x12] -
     [x14 = dup x13] -
     [x15 = dup x14] -
     [x16 = dup x15] -
@@ -58,12 +58,15 @@ dup : ∀ X:★. X ➔ Pair·X·X
     [x30 = dup x29] -
     x30. -}
 
-import ../church/nat.
-import ../church/vec.
+{- import ../church/nat as ChNat.
+import ../church/vec as V.
 
-_
-= vcons zero (vcons zero (vnil ·Nat)).
+zero = ChNat.zero.
+vcons = V.vcons.
+vnil = V.vnil.
 
+_ = vcons zero (vcons zero vnil).
+ -}
 {- _ : {Nat.succ Nat.zero ≃ Nat.zero} ➾ {
         add (Nat.succ Nat.zero)
             (Nat.succ (Nat.succ (Nat.succ (Nat.succ (Nat.succ Nat.zero)))))

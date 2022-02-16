@@ -1,0 +1,6 @@
+module delta.
+
+False : ★ = ∀ X:★. X.
+
+_ : ∀ A:★. ∀ B:★. Π a:A. Π b:B. {a ≃ b} ➾ False
+= λ -A -B a b -e. δ - e.

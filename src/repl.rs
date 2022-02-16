@@ -5,6 +5,7 @@ use std::borrow::Cow::{self, Borrowed, Owned};
 
 use anyhow::Result;
 use thiserror::Error;
+use miette::{Report, GraphicalReportHandler, GraphicalTheme};
 use clap::crate_version;
 use colored::*;
 use directories::ProjectDirs;
@@ -17,6 +18,7 @@ use rustyline::hint::{Hinter, HistoryHinter};
 use rustyline::validate::{self, MatchingBracketValidator, Validator};
 use rustyline::{Cmd, CompletionType, Config, Context, Editor, Helper, KeyEvent, Modifiers};
 
+use crate::error::CedilleError;
 use crate::database::Database;
 
 const REPL_HISTORY_LIMIT : usize = 1000;
@@ -85,7 +87,7 @@ impl Validator for ReplHelper {
 }
 
 #[derive(Debug, Error)]
-enum ReplError {
+pub enum ReplError {
     #[error("Invalid command {command:?}")]
     InvalidCommand {
         command : String
@@ -103,7 +105,7 @@ fn print_help_text() {
     // TODO: Add help text for the available REPL commands
 }
 
-fn repl_inner<H:Helper>(db: &mut Database, rl : &mut Editor<H>) -> Result<bool> {
+fn repl_inner<H:Helper>(db: &mut Database, rl : &mut Editor<H>) -> Result<bool, CedilleError> {
     let line = rl.readline("> ")?;
     rl.add_history_entry(line.as_str());
     let mut words = line.split_ascii_whitespace();
@@ -173,16 +175,7 @@ pub fn repl() {
         match repl_inner(&mut db, &mut rl) {
             Ok(r#continue) => if !r#continue { break; }
             Err(error) => {
-                for (count, cause) in error.chain().enumerate() {
-                    if count == 0 {
-                        println!("Error: {}", cause);
-                    } else if count == 1 {
-                        println!("Caused by:");
-                        println!("    {}", cause);
-                    } else {
-                        println!("    {}", cause);
-                    }
-                }
+                println!("{}", error)
             }
         }
     }

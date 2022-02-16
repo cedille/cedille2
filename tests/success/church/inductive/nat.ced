@@ -18,7 +18,7 @@ to : Ch.Nat ➔ Nat
 
 reflect : Π n:Nat. { to n ≃ n }
 = λ n. n.2 ·(λ x. {to x ≃ x}) β
-    (λ -x ih. χ({Ch.succ (to x) ≃ Ch.succ x}) - ρ ih - β).
+    (λ -x ih. χ {Ch.succ (to x) ≃ Ch.succ x} - ρ ih - β).
 
 induct : Π n:Nat. ∀ P:Nat ➔ ★. P zero ➔ (∀ m:Nat. P m ➔ P (succ m)) ➔ P n
 = λ n -P z s. ρ ς (reflect n)
@@ -29,3 +29,16 @@ rec : Π n:Nat. ∀ X:★. X ➔ (X ➔ X) ➔ X
 
 add : Nat ➔ Nat ➔ Nat
 = λ n m. rec n ·Nat m succ.
+
+add_zero_left : Π n:Nat. {add zero n ≃ n}
+= λ n. β.
+
+add_zero_right : Π n:Nat. {add n zero ≃ n}
+= λ n. induct n ·(λ x. {add x zero ≃ x}) β
+    (λ -x ih. χ {succ (add x zero) ≃ succ x} - ρ ih - β).
+
+add_succ_left : Π n:Nat. Π m:Nat. {add (succ n) m ≃ succ (add n m)}
+= λ n m. β.
+
+add_succ_right : Π n:Nat. Π m:Nat. {add n (succ m) ≃ succ (add n m)}
+= λ n m. ●.

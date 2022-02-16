@@ -642,9 +642,9 @@ impl Value {
     }
 
     pub fn unify(db: &mut Database, sort: Sort, env: Level, left: &Rc<Value>, right: &Rc<Value>) -> Result<bool, ()> {
-        log::trace!("\n   {}\n{} {}", left, "=?".bright_blue(), right);
         let left = Value::unfold_meta_to_head(db, left.clone());
         let right = Value::unfold_meta_to_head(db, right.clone());
+        log::trace!("\n   {}\n{} {}", left, "=?".bright_blue(), right);
         match (left.as_ref(), right.as_ref()) {
             // Type head conversion
             (Value::Star, Value::Star) => Ok(true),
@@ -695,6 +695,21 @@ impl Value {
             {
                 Ok(l1 == l2 && Value::unify_spine(db, sort, env, s1.clone(), s2.clone())?)
             }
+
+            (Value::MetaVariable { name:n1, spine:s1, .. },
+                Value::MetaVariable { name:n2, spine:s2, .. }) =>
+            {
+                Ok(n1 == n2 && Value::unify_spine(db, sort, env, s1.clone(), s2.clone())?)
+            }
+            (Value::MetaVariable { name, module, spine }, _) => {
+                metavar::solve(db, *module, env, *name, spine.clone(), right.clone())?;
+                Ok(true)
+            }
+            (_, Value::MetaVariable { name, module, spine }) => {
+                metavar::solve(db, *module, env, *name, spine.clone(), left.clone())?;
+                Ok(true)
+            }
+
             (Value::Reference { id:id1, spine:s1, unfolded:u1 },
                 Value::Reference { id:id2, spine:s2, unfolded:u2 }) =>
             {
@@ -721,21 +736,7 @@ impl Value {
                     .map_or(Ok(false),
                         |u| Value::unify(db, sort, env, &left, &u.force(db)))
             }
-
-            (Value::MetaVariable { name:n1, spine:s1, .. },
-                Value::MetaVariable { name:n2, spine:s2, .. }) =>
-            {
-                Ok(n1 == n2 && Value::unify_spine(db, sort, env, s1.clone(), s2.clone())?)
-            }
-            (Value::MetaVariable { name, module, spine }, _) => {
-                metavar::solve(db, *module, env, *name, spine.clone(), right.clone())?;
-                Ok(true)
-            }
-            (_, Value::MetaVariable { name, module, spine }) => {
-                metavar::solve(db, *module, env, *name, spine.clone(), left.clone())?;
-                Ok(true)
-            }
-
+ 
             _ => Ok(false)
         }
     }

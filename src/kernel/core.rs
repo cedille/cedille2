@@ -266,7 +266,10 @@ impl Term {
                 for i in 0..mask.len() {
                     if mask[i] == EnvBound::Bound {
                         args.push(' ');
-                        args.push_str(ctx[i].as_str());
+                        let symbol = ctx.get(i)
+                            .copied()
+                            .unwrap_or_default();
+                        args.push_str(symbol.as_str());
                     }
                 }
                 format!("({}{})", name, args)

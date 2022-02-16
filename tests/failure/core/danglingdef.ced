@@ -1,0 +1,5 @@
+module danglingdef.
+
+_ = id1.
+
+_ = id2.

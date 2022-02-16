@@ -26,7 +26,7 @@ ite : ∀ X:★. Bool ➔ X ➔ X ➔ X
 = λ -X if then else. inductBool if ·(λ _. X) then else.
 
 not : Bool ➔ Bool
-= λ x. ite ·Bool x ff tt.
+= λ x. ite x ff tt.
 
 _ : {not tt ≃ ff} = β.
 _ : {not ff ≃ tt} = β.
@@ -38,7 +38,7 @@ not_not_idem : Π x:Bool. {not (not (not (not x))) ≃ x}
 = λ x. ρ (not_idem x) - ρ (not_idem x) - β.
 
 or : Bool ➔ Bool ➔ Bool
-= λ x y. ite ·Bool x tt y.
+= λ x y. ite x tt y.
 
 _ : {or tt tt ≃ tt} = β.
 _ : {or tt ff ≃ tt} = β.
@@ -46,7 +46,7 @@ _ : {or ff tt ≃ tt} = β.
 _ : {or ff ff ≃ ff} = β.
 
 and : Bool ➔ Bool ➔ Bool
-= λ x y. ite ·Bool x y ff.
+= λ x y. ite x y ff.
 
 _ : {and tt tt ≃ tt} = β.
 _ : {and tt ff ≃ ff} = β.
@@ -59,7 +59,7 @@ and_comm : Π x:Bool. Π y:Bool. {and x y ≃ and y x}
   (inductBool y ·(λ y. {and ff y ≃ and y ff}) β β).
 
 xor : Bool ➔ Bool ➔ Bool
-= λ x y. ite ·Bool x (not y) y.
+= λ x y. ite x (not y) y.
 
 _ : {xor tt tt ≃ ff} = β.
 _ : {xor tt ff ≃ tt} = β.

@@ -20,7 +20,7 @@ struct PartialRenaming {
     renaming: HashMap<Level, Level>
 }
 
-fn lift(mode: Mode, renaming: &PartialRenaming) -> PartialRenaming {
+fn lift(renaming: &PartialRenaming) -> PartialRenaming {
     let PartialRenaming { domain , codomain, renaming } = renaming;
     let mut renaming = renaming.clone();
     renaming.insert(*codomain, *domain);
@@ -95,7 +95,7 @@ fn rename(db: &Database, meta: Symbol, renaming: &PartialRenaming, value: Rc<Val
         Value::Lambda { mode, name, closure } => {
             let arg = EnvEntry::new(*name, *mode, Value::variable(renaming.codomain));
             let body = closure.eval(db, arg);
-            let body = rename(db, meta, &lift(*mode, renaming), body)?;
+            let body = rename(db, meta, &lift(renaming), body)?;
             Ok(Rc::new(Term::Lambda {
                 mode: *mode,
                 name: *name,
@@ -106,7 +106,7 @@ fn rename(db: &Database, meta: Symbol, renaming: &PartialRenaming, value: Rc<Val
             let domain = rename(db, meta, renaming, domain.clone())?;
             let arg = EnvEntry::new(*name, *mode, Value::variable(renaming.codomain));
             let body = closure.eval(db, arg);
-            let body = rename(db, meta, &lift(*mode, renaming), body)?;
+            let body = rename(db, meta, &lift(renaming), body)?;
             Ok(Rc::new(Term::Pi {
                 mode: *mode,
                 name: *name,
@@ -118,7 +118,7 @@ fn rename(db: &Database, meta: Symbol, renaming: &PartialRenaming, value: Rc<Val
             let first = rename(db, meta, renaming, first.clone())?;
             let arg = EnvEntry::new(*name, Mode::Free, Value::variable(renaming.codomain));
             let second = second.eval(db, arg);
-            let second = rename(db, meta, &lift(Mode::Free, renaming), second)?;
+            let second = rename(db, meta, &lift(renaming), second)?;
             Ok(Rc::new(Term::IntersectType {
                 name: *name,
                 first,

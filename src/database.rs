@@ -1,5 +1,6 @@
 
 use std::rc::Rc;
+use std::sync::Arc;
 use std::io::prelude::*;
 use std::fs::{self, File};
 use std::time;
@@ -7,7 +8,6 @@ use std::path::{Path, PathBuf};
 use std::collections::{HashSet, HashMap};
 
 use colored::Colorize;
-use anyhow::{Context, Result, anyhow};
 use thiserror::Error;
 use normpath::PathExt;
 
@@ -18,11 +18,14 @@ use crate::kernel::value::{Environment, LazyValue, Value, ValueEx};
 use crate::lang::syntax;
 use crate::lang::parser;
 use crate::lang::elaborator::{self, ElabError};
+use crate::error::CedilleError;
 
 #[derive(Debug, Error)]
 pub enum DatabaseError {
     #[error("Non unicode path {path:?}")]
     NonUnicodePath { path: PathBuf },
+    #[error("Cycle in {module}")]
+    Cycle { module: String }
 }
 
 #[derive(Debug)]
@@ -40,7 +43,7 @@ struct ImportData {
 
 #[derive(Debug)]
 struct ModuleData {
-    text: String,
+    text: Arc<String>,
     values: HashMap<Symbol, DeclValues>,
     metas: HashMap<Symbol, MetaState>,
     active_metas: HashSet<Symbol>,
@@ -57,7 +60,7 @@ pub struct Database {
     queued: Vec<Symbol>
 }
 
-pub fn path_to_module_symbol<P: AsRef<Path>>(prefix: P, path: P) -> Result<Symbol> {
+pub fn path_to_module_symbol<P: AsRef<Path>>(prefix: P, path: P) -> Result<Symbol, CedilleError> {
     let path = if cfg!(target_os = "windows") {
         let windows_fix= path.as_ref()
             .to_str()
@@ -67,8 +70,7 @@ pub fn path_to_module_symbol<P: AsRef<Path>>(prefix: P, path: P) -> Result<Symbo
     } else { path.as_ref().into() };
     let mut result: PathBuf = prefix.as_ref().into();
     result.push(path);
-    let canonical_path = result.normalize()
-        .with_context(|| format!("Failed to normalize path {}", result.display()))?;
+    let canonical_path = result.normalize()?;
     let key = canonical_path.as_path().to_str()
         .ok_or(DatabaseError::NonUnicodePath { path: result })?;
     Ok(Symbol::from(key))
@@ -82,13 +84,13 @@ impl Database {
         }
     }
 
-    pub fn insert_decl(&mut self, module: Symbol, decl: core::Decl) -> Result<(), ElabError> {
+    pub fn insert_decl(&mut self, module: Symbol, decl: core::Decl) -> Result<(), CedilleError> {
         self.freeze_active_metas(module);
         if decl.name == Symbol::from("_") { return Ok(()) }
         let module_data = self.modules.get_mut(&module).unwrap();
         let id = Id::from(decl.name);
         if module_data.scope.contains(&id) || module_data.exports.contains(&id) {
-            Err(ElabError::DefinitionCollision)
+            Err(ElabError::DefinitionCollision.into())
         } else {
             module_data.scope.insert(id.clone());
             module_data.exports.insert(id);
@@ -116,7 +118,7 @@ impl Database {
         } else { false }
     }
 
-    pub fn load_import(&mut self, module: Symbol, import: &syntax::Import) -> Result<()> {
+    pub fn load_import(&mut self, module: Symbol, import: &syntax::Import) -> Result<(), CedilleError> {
         let path = {
             let module_data = self.modules.get(&module).unwrap();
             let (start, end) = import.path;
@@ -134,7 +136,7 @@ impl Database {
             module_data.imports.push(import_data);
 
             if module_data.scope.intersection(&import_module_data.exports).count() != 0 {
-                Err(anyhow::Error::new(ElabError::DefinitionCollision))
+                Err(ElabError::DefinitionCollision)
             } else {
                 for id in import_module_data.exports.iter() {
                     let mut id = id.clone();
@@ -147,10 +149,10 @@ impl Database {
         };
 
         self.modules.insert(path, import_module_data);
-        result
+        result.map_err(|e| e.into())
     }
 
-    pub fn load_module_from_path<P: AsRef<Path>>(&mut self, path: P) -> Result<Symbol> {
+    pub fn load_module_from_path<P: AsRef<Path>>(&mut self, path: P) -> Result<Symbol, CedilleError> {
         let path = path.as_ref();
         let ext = path.extension().unwrap_or_default();
         if ext.to_string_lossy() != "ced" { return Ok(Symbol::from("")); }
@@ -159,9 +161,9 @@ impl Database {
         Ok(sym)
     }
 
-    fn load_module(&mut self, sym: Symbol) -> Result<()> {
+    fn load_module(&mut self, sym: Symbol) -> Result<(), CedilleError> {
         if self.queued.contains(&sym) {
-            Err(anyhow!(format!("Cycle in dependencies of module {}", *sym)))
+            Err(DatabaseError::Cycle { module: (*sym).clone() }.into())
         } else if self.loaded(sym) {
             log::info!("Skipped {}", *sym);
             Ok(())
@@ -175,20 +177,18 @@ impl Database {
         }
     }
 
-    fn load_module_inner(&mut self, sym: Symbol) -> Result<()> {
+    fn load_module_inner(&mut self, sym: Symbol) -> Result<(), CedilleError> {
         let path = Path::new(&*sym);
-        let metadata = path.metadata()
-            .with_context(|| format!("Failed to extract metadata of path {}", path.display()))?;
+        let metadata = path.metadata()?;
         let last_modified = metadata.modified().unwrap_or_else(|_| time::SystemTime::now());
         
-        let mut file = File::open(path)
-            .with_context(|| format!("Failed to open file with path {}", path.display()))?;
+        let mut file = File::open(path)?;
         let mut buffer = Vec::new();
         file.read_to_end(&mut buffer)?;
         let text = String::from_utf8(buffer)?;
 
         self.modules.insert(sym, ModuleData { 
-            text,
+            text: Arc::new(text),
             values: HashMap::new(),
             metas: HashMap::new(),
             active_metas: HashSet::new(),
@@ -199,28 +199,23 @@ impl Database {
             last_modified
         });
 
-        let tree = parser::parse(self.text(sym))?;
+        let tree = parser::parse(self.text_ref(sym))?;
         let ast = parser::module(tree);
         elaborator::elaborate(self, sym, &ast)?;
         Ok(())
     }
 
-    pub fn load_dir(&mut self, path: &Path) -> Result<()> {
-        let mut found_error = false;
+    pub fn load_dir(&mut self, path: &Path) -> Result<(), CedilleError> {
         for entry in fs::read_dir(path)? {
             let entry = entry?;
             let path = entry.path();
             if path.is_file() {
-                if let Err(error) = self.load_module_from_path(path) {
-                    found_error = true;
-                    println!("{}", error);
-                }
+                self.load_module_from_path(path)?;
             } else {
                 self.load_dir(&path)?;
             }
         }
-        if !found_error { Ok(()) }
-        else { Err(anyhow!("Error loading directory.")) }
+        Ok(())
     }
 
     fn reverse_lookup_namespace(&self, module: Symbol, component: Symbol) -> Option<&ImportData> {
@@ -275,8 +270,12 @@ impl Database {
         decl.map(|decl| decl.type_value.clone())
     }
 
-    pub fn text(&self, module: Symbol) -> &str {
-        &self.modules.get(&module).unwrap().text
+    pub fn text(&self, module: Symbol) -> Arc<String> {
+        self.modules.get(&module).unwrap().text.clone()
+    }
+
+    pub fn text_ref(&self, module: Symbol) -> &str {
+        self.modules.get(&module).unwrap().text.as_ref()
     }
 
     pub fn fresh_meta(&mut self, module: Symbol) -> Symbol {
@@ -295,11 +294,10 @@ impl Database {
             .expect("Impossible, any created meta must exist.")
     }
 
-    pub fn insert_meta(&mut self, module: Symbol, name: Symbol, value: Rc<Value>) -> Result<()> {
+    pub fn insert_meta(&mut self, module: Symbol, name: Symbol, value: Rc<Value>) -> Result<(), ()> {
         let module_data = self.modules.get_mut(&module).unwrap();
         match module_data.metas.get_mut(&name) {
-            None | Some(MetaState::Frozen) | Some(MetaState::Solved(_)) =>
-                return Err(anyhow!("TODO: meta insertion error, replace this with an error variant")),
+            None | Some(MetaState::Frozen) | Some(MetaState::Solved(_)) => panic!("TODO FIX"),
             | Some(meta @ MetaState::Unsolved) => {
                 *meta = MetaState::Solved(value.clone());
             }
