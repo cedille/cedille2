@@ -2,12 +2,11 @@
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time;
-use std::fmt;
-use std::error;
 
 use colored::Colorize;
 use thiserror::Error;
-use miette::{Diagnostic, SourceSpan, SourceOffset};
+use miette::{Diagnostic, SourceSpan};
+use unicode_segmentation::UnicodeSegmentation;
 
 use crate::common::*;
 use crate::lang::syntax;
@@ -20,30 +19,44 @@ use crate::error::CedilleError;
 type Span = (usize, usize);
 
 #[derive(Debug, Error, Diagnostic)]
-#[error("Elaboration error")]
 pub enum ElabError {
+    #[error("Inconvertible")]
     #[diagnostic()]
     Inconvertible {
-        span: Option<Span>,
+        #[source_code]
+        src: Arc<String>,
+        #[label("{left} ~= {right}")]
+        span: SourceSpan,
         left: String,
         right: String
     },
+    #[error("Convertible")]
     #[diagnostic()]
     Convertible {
         span: Span,
     },
+    #[error("Open Term")]
+    #[diagnostic()]
+    OpenTerm {
+
+    },
+    #[error("Sort Mismatch")]
     #[diagnostic()]
     SortMismatch { 
         span: Span,
         expected: Sort,
         provided: Sort
     },
+    #[error("Expected Term")]
     #[diagnostic()]
     ExpectedTerm { span: Span },
+    #[error("Expected Function Type")]
     #[diagnostic()]
     ExpectedFunctionType,
+    #[error("Expected Equality Type")]
     #[diagnostic()]
     ExpectedEqualityType,
+    #[error("Expected Intersection Type")]
     #[diagnostic()]
     ExpectedIntersectionType {
         #[source_code]
@@ -52,8 +65,10 @@ pub enum ElabError {
         span: SourceSpan,
         inferred_type: String,
     },
+    #[error("Mode Mismatch")]
     #[diagnostic()]
     ModeMismatch,
+    #[error("Hole")]
     #[diagnostic(
         help("Context at hole: {context}")
     )]
@@ -65,8 +80,10 @@ pub enum ElabError {
         expected_type: String,
         context: String
     },
+    #[error("Definition Collision")]
     #[diagnostic()]
     DefinitionCollision,
+    #[error("Missing Name")]
     #[diagnostic()]
     MissingName {
         #[source_code]
@@ -74,6 +91,7 @@ pub enum ElabError {
         #[label("Identifier undefined")]
         span: SourceSpan
     },
+    #[error("Intersection Inconvertible")]
     #[diagnostic()]
     IntersectionInconvertible {
         #[source_code]
@@ -83,10 +101,13 @@ pub enum ElabError {
         #[label("(rhs) this")]
         right: SourceSpan,
     },
+    #[error("Inference Failed")]
     #[diagnostic()]
     InferenceFailed { span: Span },
+    #[error("Unsupported Projection")]
     #[diagnostic()]
     UnsupportedProjection,
+    #[error("Rewrite Failed")]
     #[diagnostic()]
     RewriteFailed
 }
@@ -249,7 +270,7 @@ fn check(db: &mut Database, ctx: Context, term: &syntax::Term, ty: Rc<Value>) ->
                         let span = anno.span();
                         let anno_elabed = check(db, ctx.clone(), anno, Value::classifier(anno.sort()))?;
                         let anno_value = Value::eval(db, ctx.module, ctx.env(), anno_elabed);
-                        unify(db, anno.sort(), ctx.clone(), Some(span), &anno_value, domain)?;
+                        unify(db, anno.sort(), ctx.clone(), span, &anno_value, domain)?;
                     }
                     let value = LazyValue::computed(Value::variable(ctx.env_lvl()));
                     let ctx = ctx.bind(name, *type_mode, domain.clone());
@@ -301,11 +322,11 @@ fn check(db: &mut Database, ctx: Context, term: &syntax::Term, ty: Rc<Value>) ->
             let type2 = type2.eval(db, closure_arg);
             let second_elabed = check(db, ctx.clone(), second, type2)?;
             let second_value = Value::eval(db, ctx.module, ctx.env(), second_elabed.clone());
-            unify(db, Sort::Term, ctx.clone(), Some(*span), &first_value, &second_value)
+            unify(db, Sort::Term, ctx.clone(), *span, &first_value, &second_value)
                 .map_err(|_| ElabError::IntersectionInconvertible {
                         src: db.text(ctx.module),
-                        left: source_span(first.span()),
-                        right: source_span(second.span())
+                        left: source_span(db, ctx.module, first.span()),
+                        right: source_span(db, ctx.module, second.span())
                     })?;
             Ok(Rc::new(core::Term::Intersect {
                 first: first_elabed,
@@ -318,7 +339,7 @@ fn check(db: &mut Database, ctx: Context, term: &syntax::Term, ty: Rc<Value>) ->
         {
             let erasure_elabed = if let Some(t) = erasure { erase(db, ctx.clone(), t)? }
                 else { Rc::new(core::Term::id()) };
-            unify(db, Sort::Term, ctx, Some(*span), left, right)?;
+            unify(db, Sort::Term, ctx, *span, left, right)?;
             Ok(Rc::new(core::Term::Refl { erasure: erasure_elabed }))
         }
 
@@ -328,8 +349,10 @@ fn check(db: &mut Database, ctx: Context, term: &syntax::Term, ty: Rc<Value>) ->
             let equality = Value::unfold_to_head(db, equality);
             match equality.as_ref() {
                 Value::Equality { left, right } => {
-                    if unify(db, Sort::Term, ctx, Some(*span), left, right).is_ok() {
+                    if unify(db, Sort::Term, ctx, *span, left, right).is_ok() {
                         Err(ElabError::Convertible { span:*span })
+                    } else if !left.is_closed(db) || !right.is_closed(db) {
+                        Err(ElabError::OpenTerm { })
                     } else {
                         Ok(Rc::new(core::Term::Separate { equation: equation_elabed }))
                     }
@@ -338,7 +361,7 @@ fn check(db: &mut Database, ctx: Context, term: &syntax::Term, ty: Rc<Value>) ->
             }
         }
 
-        (syntax::Term::Rewrite { equation, guide, body, occurrence, .. },
+        (syntax::Term::Rewrite { span, equation, guide, body, occurrence, .. },
             _) =>
         {
             let (equation_elabed, equality, _) = infer(db, ctx.clone(), equation)?;
@@ -357,7 +380,7 @@ fn check(db: &mut Database, ctx: Context, term: &syntax::Term, ty: Rc<Value>) ->
                     unify(db
                         , Sort::Type
                         , ctx.clone()
-                        , None
+                        , *span
                         , &guide_ty_closure.eval(db, EnvEntry::new(guide_name, Mode::Free, left))
                         , &ty)?;
 
@@ -398,7 +421,7 @@ fn check(db: &mut Database, ctx: Context, term: &syntax::Term, ty: Rc<Value>) ->
         (syntax::Term::Hole { span, .. }, _) => {
             Err(ElabError::Hole {
                 src: db.text(ctx.module),
-                span: source_span(*span),
+                span: source_span(db, ctx.module, *span),
                 expected_type: ty.quote(db, ctx.env_lvl())
                     .to_string_with_context(ctx.names.clone()),
                 context: ctx.to_string(db)
@@ -410,7 +433,7 @@ fn check(db: &mut Database, ctx: Context, term: &syntax::Term, ty: Rc<Value>) ->
         // change direction
         _ => {
             let (result, inferred_type, sort) = infer(db, ctx.clone(), term)?;
-            unify(db, sort.promote(), ctx, Some(term.span()), &ty, &inferred_type)?;
+            unify(db, sort.promote(), ctx, term.span(), &ty, &inferred_type)?;
             Ok(result)
         }
     }
@@ -508,7 +531,7 @@ fn infer(db: &mut Database, ctx: Context, term: &syntax::Term) -> Result<(Rc<cor
             }
         }
 
-        syntax::Term::Apply { apply_type, sort, fun, arg, .. } => {
+        syntax::Term::Apply { span, apply_type, sort, fun, arg, .. } => {
             let (mut fun_elabed, mut fun_type, _) = infer(db, ctx.clone(), fun)?;
 
             loop {
@@ -550,7 +573,7 @@ fn infer(db: &mut Database, ctx: Context, term: &syntax::Term) -> Result<(Rc<cor
                     let meta = Rc::new(fresh_meta(db, ctx.bind(name, Mode::Free, domain.clone())));
                     let closure = Closure::new(ctx.module, ctx.env(), meta);
                     let candidate_type = Value::pi(type_mode, name, domain.clone(), closure.clone());
-                    unify(db, *sort, ctx.clone(), None, &fun_type, &candidate_type)?;
+                    unify(db, *sort, ctx.clone(), *span, &fun_type, &candidate_type)?;
                     (name, type_mode, domain, closure)
                 }
             };
@@ -587,7 +610,7 @@ fn infer(db: &mut Database, ctx: Context, term: &syntax::Term) -> Result<(Rc<cor
                 },
                 _ => Err(ElabError::ExpectedIntersectionType {
                     src: db.text(ctx.module),
-                    span: source_span(*span),
+                    span: source_span(db, ctx.module, *span),
                     inferred_type: body_type.quote(db, ctx.env_lvl()).to_string()
                 })
             }
@@ -613,7 +636,7 @@ fn infer(db: &mut Database, ctx: Context, term: &syntax::Term) -> Result<(Rc<cor
         syntax::Term::Hole { span, .. } => {
             Err(ElabError::Hole {
                 src: db.text(ctx.module),
-                span: source_span(*span),
+                span: source_span(db, ctx.module, *span),
                 expected_type: String::from(""),
                 context: ctx.to_string(db)
             })
@@ -719,7 +742,7 @@ pub fn erase(db: &mut Database, ctx: Context, term: &syntax::Term) -> Result<Rc<
         Term::Hole { span, .. } =>
             Err(ElabError::Hole {
                 src: db.text(ctx.module),
-                span: source_span(*span),
+                span: source_span(db, ctx.module, *span),
                 expected_type: String::from(""),
                 context: ctx.to_string(db)
             }),
@@ -734,13 +757,16 @@ pub fn erase(db: &mut Database, ctx: Context, term: &syntax::Term) -> Result<Rc<
     }
 }
 
-fn unify(db: &mut Database, sort: Sort, ctx: Context, span: Option<Span>, left: &Rc<Value>, right: &Rc<Value>) -> Result<(), ElabError> {
+fn unify(db: &mut Database, sort: Sort, ctx: Context, span: Span, left: &Rc<Value>, right: &Rc<Value>) -> Result<(), ElabError> {
     match Value::unify(db, sort, ctx.env_lvl(), left, right) {
         Ok(true) => Ok(()),
-        Ok(false) | Err(_) => Err(ElabError::Inconvertible { 
-            span,
-            left: left.quote(db, ctx.env_lvl()).to_string(),
-            right: right.quote(db, ctx.env_lvl()).to_string()
+        Ok(false) | Err(_) => Err(ElabError::Inconvertible {
+            src: db.text(ctx.module),
+            span: source_span(db, ctx.module, span),
+            left: left.quote(db, ctx.env_lvl())
+                .to_string_with_context(ctx.names.clone()),
+            right: right.quote(db, ctx.env_lvl())
+                .to_string_with_context(ctx.names)
         })
     }
 }
@@ -763,11 +789,23 @@ fn lookup_type(db: &Database, ctx: &Context, span: Span, id: &Id) -> Result<(Rc<
     match (toplevel_type, context_type) {
         (_, Some((v, level))) => Ok((v, level)),
         (Some(v), None) => Ok((v.force(db), None)),
-        (None, None) => { Err(ElabError::MissingName { source_code: db.text(ctx.module), span: source_span(span) }) }
+        (None, None) => { Err(ElabError::MissingName { source_code: db.text(ctx.module), span: source_span(db, ctx.module, span) }) }
     }
 }
 
-fn source_span(span: Span) -> SourceSpan {
+fn source_span(db: &Database, module: Symbol, span: Span) -> SourceSpan {
+    // TODO: This is a hack to fix the source positioning for miette
+    // TODO: The parser should be grapheme relative (instead of byte relative)
+    //       to properly fix this
     let (start, end) = span;
-    (start, end - start).into()
+    let len = db.text_ref(module)[start..end].graphemes(true).count();
+    // The positioning is "line-oriented" so you only have to correct up to the nearest newline
+    let start_prefix = db.text_ref(module)[..start].as_bytes();
+    let mut i = start - 1;
+    while i > 0 && start_prefix[i] != b'\n' { i -= 1; }
+    let byte_len = start - i;
+    let graphemes_len = db.text_ref(module)[i..start].graphemes(true).count();
+    // We subtract the extract internal bytes used to represent graphemes to correct the label source position
+    let start = start - (byte_len - graphemes_len);
+    SourceSpan::new(start.into(), len.into())
 }

@@ -334,9 +334,10 @@ impl fmt::Display for Value {
 pub trait ValueEx {
     fn apply_spine(&self, db: &Database, spine: Spine) -> Rc<Value>;
     fn quote(&self, db: &Database, level: Level) -> Term;
+    fn is_closed(&self, db: &Database) -> bool;
 }
 
-impl<'a> ValueEx for Rc<Value> {
+impl ValueEx for Rc<Value> {
     fn apply_spine(&self, db: &Database, spine: Spine) -> Rc<Value> {
         spine.iter()
             .fold(self.clone(), |ref acc, entry| acc.apply(db, entry.clone()))
@@ -344,6 +345,10 @@ impl<'a> ValueEx for Rc<Value> {
 
     fn quote(&self, db: &Database, level: Level) -> Term {
         Value::reify(self.clone(), db, level, false)
+    }
+
+    fn is_closed(&self, db: &Database) -> bool {
+        Value::is_closed(db, self, Environment::new())
     }
 }
 
@@ -435,7 +440,11 @@ impl Value {
                     _ => closure.eval(db, arg)
                 }
             }
-            _ => unreachable!()
+            _ => {
+                eprintln!("{}", self);
+                eprintln!("{}", arg);
+                unreachable!()
+            }
         }
     }
 
@@ -736,8 +745,58 @@ impl Value {
                     .map_or(Ok(false),
                         |u| Value::unify(db, sort, env, &left, &u.force(db)))
             }
- 
+    
             _ => Ok(false)
+        }
+    }
+
+    fn spine_is_closed(db: &Database, spine: &Spine, env: Environment) -> bool {
+        let mut result = true;
+        for arg in spine.iter() {
+            let value = arg.value.force(db);
+            result &= Value::is_closed(db, &value, env.clone());
+        }
+        result
+    }
+
+    fn is_closed(db: &Database, term: &Rc<Value>, mut env: Environment) -> bool {
+        match term.as_ref() {
+            Value::Variable { level, spine } => {
+                match env.get(**level) {
+                    Some(_) => Value::spine_is_closed(db, spine, env),
+                    None => false
+                }
+            }
+            Value::MetaVariable { spine, .. } => Value::spine_is_closed(db, spine, env),
+            Value::Reference { spine, .. } => Value::spine_is_closed(db, spine, env),
+            Value::Lambda { name, closure, .. } => {
+                let input = LazyValue::computed(Value::variable(env.len()));
+                let entry = EnvEntry::new(*name, Mode::Free, input);
+                let closure = closure.eval(db, entry.clone());
+                env.push_back(entry);
+                Value::is_closed(db, &closure, env)
+            }
+            Value::Pi { name, domain, closure, .. } => {
+                let domain_is_closed = Value::is_closed(db, domain, env.clone());
+                let input = LazyValue::computed(Value::variable(env.len()));
+                let entry = EnvEntry::new(*name, Mode::Free, input);
+                let closure = closure.eval(db, entry.clone());
+                env.push_back(entry);
+                domain_is_closed && Value::is_closed(db, &closure, env)
+            }
+            Value::IntersectType { name, first, second } => {
+                let first_is_closed = Value::is_closed(db, first, env.clone());
+                let input = LazyValue::computed(Value::variable(env.len()));
+                let entry = EnvEntry::new(*name, Mode::Free, input);
+                let second = second.eval(db, entry.clone());
+                env.push_back(entry);
+                first_is_closed && Value::is_closed(db, &second, env)
+            }
+            Value::Equality { left, right } => {
+                Value::is_closed(db, left, env.clone()) && Value::is_closed(db, right, env)
+            }
+            Value::Star => true,
+            Value::SuperStar => true,
         }
     }
 }

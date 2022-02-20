@@ -2,9 +2,11 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use colored::Colorize;
+
 use crate::common::*;
 use crate::kernel::core::Term;
-use crate::kernel::value::{Value, Spine, Environment, EnvEntry};
+use crate::kernel::value::{Value, Spine, Environment, EnvEntry, ValueEx};
 use crate::database::Database;
 
 #[derive(Debug, Clone)]
@@ -148,7 +150,8 @@ fn wrap_in_lambdas(env: Level, modes: Vec<Mode>, term: Rc<Term>) -> Rc<Term> {
 }
 
 pub fn solve(db: &mut Database, module: Symbol, env: Level, meta: Symbol, spine: Spine, rhs: Rc<Value>) -> Result<(), ()> {
-    let (renaming, modes) = invert(db, env, spine)?;
+    let (renaming, mut modes) = invert(db, env, spine)?;
+    modes.reverse();
     let domain = renaming.domain;
     let rhs = rename(db, meta, &renaming, rhs)?;
     let solution = wrap_in_lambdas(domain, modes, rhs);

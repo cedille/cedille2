@@ -6,10 +6,10 @@
 - [ ] Core types (no datatypes, no elaborated rhos, no bohm-out)
     - [x] Syntax
     - [ ] Reduction and Conversion
-    - [ ] Basic Elaboration 
+    - [x] Basic Elaboration 
     - [x] Basic Type inference
     - [x] Basic Kind inference
-- [ ] Multiple binding lambdas (λ x -g ⋅T. ...)
+- [x] Multiple binding lambdas (λ x -g ⋅T. ...)
 - [x] Basic VSCode support
     - [x] syntax highlighting
     - [x] unicode input

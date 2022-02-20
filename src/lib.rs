@@ -69,6 +69,7 @@ mod tests {
     test_file_success!(church_bool);
     test_file_success!(church_inductive_bool);
     test_file_success!(church_list);
+    test_file_success!(church_inductive_list);
     test_file_success!(church_nat);
     test_file_success!(church_inductive_nat);
     test_file_success!(church_unit);

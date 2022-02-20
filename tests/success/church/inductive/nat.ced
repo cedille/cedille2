@@ -22,7 +22,8 @@ reflect : Π n:Nat. { to n ≃ n }
 
 induct : Π n:Nat. ∀ P:Nat ➔ ★. P zero ➔ (∀ m:Nat. P m ➔ P (succ m)) ➔ P n
 = λ n -P z s. ρ ς (reflect n)
-    - (n.2 ·(λ x. P (to x)) z (λ -p q. s -(to p) q)).
+    - (n.2 ·(λ x. P (to x)) z
+        (λ -x ih. χ (P (succ (to x))) - s -(to x) ih)).
 
 rec : Π n:Nat. ∀ X:★. X ➔ (X ➔ X) ➔ X
 = λ n. n.1.
@@ -41,4 +42,20 @@ add_succ_left : Π n:Nat. Π m:Nat. {add (succ n) m ≃ succ (add n m)}
 = λ n m. β.
 
 add_succ_right : Π n:Nat. Π m:Nat. {add n (succ m) ≃ succ (add n m)}
-= λ n m. ●.
+= λ n m. induct n ·(λ x. {add x (succ m) ≃ succ (add x m)}) β
+    (λ -x ih. χ {succ (add x (succ m)) ≃ succ (add (succ x) m)}
+        - ρ ih - β).
+
+add_comm : Π n:Nat. Π m:Nat. {add n m ≃ add m n}
+= λ n. induct n ·(λ x. Π m:Nat. {add x m ≃ add m x})
+    (λ m. ρ (add_zero_right m) - β)
+    (λ -x ih m. χ {succ (add x m) ≃ add m (succ x)}
+        - ρ (ih m)
+        - ρ (add_succ_right m x)
+        - β).
+
+import ../../core/not.
+import ../../core/false.
+
+_ : Not ·{succ zero ≃ zero}
+= λ -f. δ - f.

@@ -625,11 +625,11 @@ fn type_atom(pairs: Pair<Rule>) -> Term {
 
 fn kind(pairs: Pair<Rule>) -> Term {
     fn kind_binder(body: Term, pairs: Pair<Rule>) -> Term {
+        let outer_span = span(pairs.as_span());
         let body = Box::new(body);
         let mut inner = pairs.into_inner();
         let var = inner.required(bound_id);
         let p = inner.next().unwrap();
-        let outer_span = span(p.as_span());
         let (mode, sort) = (Mode::Free, Sort::Kind);
         if p.as_rule() == Rule::kind {
             let domain = Box::new(kind(p));
@@ -642,9 +642,9 @@ fn kind(pairs: Pair<Rule>) -> Term {
         }
     }
     fn kind_atom(pairs: Pair<Rule>) -> Term {
+        let full_span = span(pairs.as_span());
         let mut inner = pairs.into_inner();
         let p = inner.next().unwrap();
-        let full_span = span(p.as_span());
         let sort = Sort::Kind;
         match p.as_rule() {
             Rule::kind => kind(p),
@@ -675,9 +675,10 @@ fn kind(pairs: Pair<Rule>) -> Term {
         let mut inner = pairs.into_inner();
         // A type application must be headed by a type atom
         let mut result = inner.required(type_atom);
-        let (mode, sort) = (Mode::Free, Sort::Kind);
+        let mut span = result.span();
+        let (mode, sort) = (Mode::Free, Sort::Type);
         for p in inner {
-            let span = span(p.as_span());
+            span = (span.0, p.as_span().end());
             match p.as_rule() {
                 Rule::type_atom => {
                     let fun = Box::new(result);
