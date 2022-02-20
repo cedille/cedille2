@@ -14,9 +14,9 @@ use crate::database::Database;
 
 #[derive(Debug, Clone)]
 pub struct EnvEntry {
-    name: Symbol,
-    mode: Mode,
-    value: LazyValue,
+    pub name: Symbol,
+    pub mode: Mode,
+    pub value: LazyValue,
 }
 
 impl fmt::Display for EnvEntry {
@@ -411,7 +411,7 @@ impl Value {
         }
     }
 
-    fn apply(&self, db: &Database, arg: SpineEntry) -> Rc<Value> {
+    pub fn apply(&self, db: &Database, arg: SpineEntry) -> Rc<Value> {
         match self {
             Value::Variable { level, spine } => {
                 let mut spine = spine.clone();
@@ -617,7 +617,7 @@ impl Value {
         result
     }
 
-    fn unify_spine(db: &mut Database, sort: Sort, env: Level, mut left: Spine, mut right: Spine) -> Result<bool, ()> {
+    pub fn unify_spine(db: &mut Database, sort: Sort, env: Level, mut left: Spine, mut right: Spine) -> Result<bool, ()> {
         let mut result = true;
         let (mut i, mut j) = (0, 0);
 
