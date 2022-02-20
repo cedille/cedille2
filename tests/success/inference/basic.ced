@@ -46,7 +46,8 @@ dup : ∀ X:★. X ➔ Pair·X·X
     [x18 = dup x17] -
     [x19 = dup x18] -
     [x20 = dup x19] -
-    [x21 = dup x20] -
+    x20. -}
+    {-[x21 = dup x20] -
     [x22 = dup x21] -
     [x23 = dup x22] -
     [x24 = dup x23] -
@@ -55,8 +56,8 @@ dup : ∀ X:★. X ➔ Pair·X·X
     [x27 = dup x26] -
     [x28 = dup x27] -
     [x29 = dup x28] -
-    [x30 = dup x29] -
-    x30. -}
+    [x30 = dup x29] - -}
+
 
 import ../church/nat as ChNat.
 import ../church/vec as V.
@@ -64,8 +65,8 @@ import ../church/vec as V.
 zero = ChNat.zero.
 vcons = V.vcons.
 vnil = V.vnil.
-
-_ = vcons zero (vcons zero vnil).
+{- 
+_ = vcons zero (vcons zero vnil). -}
 
 {- _ : {Nat.succ Nat.zero ≃ Nat.zero} ➾ {
         add (Nat.succ Nat.zero)
