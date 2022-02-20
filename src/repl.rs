@@ -103,6 +103,9 @@ fn print_preamble_text() {
 
 fn print_help_text() {
     // TODO: Add help text for the available REPL commands
+    println!("q | quit: exit this REPL");
+    println!("h | help: print this message");
+    println!("l | load: load .ced file (or files, if argument is a directory)");
 }
 
 fn repl_inner<H:Helper>(db: &mut Database, rl : &mut Editor<H>) -> Result<bool, CedilleError> {
