@@ -38,17 +38,21 @@ pub struct RewriteGuide {
 #[derive(Debug, Hash, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Term {
     Lambda {
+        sort: Sort,
+        domain_sort: Sort,
         mode: Mode,
         name: Symbol,
         body: Rc<Term>
     },
     Let {
+        sort: Sort,
         mode: Mode,
         name: Symbol,
         let_body: Rc<Term>,
         body: Rc<Term>
     },
     Pi {
+        sort: Sort,
         mode: Mode,
         name: Symbol,
         domain: Rc<Term>,
@@ -92,16 +96,25 @@ pub enum Term {
         erasure: Rc<Term>
     },
     Apply {
+        sort: Sort,
         apply_type: ApplyType,
         fun: Rc<Term>,
         arg: Rc<Term>
     },
-    Bound { index: Index },
-    Free { id: Id },
-    Meta { name: Symbol },
+    Bound {
+        sort: Sort,
+        index: Index
+    },
+    Free {
+        sort: Sort,
+        id: Id
+    },
+    Meta {
+        sort: Sort,
+        name: Symbol
+    },
     InsertedMeta {
         name: Symbol,
-        sort: Sort,
         mask: Vec<EnvBound>
     },
     Star,
@@ -125,9 +138,33 @@ impl fmt::Display for Decl {
 
 impl Term {
     pub fn id() -> Term {
-        let (mode, name) = (Mode::Free, Symbol::from("x"));
-        let body = Rc::new(Term::Bound { index:0.into() });
-        Term::Lambda { mode, name, body }
+        let (sort, domain_sort, mode, name) = (Sort::Term, Sort::Term, Mode::Free, Symbol::from("x"));
+        let body = Rc::new(Term::Bound { sort, index:0.into() });
+        Term::Lambda { sort, domain_sort, mode, name, body }
+    }
+
+    pub fn sort(&self) -> Sort {
+        match self {
+            Term::Lambda { sort, .. }
+            | Term::Let { sort, .. }
+            | Term::Pi { sort, .. } => *sort,
+            Term::IntersectType { .. }
+            | Term::Equality { .. } => Sort::Type,
+            Term::Rewrite { .. }
+            | Term::Annotate { .. }
+            | Term::Project { .. }
+            | Term::Intersect { .. }
+            | Term::Separate { .. }
+            | Term::Refl { .. }
+            | Term::Cast { .. } => Sort::Term,
+            Term::Apply { sort, .. }
+            | Term::Bound { sort, .. }
+            | Term::Free { sort, .. }
+            | Term::Meta { sort, .. } => *sort,
+            Term::InsertedMeta { .. } => Sort::Unknown,
+            Term::Star => Sort::Kind,
+            Term::SuperStar => Sort::Kind,
+        }
     }
 
     pub fn ambiguous(&self) -> bool {
@@ -158,7 +195,7 @@ impl Term {
 
     pub fn to_string_with_context(&self, mut ctx: im_rc::Vector<Symbol>) -> String {
         match self {
-            Term::Lambda { mode, name, body } => {
+            Term::Lambda { mode, name, body, .. } => {
                 let binder = match mode {
                     Mode::Erased => "Λ",
                     Mode::Free => "λ",
@@ -167,7 +204,7 @@ impl Term {
                 let body = body.to_string_with_context(ctx);
                 format!("{} {}. {}", binder, name, body)
             }
-            Term::Let { mode, name, let_body, body } => {
+            Term::Let { mode, name, let_body, body, .. } => {
                 let (left, right) = match mode {
                     Mode::Erased => ("{", "}"),
                     Mode::Free => ("[", "]")
@@ -177,7 +214,7 @@ impl Term {
                 let body = body.to_string_with_context(ctx);
                 format!("{}{} = {}{} - {}", left, name, let_body, right, body)
             }
-            Term::Pi { mode, name, domain, body } => {
+            Term::Pi { mode, name, domain, body, .. } => {
                 let binder = match mode {
                     Mode::Erased => "∀",
                     Mode::Free => "Π"
@@ -235,7 +272,7 @@ impl Term {
                 if equation.ambiguous() { format!("φ ({}) - {} {{{}}}", equation_str, input, erasure) }
                 else { format!("φ {} - {} {{{}}}", equation_str, input, erasure) }
             }
-            Term::Apply { apply_type, fun, arg } => {
+            Term::Apply { apply_type, fun, arg, .. } => {
                 let operator = match apply_type {
                     ApplyType::Free => "",
                     ApplyType::TermErased => "-",
@@ -250,7 +287,7 @@ impl Term {
                     (false, false) => format!("({}) {}{}", fun_str, operator, arg_str),
                 }
             }
-            Term::Bound { index } => {
+            Term::Bound { index, .. } => {
                 let mut result = index.to_string();
                 if ctx.len() > **index {
                     let level = index.to_level(ctx.len());
@@ -260,7 +297,7 @@ impl Term {
                 }
                 result
             }
-            Term::Meta { name } => name.to_string(),
+            Term::Meta { name, .. } => name.to_string(),
             Term::InsertedMeta { name, mask, .. } => {
                 let mut args = String::new();
                 for i in 0..mask.len() {
@@ -274,7 +311,7 @@ impl Term {
                 }
                 format!("({}{})", name, args)
             }
-            Term::Free { id } => id.to_string(),
+            Term::Free { id, .. } => id.to_string(),
             Term::Star => "★".to_string(),
             Term::SuperStar => "□".to_string(),
         }

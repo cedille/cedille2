@@ -69,25 +69,27 @@ fn match_term_helper(arg: MatchArg, mut_arg: &mut MatchMutArg) -> Result<Term, (
         Ok((entry.apply_type, term))
     }
 
-    let build_apply = |acc, (apply_type, t)| {
+    let build_apply = |acc:Term, (apply_type, t)| {
+        let sort = acc.sort();
         Term::Apply {
+            sort,
             apply_type,
             fun: Rc::new(acc),
-            arg: Rc::new(t)
+            arg: Rc::new(t),
         }
     };
 
-    if Value::unify(mut_arg.db, Sort::Term, arg.level, arg.term, arg.ty)? {
+    if Value::unify(mut_arg.db, arg.level, arg.term, arg.ty)? {
         let result = if arg.occurrence.map_or(true, |occ| occ == mut_arg.current) {
             mut_arg.matched = true;
-            Term::Bound { index: arg.index }
+            Term::Bound { sort: Sort::Term, index: arg.index }
         } else { arg.ty.quote(mut_arg.db, arg.level) };
         mut_arg.current += 1;
         Ok(result)
     } else {
         let result = match arg.ty.as_ref() {
-            Value::Variable { level:vlevel, spine } => {
-                let mut result = Value::variable(*vlevel).quote(mut_arg.db, arg.level);
+            Value::Variable { sort, level:vlevel, spine } => {
+                let mut result = Value::variable(*sort, *vlevel).quote(mut_arg.db, arg.level);
                 for entry in spine.iter() {
                     let entry = process_spine_entry(arg, mut_arg, entry)?;
                     result = build_apply(result, entry);
@@ -97,11 +99,11 @@ fn match_term_helper(arg: MatchArg, mut_arg: &mut MatchMutArg) -> Result<Term, (
             Value::MetaVariable { name, module, spine }  => {
                 Value::meta(*name, *module, spine.clone()).quote(mut_arg.db, arg.level)
             }
-            Value::Reference { id, spine, .. } if spine.len() == 0 => {
-                Term::Free { id: id.clone() }
+            Value::Reference { sort, id, spine, .. } if spine.len() == 0 => {
+                Term::Free { sort: *sort, id: id.clone() }
             }
-            Value::Reference { id, spine, .. } => {
-                let head = Value::reference(id.clone(), Spine::new(), None);
+            Value::Reference { sort, id, spine, .. } => {
+                let head = Value::reference(*sort, id.clone(), Spine::new(), None);
                 let mut result = match_term_helper(arg.update(&head), mut_arg)?;
                 for entry in spine.iter() {
                     let entry = process_spine_entry(arg, mut_arg, entry)?;
@@ -109,20 +111,23 @@ fn match_term_helper(arg: MatchArg, mut_arg: &mut MatchMutArg) -> Result<Term, (
                 }
                 result
             }
-            Value::Lambda { mode, name, closure } => {
-                let closure = closure.eval(mut_arg.db, EnvEntry::new(*name, *mode, Value::variable(arg.level)));
+            Value::Lambda { sort, domain_sort, mode, name, closure } => {
+                let closure = closure.eval(mut_arg.db, EnvEntry::new(*name, *mode, Value::variable(*domain_sort, arg.level)));
                 let closure = match_term_helper(arg.update(&closure).increment(), mut_arg)?;
                 Term::Lambda {
+                    sort: *sort,
+                    domain_sort: *domain_sort,
                     mode: *mode,
                     name: *name,
                     body: Rc::new(closure)
                 }
             }
-            Value::Pi { mode, name, domain, closure } => {
-                let closure = closure.eval(mut_arg.db, EnvEntry::new(*name, *mode, Value::variable(arg.level)));
+            Value::Pi { sort, mode, name, domain, closure } => {
+                let closure = closure.eval(mut_arg.db, EnvEntry::new(*name, *mode, Value::variable(domain.sort(mut_arg.db), arg.level)));
                 let domain = match_term_helper(arg.update(domain), mut_arg)?;
                 let closure = match_term_helper(arg.update(&closure).increment(), mut_arg)?;
                 Term::Pi {
+                    sort: *sort,
                     mode: *mode,
                     name: *name,
                     domain: Rc::new(domain),
@@ -130,7 +135,7 @@ fn match_term_helper(arg: MatchArg, mut_arg: &mut MatchMutArg) -> Result<Term, (
                 }
             }
             Value::IntersectType { name, first, second } => {
-                let second = second.eval(mut_arg.db, EnvEntry::new(*name, Mode::Free, Value::variable(arg.level)));
+                let second = second.eval(mut_arg.db, EnvEntry::new(*name, Mode::Free, Value::variable(first.sort(mut_arg.db), arg.level)));
                 let first = match_term_helper(arg.update(first), mut_arg)?;
                 let second = match_term_helper(arg.update(&second).increment(), mut_arg)?;
                 Term::IntersectType {

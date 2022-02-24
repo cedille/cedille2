@@ -75,6 +75,7 @@ mod tests {
     test_file_success!(church_unit);
     test_file_success!(church_inductive_unit);
     test_file_success!(church_vec);
+    test_file_success!(church_inductive_vec);
 
     test_file_success!(module_unqualified);
     test_file_success!(module_qualified);

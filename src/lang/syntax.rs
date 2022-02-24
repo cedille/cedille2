@@ -21,7 +21,6 @@ pub struct Module {
 
 #[derive(Debug, Clone)]
 pub enum Decl {
-    Type(DefineTerm),
     Term(DefineTerm),
     Kind(DefineKind),
     Import(Import),
@@ -108,21 +107,18 @@ pub struct LambdaVar {
 pub enum Term {
     Lambda {
         span: Span,
-        sort: Sort,
         vars: Vec<LambdaVar>,
         body: Box<Term>
     },
     Let {
         span: Span,
         mode: Mode,
-        sort: Sort,
         def: DefineTerm,
         body: Box<Term>
     },
     Pi {
         span: Span,
         mode: Mode,
-        sort: Sort,
         var: Option<Symbol>,
         domain: Box<Term>,
         body: Box<Term>
@@ -198,25 +194,21 @@ pub enum Term {
     Apply {
         span: Span,
         apply_type: ApplyType,
-        sort: Sort,
         fun: Box<Term>,
         arg: Box<Term>
     },
     Variable {
         span: Span,
-        sort: Sort,
         id: Id
     },
     Star { 
         span: Span
     },
     Hole {
-        span: Span,
-        sort: Sort
+        span: Span
     },
     Omission {
-        span: Span,
-        sort: Sort
+        span: Span
     }
 }
 
@@ -257,30 +249,5 @@ impl Term {
     pub fn as_str<'a, 'b>(&'a self, text: &'b str) -> &'b str {
         let (start, end) = self.span();
         &text[start..end]
-    }
-
-    pub fn sort(&self) -> Sort {
-        match self {
-            Term::Lambda { sort, .. }
-            | Term::Let { sort, .. }
-            | Term::Pi { sort, .. } => *sort,
-            Term::IntersectType { .. }
-            | Term::Equality { .. } => Sort::Type,
-            Term::Rewrite { .. }
-            | Term::Annotate { .. }
-            | Term::Project { .. }
-            | Term::Symmetry { .. }
-            | Term::Intersect { .. }
-            | Term::Separate { .. }
-            | Term::Reflexivity { .. }
-            | Term::Cast { .. }
-            | Term::Induct { .. }
-            | Term::Match { .. } => Sort::Term,
-            Term::Apply { sort, .. }
-            | Term::Variable { sort, .. } => *sort,
-            Term::Star { .. } => Sort::Kind,
-            Term::Hole { sort, .. } => *sort,
-            Term::Omission { sort, .. } => *sort,
-        }
     }
 }

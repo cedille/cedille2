@@ -33,7 +33,7 @@ fn lift(renaming: &PartialRenaming) -> PartialRenaming {
     }
 }
 
-fn invert(db: &Database, env: Level, spine: Spine) -> Result<(PartialRenaming, Vec<Mode>), ()> {
+fn invert(db: &Database, env: Level, spine: Spine) -> Result<(PartialRenaming, Vec<(Mode, Sort)>), ()> {
     let mut result = PartialRenaming { 
         domain: 0.into(),
         codomain: env,
@@ -42,11 +42,11 @@ fn invert(db: &Database, env: Level, spine: Spine) -> Result<(PartialRenaming, V
     let mut modes = vec![];
     for entry in spine.iter() {
         let mode = entry.apply_type.to_mode();
-        modes.push(mode);
+        modes.push((mode, entry.value.sort(db)));
         let value = entry.value.force(db);
         let value = Value::unfold_meta_to_head(db, value);
         match value.as_ref() {
-            Value::Variable { level, spine }
+            Value::Variable { level, spine, .. }
             if spine.is_empty() && !result.renaming.contains_key(level) =>
             {
                 result.renaming.insert(*level, result.domain);
@@ -64,6 +64,7 @@ fn rename(db: &Database, meta: Symbol, renaming: &PartialRenaming, value: Rc<Val
         for entry in spine.iter() {
             let arg = rename(db, meta, renaming, entry.value.force(db))?;
             result = Term::Apply {
+                sort: result.sort(),
                 apply_type: entry.apply_type,
                 fun: Rc::new(result),
                 arg
@@ -74,42 +75,46 @@ fn rename(db: &Database, meta: Symbol, renaming: &PartialRenaming, value: Rc<Val
 
     let value = Value::unfold_meta_to_head(db, value);
     match value.as_ref() {
-        Value::Variable { level, spine } => {
+        Value::Variable { sort, level, spine } => {
             if let Some(renamed) = renaming.renaming.get(level) {
-                let head = Term::Bound { index: renamed.to_index(*renaming.domain) };
+                let head = Term::Bound { sort: *sort, index: renamed.to_index(*renaming.domain) };
                 rename_spine(db, meta, renaming, head, spine.clone())
             } else {
                 Err(())
             }
         }
         Value::MetaVariable { name, module, spine } => {
+            let sort = value.sort(db);
             if *name == meta {
                 Err(())
             } else {
-                let head = Term::Meta { name: meta };
+                let head = Term::Meta { sort, name: meta };
                 rename_spine(db, meta, renaming, head, spine.clone())
             }
         }
-        Value::Reference { id, spine, .. } => {
-            let head = Term::Free { id: id.clone() };
+        Value::Reference { sort, id, spine, .. } => {
+            let head = Term::Free { sort: *sort, id: id.clone() };
             rename_spine(db, meta, renaming, head, spine.clone())
         }
-        Value::Lambda { mode, name, closure } => {
-            let arg = EnvEntry::new(*name, *mode, Value::variable(renaming.codomain));
+        Value::Lambda { sort, domain_sort, mode, name, closure } => {
+            let arg = EnvEntry::new(*name, *mode, Value::variable(*domain_sort, renaming.codomain));
             let body = closure.eval(db, arg);
             let body = rename(db, meta, &lift(renaming), body)?;
             Ok(Rc::new(Term::Lambda {
+                sort: *sort,
+                domain_sort: *domain_sort,
                 mode: *mode,
                 name: *name,
                 body
             }))
         }
-        Value::Pi { mode, name, domain, closure } => {
+        Value::Pi { sort, mode, name, domain, closure } => {
             let domain = rename(db, meta, renaming, domain.clone())?;
-            let arg = EnvEntry::new(*name, *mode, Value::variable(renaming.codomain));
+            let arg = EnvEntry::new(*name, *mode, Value::variable(domain.sort(), renaming.codomain));
             let body = closure.eval(db, arg);
             let body = rename(db, meta, &lift(renaming), body)?;
             Ok(Rc::new(Term::Pi {
+                sort: *sort,
                 mode: *mode,
                 name: *name,
                 domain,
@@ -118,7 +123,7 @@ fn rename(db: &Database, meta: Symbol, renaming: &PartialRenaming, value: Rc<Val
         }
         Value::IntersectType { name, first, second } => {
             let first = rename(db, meta, renaming, first.clone())?;
-            let arg = EnvEntry::new(*name, Mode::Free, Value::variable(renaming.codomain));
+            let arg = EnvEntry::new(*name, Mode::Free, Value::variable(first.sort(), renaming.codomain));
             let second = second.eval(db, arg);
             let second = rename(db, meta, &lift(renaming), second)?;
             Ok(Rc::new(Term::IntersectType {
@@ -137,11 +142,14 @@ fn rename(db: &Database, meta: Symbol, renaming: &PartialRenaming, value: Rc<Val
     }
 }
 
-fn wrap_in_lambdas(env: Level, modes: Vec<Mode>, term: Rc<Term>) -> Rc<Term> {
+fn wrap_in_lambdas(env: Level, modes: Vec<(Mode, Sort)>, term: Rc<Term>) -> Rc<Term> {
     let mut result = term;
     for i in 0..*env {
+        let (mode, domain_sort) = modes[i];
         result = Rc::new(Term::Lambda {
-            mode: modes[i],
+            sort: result.sort(),
+            domain_sort,
+            mode,
             name: Symbol::from(format!("x{}", i).as_str()),
             body: result
         })

@@ -79,8 +79,9 @@ impl Mode {
     }
 }
 
-#[derive(Debug, Hash, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Hash, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Display)]
 pub enum Sort {
+    Unknown,
     Term,
     Type,
     Kind
@@ -89,9 +90,19 @@ pub enum Sort {
 impl Sort {
     pub fn promote(self) -> Sort {
         match self {
+            Sort::Unknown => Sort::Unknown,
             Sort::Term => Sort::Type,
             Sort::Type => Sort::Kind,
-            Sort::Kind => Sort::Kind,
+            Sort::Kind => Sort::Unknown,
+        }
+    }
+
+    pub fn demote(self) -> Sort {
+        match self {
+            Sort::Unknown => Sort::Unknown,
+            Sort::Term => Sort::Unknown,
+            Sort::Type => Sort::Term,
+            Sort::Kind => Sort::Type,
         }
     }
 }
