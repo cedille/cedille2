@@ -1,0 +1,43 @@
+module comparison.
+
+--------------------------------------------------------------------------------------
+-- Module System
+--------------------------------------------------------------------------------------
+-- There are various restrictions in the module system of Cedille that are now removed
+-- these restrictions are hard to show in a single file, look at the module tests
+-- to see examples
+
+-- In summary, Cedille2 now allows nested namespaces:
+-- module A.
+-- unit : ...
+
+-- module B.
+-- import A as N1.
+
+-- module C.
+-- import B as N2.
+-- N2.N1.unit
+
+--------------------------------------------------------------------------------------
+-- Syntax
+--------------------------------------------------------------------------------------
+-- Cedille2 no longer requires · application for types, either free application
+-- (no mode annotation) or erased application (- annotation) are used with the
+-- appropriate lambda
+Top : ★ = { β ≃ β }.
+T1 : ★ ➔ ★ = λ X:★. X.
+T2 = T1 Top.
+
+_ : (∀ X:★. ∀ Y: T1 X. Top) ➔ Top
+= λ f. f -Top -β.
+
+-- Cedille2 has kind inference, kind annotations on lambdas are no longer required
+T3 : ★ ➔ ★ = λ X. X.
+T4 = T3 Top.
+
+-- Cedille2 has multi-bind lambdas
+_ : ★ ➔ ★ ➔ ★ ➔ ★ = λ A B C. B.
+
+_ : ∀ X:★. ∀ Y: T1 X. Top ➔ Top
+= λ -X -Y t. t.
+

@@ -274,7 +274,6 @@ fn term_binder(body: Term, binder: Pair<Rule>) -> Term {
     let (binder_start, _) = span(binder.as_span());
     let (_, binder_end) = body.span();
     let span = (binder_start, binder_end);
-    let sort = Sort::Term;
     let body = Box::new(body);
     let rule = binder.as_rule();
     let mut inner = binder.into_inner();
@@ -329,29 +328,29 @@ fn term_binder(body: Term, binder: Pair<Rule>) -> Term {
 fn term_application(pairs: Pair<Rule>) -> Term {
     let mut iter = pairs.into_inner();
     let mut result = iter.required(term_atom);
-    let (mut apply_type, sort) = (ApplyType::Free, Sort::Term);
+    let mut mode= Mode::Free;
     let mut outer_span = result.span();
     for p in iter {
         let p_span = span(p.as_span());
         match p.as_rule() {
-            Rule::erased_op => apply_type = ApplyType::TermErased,
+            Rule::erased_op => mode = Mode::Erased,
             Rule::term_atom | Rule::term => {
                 let fun = Box::new(result);
                 let arg = Box::new(
                     if p.as_rule() == Rule::term { term(p) }
                     else { term_atom(p) });
                 let span = (outer_span.0, arg.span().1);
-                result = Term::Apply { span, apply_type, fun, arg };
-                apply_type = ApplyType::Free;
+                result = Term::Apply { span, mode, fun, arg };
+                mode = Mode::Free;
             },
             Rule::type_atom | Rule::type_ => {
                 let fun = Box::new(result);
                 let arg = Box::new(
                     if p.as_rule() == Rule::type_ { type_(p) }
                     else { type_atom(p) });
-                let apply_type = ApplyType::TypeErased;
+                let mode = Mode::Erased;
                 let span = (outer_span.0, arg.span().1);
-                result = Term::Apply { span, apply_type, fun, arg};
+                result = Term::Apply { span, mode, fun, arg};
             }
             _ => unreachable!()
         };
@@ -452,7 +451,6 @@ fn term_atom(atom: Pair<Rule>) -> Term {
             Rule::omission => Some(Term::Omission { span}),
             Rule::qual_id => {
                 let id = qual_id(p);
-                let sort = Sort::Term;
                 Some(Term::Variable { span, id })
             },
             _ => None
@@ -517,7 +515,6 @@ fn type_binder(body: Term, binder: Pair<Rule>) -> Term {
     let body = Box::new(body);
     let rule = binder.as_rule();
     let mut inner = binder.into_inner();
-    let sort = Sort::Type;
     match rule {
         Rule::type_forall => {
             let mode = Mode::Free;
@@ -568,7 +565,6 @@ fn type_body(pairs: Pair<Rule>) -> Term {
     let mut inner = pairs.into_inner();
     let mut result = inner.required(type_atom);
     let mut outer_span = result.span();
-    let sort = Sort::Type;
     while let Some(p) = inner.next() {
         let inner_span = span(p.as_span());
         match p.as_rule() {
@@ -585,15 +581,15 @@ fn type_body(pairs: Pair<Rule>) -> Term {
                 let fun = Box::new(result);
                 let arg = Box::new(type_atom(p));
                 let span = (outer_span.0, arg.span().1);
-                let apply_type = ApplyType::TypeErased;
-                result = Term::Apply { span, apply_type, fun, arg }
+                let mode = Mode::Free;
+                result = Term::Apply { span, mode, fun, arg }
             },
             Rule::term_atom => {
                 let fun = Box::new(result);
                 let arg = Box::new(term_atom(p));
                 let span = (outer_span.0, arg.span().1);
-                let apply_type = ApplyType::Free;
-                result = Term::Apply { span, apply_type, fun, arg }
+                let mode = Mode::Free;
+                result = Term::Apply { span, mode, fun, arg }
             },
             _ => unreachable!()
         }
@@ -615,7 +611,6 @@ fn type_atom(pairs: Pair<Rule>) -> Term {
         Rule::hole => Term::Hole { span },
         Rule::omission => Term::Omission { span },
         Rule::qual_id => {
-            let sort = Sort::Type;
             let id = qual_id(p);
             Term::Variable { span, id }
         },
@@ -630,7 +625,7 @@ fn kind(pairs: Pair<Rule>) -> Term {
         let mut inner = pairs.into_inner();
         let var = inner.required(bound_id);
         let p = inner.next().unwrap();
-        let (mode, sort) = (Mode::Free, Sort::Kind);
+        let mode = Mode::Free;
         if p.as_rule() == Rule::kind {
             let domain = Box::new(kind(p));
             let span = (outer_span.0, body.span().1);
@@ -645,7 +640,6 @@ fn kind(pairs: Pair<Rule>) -> Term {
         let full_span = span(pairs.as_span());
         let mut inner = pairs.into_inner();
         let p = inner.next().unwrap();
-        let sort = Sort::Kind;
         match p.as_rule() {
             Rule::kind => kind(p),
             Rule::star => Term::Star { span: full_span },
@@ -655,15 +649,15 @@ fn kind(pairs: Pair<Rule>) -> Term {
                 let mut args = inner.variant_list(|p| {
                     let span = span(p.as_span());
                     match p.as_rule() {
-                        Rule::type_atom => Some((type_(p), ApplyType::TypeErased, span)),
-                        Rule::term_atom => Some((term(p), ApplyType::TermErased, span)),
+                        Rule::type_atom => Some((type_(p), Mode::Erased, span)),
+                        Rule::term_atom => Some((term(p), Mode::Erased, span)),
                         _ => None
                     }});
                 // TODO: fix the spans here
-                args.drain(..).fold(head, |acc, (arg, apply_type, span)| {
+                args.drain(..).fold(head, |acc, (arg, mode, span)| {
                     let (fun, arg) = (Box::new(acc), Box::new(arg));
                     let span = (full_span.0, span.1);
-                    Term::Apply { span, apply_type, fun, arg }
+                    Term::Apply { span, mode, fun, arg }
                 })
             },
             _ => unreachable!()
@@ -676,21 +670,19 @@ fn kind(pairs: Pair<Rule>) -> Term {
         // A type application must be headed by a type atom
         let mut result = inner.required(type_atom);
         let mut span = result.span();
-        let (mode, sort) = (Mode::Free, Sort::Type);
+        let mode = Mode::Free;
         for p in inner {
             span = (span.0, p.as_span().end());
             match p.as_rule() {
                 Rule::type_atom => {
                     let fun = Box::new(result);
                     let arg = Box::new(type_atom(p));
-                    let apply_type = ApplyType::TypeErased;
-                    result = Term::Apply { span, apply_type, fun, arg }
+                    result = Term::Apply { span, mode, fun, arg }
                 },
                 Rule::term_atom => {
                     let fun = Box::new(result);
                     let arg = Box::new(term_atom(p));
-                    let apply_type = ApplyType::Free;
-                    result = Term::Apply { span, apply_type, fun, arg }
+                    result = Term::Apply { span, mode, fun, arg }
                 },
                 _ => unreachable!()
             }
@@ -717,7 +709,7 @@ fn kind(pairs: Pair<Rule>) -> Term {
                     let mut result = kind_atom(p);
                     // The remaining rules must be `kind`
                     for p2 in iter {
-                        let (mode, sort) = (Mode::Free, Sort::Kind);
+                        let mode = Mode::Free;
                         let var = None;
                         let domain = Box::new(result);
                         let body = Box::new(kind(p2));

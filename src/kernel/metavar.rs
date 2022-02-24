@@ -2,11 +2,9 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use colored::Colorize;
-
 use crate::common::*;
 use crate::kernel::core::Term;
-use crate::kernel::value::{Value, Spine, Environment, EnvEntry, ValueEx};
+use crate::kernel::value::{Value, Spine, Environment, EnvEntry};
 use crate::database::Database;
 
 #[derive(Debug, Clone)]
@@ -41,7 +39,7 @@ fn invert(db: &Database, env: Level, spine: Spine) -> Result<(PartialRenaming, V
     };
     let mut modes = vec![];
     for entry in spine.iter() {
-        let mode = entry.apply_type.to_mode();
+        let mode = entry.mode;
         modes.push((mode, entry.value.sort(db)));
         let value = entry.value.force(db);
         let value = Value::unfold_meta_to_head(db, value);
@@ -65,7 +63,7 @@ fn rename(db: &Database, meta: Symbol, renaming: &PartialRenaming, value: Rc<Val
             let arg = rename(db, meta, renaming, entry.value.force(db))?;
             result = Term::Apply {
                 sort: result.sort(),
-                apply_type: entry.apply_type,
+                mode: entry.mode,
                 fun: Rc::new(result),
                 arg
             };
@@ -83,7 +81,7 @@ fn rename(db: &Database, meta: Symbol, renaming: &PartialRenaming, value: Rc<Val
                 Err(())
             }
         }
-        Value::MetaVariable { name, module, spine } => {
+        Value::MetaVariable { name, spine, .. } => {
             let sort = value.sort(db);
             if *name == meta {
                 Err(())

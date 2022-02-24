@@ -23,7 +23,7 @@ inductBool : Π b:Bool. ∀ P:Bool ➔ ★. P tt ➔ P ff ➔ P b
     - (b.2 ·(λ x. P (toBool x)) tt ff).
 
 ite : ∀ X:★. Bool ➔ X ➔ X ➔ X
-= λ -X if then else. inductBool if ·(λ _. X) then else.
+= λ -X if then else. inductBool if -(λ _. X) then else.
 
 not : Bool ➔ Bool
 = λ x. ite x ff tt.
@@ -32,7 +32,7 @@ _ : {not tt ≃ ff} = β.
 _ : {not ff ≃ tt} = β.
 
 not_idem : Π x:Bool. {not (not x) ≃ x}
-= λ x. inductBool x ·(λ x. {not (not x) ≃ x}) β β.
+= λ x. inductBool x -(λ x. {not (not x) ≃ x}) β β.
 
 not_not_idem : Π x:Bool. {not (not (not (not x))) ≃ x}
 = λ x. ρ (not_idem x) - ρ (not_idem x) - β.
@@ -54,9 +54,9 @@ _ : {and ff tt ≃ ff} = β.
 _ : {and ff ff ≃ ff} = β.
 
 and_comm : Π x:Bool. Π y:Bool. {and x y ≃ and y x}
-= λ x y. inductBool x ·(λ x. {and x y ≃ and y x})
-  (inductBool y ·(λ y. {and tt y ≃ and y tt}) β β)
-  (inductBool y ·(λ y. {and ff y ≃ and y ff}) β β).
+= λ x y. inductBool x -(λ x. {and x y ≃ and y x})
+  (inductBool y -(λ y. {and tt y ≃ and y tt}) β β)
+  (inductBool y -(λ y. {and ff y ≃ and y ff}) β β).
 
 xor : Bool ➔ Bool ➔ Bool
 = λ x y. ite x (not y) y.

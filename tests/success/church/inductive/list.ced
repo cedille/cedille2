@@ -2,35 +2,35 @@ module church/inductive/list.
 
 import ../list as Ch.
 
-Inductive : Π A:★. Ch.List ·A ➔ ★
-= λ A l. ∀ P:Ch.List ·A ➔ ★.
-    P (Ch.nil ·A)
-    ➔ (∀ x:Ch.List ·A. Π a:A. P x ➔ P (Ch.cons ·A a x))
+Inductive : Π A:★. Ch.List A ➔ ★
+= λ A l. ∀ P:Ch.List A ➔ ★.
+    P (Ch.nil -A)
+    ➔ (∀ x:Ch.List A. Π a:A. P x ➔ P (Ch.cons -A a x))
     ➔ P l.
 
-List : ★ ➔ ★ = λ A. ι l:Ch.List ·A. Inductive ·A l.
+List : ★ ➔ ★ = λ A. ι l:Ch.List A. Inductive A l.
 
-nil : ∀ A:★. List ·A
-= Λ A. [Ch.nil ·A, λ -P n c. n].
+nil : ∀ A:★. List A
+= Λ A. [Ch.nil -A, λ -P n c. n].
 
-cons : ∀ A:★. A ➔ List ·A ➔ List ·A
-= λ -A a l. [Ch.cons ·A a l.1, λ -P n c. c -l.1 a (l.2 ·P n c)].
+cons : ∀ A:★. A ➔ List A ➔ List A
+= λ -A a l. [Ch.cons -A a l.1, λ -P n c. c -l.1 a (l.2 -P n c)].
 
-to : ∀ A:★. Ch.List ·A ➔ List ·A
-= λ -A l. l ·(List ·A) (nil ·A) (cons ·A).
+to : ∀ A:★. Ch.List A ➔ List A
+= λ -A l. l -(List A) (nil -A) (cons -A).
 
 reflect : ∀ A:★. Π l:List ·A. { to l ≃ l }
-= λ -A l. l.2 ·(λ x. {to x ≃ x}) β
+= λ -A l. l.2 -(λ x. {to x ≃ x}) β
     (λ -x a ih. χ {Ch.cons a (to x) ≃ Ch.cons a x}
     - ρ ih - β).
 
-induct : ∀ A:★. Π l:List ·A. ∀ P:List ·A ➔ ★.
-    P (nil ·A)
-    ➔ (∀ x:List ·A. Π a:A. P x ➔ P (cons a x))
+induct : ∀ A:★. Π l:List A. ∀ P:List A ➔ ★.
+    P (nil -A)
+    ➔ (∀ x:List A. Π a:A. P x ➔ P (cons a x))
     ➔ P l
 = λ -A l -P n c. ρ ς (reflect l)
-    - (l.2 ·(λ x. P (to x)) n
+    - (l.2 -(λ x. P (to x)) n
         (λ -x a ih. c -(to x) a ih)).
 
-rec : ∀ A:★. List ·A ➔ ∀ X:★. X ➔ (A ➔ X ➔ X) ➔ X
+rec : ∀ A:★. List A ➔ ∀ X:★. X ➔ (A ➔ X ➔ X) ➔ X
 = λ -A l. l.1.

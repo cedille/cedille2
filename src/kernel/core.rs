@@ -97,7 +97,7 @@ pub enum Term {
     },
     Apply {
         sort: Sort,
-        apply_type: ApplyType,
+        mode: Mode,
         fun: Rc<Term>,
         arg: Rc<Term>
     },
@@ -272,11 +272,10 @@ impl Term {
                 if equation.ambiguous() { format!("φ ({}) - {} {{{}}}", equation_str, input, erasure) }
                 else { format!("φ {} - {} {{{}}}", equation_str, input, erasure) }
             }
-            Term::Apply { apply_type, fun, arg, .. } => {
-                let operator = match apply_type {
-                    ApplyType::Free => "",
-                    ApplyType::TermErased => "-",
-                    ApplyType::TypeErased => "·",
+            Term::Apply { mode, fun, arg, .. } => {
+                let operator = match mode {
+                    Mode::Free => "",
+                    Mode::Erased => "-",
                 };
                 let fun_str = fun.to_string_with_context(ctx.clone());
                 let arg_str = arg.to_string_with_context(ctx);

@@ -45,38 +45,9 @@ impl From<Symbol> for Id {
 }
 
 #[derive(Debug, Hash, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum ApplyType {
-    Free,
-    TermErased,
-    TypeErased
-}
-
-impl ApplyType {
-    pub fn to_mode(self) -> Mode {
-        match self {
-            ApplyType::Free => Mode::Free,
-            ApplyType::TermErased => Mode::Erased,
-            ApplyType::TypeErased => Mode::Erased,
-        }
-    }
-}
-
-#[derive(Debug, Hash, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Mode {
     Erased,
     Free
-}
-
-impl Mode {
-    pub fn to_apply_type(self, sort: &Sort) -> ApplyType {
-        if *sort == Sort::Term { 
-            match self {
-                Mode::Free => ApplyType::Free,
-                Mode::Erased => ApplyType::TermErased
-            }
-        }
-        else { ApplyType::TypeErased }
-    }
 }
 
 #[derive(Debug, Hash, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Display)]
@@ -88,15 +59,6 @@ pub enum Sort {
 }
 
 impl Sort {
-    pub fn promote(self) -> Sort {
-        match self {
-            Sort::Unknown => Sort::Unknown,
-            Sort::Term => Sort::Type,
-            Sort::Type => Sort::Kind,
-            Sort::Kind => Sort::Unknown,
-        }
-    }
-
     pub fn demote(self) -> Sort {
         match self {
             Sort::Unknown => Sort::Unknown,

@@ -24,8 +24,8 @@ term = { term_binder* ~ term_application }
 
 term_application = {
     term_atom
-    ~ (erased_op? ~ term_atom | "·" ~ type_atom)*
-    ~ (erased_op? ~ term | "·" ~ type_)?
+    ~ (erased_op? ~ term_atom | ("·" | "-") ~ type_atom)*
+    ~ (erased_op? ~ term | ("·" | "-") ~ type_)?
 }
 
 term_binder = _{
@@ -76,7 +76,7 @@ type_body = {
     ~ ((erased_arrow | arrow) ~ type_ | "·" ~ type_atom | term_atom)*
 }
 
-type_application = { type_atom ~ ("·" ~ type_atom | term_atom)* }
+type_application = { type_atom ~ ("·"? ~ type_atom | term_atom)* }
 
 type_binder = _{
     type_forall

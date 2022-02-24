@@ -2,8 +2,8 @@ module church/list.
 
 List : ★ ➔ ★ = λ A. ∀ X:★. X ➔ (A ➔ X ➔ X) ➔ X.
 
-nil : ∀ A:★. List·A
-= Λ A. Λ X. λ n. λ c. n.
+nil : ∀ A:★. List A
+= λ -A -X n c. n.
 
-cons : ∀ A:★. A ➔ List·A ➔ List·A
-= Λ A. λ a. λ l. Λ X. λ n. λ c. c a (l·X n c).
+cons : ∀ A:★. A ➔ List A ➔ List A
+= λ -A a l -X n c. c a (l -X n c).

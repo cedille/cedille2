@@ -5,7 +5,6 @@ use std::borrow::Cow::{self, Borrowed, Owned};
 
 use anyhow::Result;
 use thiserror::Error;
-use miette::{Report, GraphicalReportHandler, GraphicalTheme};
 use clap::crate_version;
 use colored::*;
 use directories::ProjectDirs;

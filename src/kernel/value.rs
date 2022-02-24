@@ -29,7 +29,7 @@ impl From<SpineEntry> for EnvEntry {
     fn from(entry: SpineEntry) -> Self {
         EnvEntry {
             name: Symbol::default(),
-            mode: entry.apply_type.to_mode(),
+            mode: entry.mode,
             value: entry.value
         }
     }
@@ -89,24 +89,23 @@ impl ops::Index<Level> for Environment {
 
 #[derive(Debug, Clone)]
 pub struct SpineEntry {
-    pub apply_type: ApplyType,
+    pub mode: Mode,
     pub value: LazyValue,
 }
 
 impl fmt::Display for SpineEntry {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let operator = match self.apply_type {
-            ApplyType::Free => "∞",
-            ApplyType::TermErased => "-",
-            ApplyType::TypeErased => "·",
+        let operator = match self.mode {
+            Mode::Free => "∞",
+            Mode::Erased => "-",
         };
         write!(f, "({}; {})", operator, self.value)
     }
 }
 
 impl SpineEntry {
-    pub fn new(apply_type: ApplyType, value: LazyValue) -> SpineEntry {
-        SpineEntry { apply_type, value }
+    pub fn new(mode: Mode, value: LazyValue) -> SpineEntry {
+        SpineEntry { mode, value }
     }
 }
 
@@ -470,10 +469,10 @@ impl Value {
                 Value::reference(*sort, id.clone(), spine, unfolded)
             },
             Value::Lambda { domain_sort, mode, closure, .. } => {
-                match (*mode, arg.apply_type.to_mode()) {
+                match (*mode, arg.mode) {
                     (Mode::Erased, Mode::Free) => {
                         let input = LazyValue::computed(Value::variable(*domain_sort, closure.env.len()));
-                        let body = closure.eval(db, SpineEntry::new(arg.apply_type, input));
+                        let body = closure.eval(db, SpineEntry::new(arg.mode, input));
                         body.apply(db, arg)
                     }
                     _ => closure.eval(db, arg)
@@ -492,9 +491,9 @@ impl Value {
         else {
             spine.iter_mut().fold(head, |acc, arg| {
                 let sort = acc.sort();
-                let (apply_type, fun) = (arg.apply_type, Rc::new(acc));
+                let (mode, fun) = (arg.mode, Rc::new(acc));
                 let arg = Rc::new(Value::reify(arg.value.force(db), db, level, unfold));
-                Term::Apply { sort, apply_type, fun, arg }
+                Term::Apply { sort, mode, fun, arg }
             })
         }
     }
@@ -586,10 +585,10 @@ impl Value {
             Term::Separate { .. } => Value::eval(db, module, env.clone(), Rc::new(Term::id())),
             Term::Refl { erasure }
             | Term::Cast { erasure, .. } => Value::eval(db, module, env.clone(), erasure.clone()),
-            Term::Apply { apply_type, fun, arg, .. } => {
+            Term::Apply { mode, fun, arg, .. } => {
                 let arg = LazyValue::new(module, env.clone(), arg.clone());
                 let fun = Value::eval(db, module, env.clone(), fun.clone());
-                fun.apply(db, SpineEntry::new(*apply_type, arg))
+                fun.apply(db, SpineEntry::new(*mode, arg))
             },
             Term::Bound { index, .. } => env[index.to_level(env.len())].value.force(db),
             Term::Free { sort, id } => {
@@ -604,8 +603,7 @@ impl Value {
                     match bound {
                         EnvBound::Bound => {
                             let arg = &env[level];
-                            let sort = arg.value.sort(db);
-                            let arg = SpineEntry::new(arg.mode.to_apply_type(&sort), arg.value.clone());
+                            let arg = SpineEntry::new(arg.mode, arg.value.clone());
                             result = result.apply(db, arg);
                         }
                         EnvBound::Defined => { }
@@ -665,8 +663,8 @@ impl Value {
             let (l, r) = (&mut left[i], &mut right[j]);
             match sort {
                 Sort::Term => {
-                    let l_is_erased = l.apply_type.to_mode() == Mode::Erased;
-                    let r_is_erased = r.apply_type.to_mode() == Mode::Erased;
+                    let l_is_erased = l.mode == Mode::Erased;
+                    let r_is_erased = r.mode == Mode::Erased;
                     i += if l_is_erased { 1 } else { 0 };
                     j += if r_is_erased { 1 } else { 0 };
                     if !l_is_erased && !r_is_erased {
@@ -680,7 +678,7 @@ impl Value {
                 Sort::Type | Sort::Kind | Sort::Unknown => {
                     let left = l.value.force(db);
                     let right = r.value.force(db);
-                    result &= l.apply_type == r.apply_type;
+                    result &= l.mode == r.mode;
                     result &= Value::unify(db, env, &left, &right)?;
                     i += 1;
                     j += 1;
@@ -724,18 +722,16 @@ impl Value {
                 && Value::unify(db, env, r1, r2)?)
             }
             // Lambda conversion + eta conversion
-            (Value::Lambda { domain_sort, sort, mode, name, closure, .. }, _) => {
-                let apply_type = mode.to_apply_type(&sort);
+            (Value::Lambda { domain_sort, mode, name, closure, .. }, _) => {
                 let input= LazyValue::computed(Value::variable(*domain_sort, env));
                 let closure = closure.eval(db, EnvEntry::new(*name, *mode, input.clone()));
-                let v = right.apply(db, SpineEntry::new(apply_type, input));
+                let v = right.apply(db, SpineEntry::new(*mode, input));
                 Value::unify(db, env + 1, &closure, &v)
             }
-            (_, Value::Lambda { domain_sort, sort, mode, name, closure, .. }) => {
-                let apply_type = mode.to_apply_type(&sort);
+            (_, Value::Lambda { domain_sort, mode, name, closure, .. }) => {
                 let input = LazyValue::computed(Value::variable(*domain_sort, env));
                 let closure = closure.eval(db, EnvEntry::new(*name, *mode, input.clone()));
-                let v = left.apply(db, SpineEntry::new(apply_type, input));
+                let v = left.apply(db, SpineEntry::new(*mode, input));
                 Value::unify(db, env + 1, &v, &closure)
             }
             // Spines

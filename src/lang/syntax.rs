@@ -193,7 +193,7 @@ pub enum Term {
     },
     Apply {
         span: Span,
-        apply_type: ApplyType,
+        mode: Mode,
         fun: Box<Term>,
         arg: Box<Term>
     },

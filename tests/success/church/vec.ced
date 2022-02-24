@@ -5,8 +5,8 @@ import inductive/nat.
 Vec : ★ ➔ Nat ➔ ★
 = λ A n. ∀ X:Nat ➔ ★. X zero ➔ (∀ n:Nat. A ➔ X n ➔ X (succ n)) ➔ X n.
 
-vnil : ∀ A:★. Vec·A zero
+vnil : ∀ A:★. Vec A zero
 = λ -A -X nil cons. nil.
 
-vcons : ∀ A:★. ∀ n:Nat. A ➔ Vec·A n ➔ Vec·A (succ n)
-= λ -A -n a l -X nil cons. cons -n a (l·X nil cons).
+vcons : ∀ A:★. ∀ n:Nat. A ➔ Vec A n ➔ Vec A (succ n)
+= λ -A -n a l -X nil cons. cons -n a (l -X nil cons).

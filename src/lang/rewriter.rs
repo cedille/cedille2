@@ -63,17 +63,17 @@ pub fn match_term(db: &mut Database
 
 fn match_term_helper(arg: MatchArg, mut_arg: &mut MatchMutArg) -> Result<Term, ()>
 {
-    fn process_spine_entry(arg: MatchArg, mut_arg: &mut MatchMutArg, entry: &SpineEntry) -> Result<(ApplyType, Term), ()> {
+    fn process_spine_entry(arg: MatchArg, mut_arg: &mut MatchMutArg, entry: &SpineEntry) -> Result<(Mode, Term), ()> {
         let term = entry.value.force(mut_arg.db);
         let term = match_term_helper(arg.update(&term), mut_arg)?;
-        Ok((entry.apply_type, term))
+        Ok((entry.mode, term))
     }
 
-    let build_apply = |acc:Term, (apply_type, t)| {
+    let build_apply = |acc:Term, (mode, t)| {
         let sort = acc.sort();
         Term::Apply {
             sort,
-            apply_type,
+            mode,
             fun: Rc::new(acc),
             arg: Rc::new(t),
         }

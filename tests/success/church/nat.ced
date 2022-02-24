@@ -9,4 +9,4 @@ zero2 : Nat ➾ Nat
 = Λ n. zero.
 
 succ : Nat ➔ Nat
-= λ n -X z s. s (n·X z s).
+= λ n -X z s. s (n -X z s).

@@ -535,21 +535,21 @@ fn infer(db: &mut Database, ctx: Context, term: &syntax::Term) -> Result<(Rc<cor
             }
         }
 
-        syntax::Term::Apply { span, apply_type, fun, arg, .. } => {
+        syntax::Term::Apply { span, mode, fun, arg, .. } => {
             let (mut fun_elabed, mut fun_type) = infer(db, ctx.clone(), fun)?;
 
             loop {
                 fun_type = Value::unfold_to_head(db, fun_type);
                 match fun_type.as_ref() {
                     Value::Pi { mode:type_mode, name, closure, .. }
-                    if *type_mode != apply_type.to_mode()
+                    if *type_mode != *mode
                     && *type_mode == Mode::Erased
                     && sort == Sort::Term =>
                     {
                         let meta = Rc::new(fresh_meta(db, ctx.clone()));
                         fun_elabed = Rc::new(core::Term::Apply {
                             sort,
-                            apply_type: type_mode.to_apply_type(&sort),
+                            mode: *type_mode,
                             fun: fun_elabed,
                             arg: meta.clone()
                         });
@@ -564,22 +564,21 @@ fn infer(db: &mut Database, ctx: Context, term: &syntax::Term) -> Result<(Rc<cor
             fun_type = Value::unfold_to_head(db, fun_type);
             let (name, type_mode, domain, closure) = match fun_type.as_ref() {
                 Value::Pi { mode:type_mode, name, domain, closure, .. } => {
-                    if sort == Sort::Term && apply_type.to_mode() != *type_mode {
-                        log::debug!("{:?} {} {:?}", apply_type.to_mode() , "=?".bright_blue(), type_mode);
+                    if sort == Sort::Term && *mode != *type_mode {
+                        log::debug!("{:?} {} {:?}", mode , "=?".bright_blue(), type_mode);
                         return Err(ElabError::ModeMismatch);
                     }
                     (*name, *type_mode, domain.clone(), closure.clone())
                 },
                 _ => {
                     let name = Symbol::from("x");
-                    let type_mode = apply_type.to_mode();
                     let domain = Rc::new(fresh_meta(db, ctx.clone()));
                     let domain = Value::eval(db, ctx.module, ctx.env(), domain);
                     let meta = Rc::new(fresh_meta(db, ctx.bind(db, name, Mode::Free, domain.clone())));
                     let closure = Closure::new(ctx.module, ctx.env(), meta);
-                    let candidate_type = Value::pi(sort, type_mode, name, domain.clone(), closure.clone());
+                    let candidate_type = Value::pi(sort, *mode, name, domain.clone(), closure.clone());
                     unify(db, ctx.clone(), *span, &fun_type, &candidate_type)?;
-                    (name, type_mode, domain, closure)
+                    (name, *mode, domain, closure)
                 }
             };
 
@@ -589,7 +588,7 @@ fn infer(db: &mut Database, ctx: Context, term: &syntax::Term) -> Result<(Rc<cor
             let result_type = closure.eval(db, closure_arg);
             let result = Rc::new(core::Term::Apply {
                 sort,
-                apply_type: *apply_type,
+                mode: *mode,
                 fun: fun_elabed,
                 arg: arg_elabed
             });
@@ -734,14 +733,14 @@ pub fn erase(db: &mut Database, ctx: Context, term: &syntax::Term) -> Result<Rc<
         Term::Cast { erasure, .. } => erase(db, ctx, erasure),
         Term::Induct { .. } => todo!(),
         Term::Match { .. } => todo!(),
-        Term::Apply { apply_type, fun, arg, .. } => {
+        Term::Apply { mode, fun, arg, .. } => {
             let sort = Sort::Term;
-            if *apply_type != ApplyType::Free { erase(db, ctx, fun) }
+            if *mode != Mode::Free { erase(db, ctx, fun) }
             else {
-                let apply_type = ApplyType::Free;
+                let mode = Mode::Free;
                 let fun = erase(db, ctx.clone(), fun)?;
                 let arg = erase(db, ctx, arg)?;
-                Ok(Rc::new(core::Term::Apply { sort, apply_type, fun, arg }))
+                Ok(Rc::new(core::Term::Apply { sort, mode, fun, arg }))
             }
         },
         Term::Variable { span, id, .. } => {
