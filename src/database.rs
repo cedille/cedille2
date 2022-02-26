@@ -285,6 +285,7 @@ impl Database {
         let name = format!("meta/{}", next);
         let name = Symbol::from(name.as_str());
         module_data.metas.insert(name, MetaState::Unsolved);
+        module_data.active_metas.insert(name);
         name
     }
 
@@ -312,7 +313,10 @@ impl Database {
             let meta = module_data.metas.entry(active)
                 .or_insert(MetaState::Frozen);
             match meta {
-                MetaState::Unsolved => *meta = MetaState::Frozen,
+                MetaState::Unsolved => {
+                    log::info!("{} is {}", active, "frozen".bright_blue());
+                    *meta = MetaState::Frozen
+                }
                 _ => { }
             }
         }

@@ -1,0 +1,14 @@
+module church/inference/vec.
+
+import ../../success/church/inductive/nat as Nat.
+import ../../success/church/vec as Vec.
+
+Nat = Nat.Nat.
+zero = Nat.zero.
+succ = Nat.succ.
+
+Vec = Vec.Vec.
+vnil = Vec.vnil.
+vcons = Vec.vcons.
+
+_ = vcons vnil.

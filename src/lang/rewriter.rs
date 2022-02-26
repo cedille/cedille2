@@ -96,8 +96,8 @@ fn match_term_helper(arg: MatchArg, mut_arg: &mut MatchMutArg) -> Result<Term, (
                 }
                 result
             }
-            Value::MetaVariable { name, module, spine }  => {
-                Value::meta(*name, *module, spine.clone()).quote(mut_arg.db, arg.level)
+            Value::MetaVariable { sort, name, module, spine }  => {
+                Value::meta(*sort, *name, *module, spine.clone()).quote(mut_arg.db, arg.level)
             }
             Value::Reference { sort, id, spine, .. } if spine.len() == 0 => {
                 Term::Free { sort: *sort, id: id.clone() }

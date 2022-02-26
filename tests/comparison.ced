@@ -1,6 +1,28 @@
 module comparison.
 
 --------------------------------------------------------------------------------------
+-- Design
+--------------------------------------------------------------------------------------
+-- Cedille2 is based off a ``semantic elaboration'' type checker. In particular, the
+-- design heavily follows Kovacs' smalltt (https://github.com/AndrasKovacs/smalltt)
+
+-- However, Cedille2 is written in Rust and this has some notable problems:
+-- 1. Laziness is not as easily obtained, Rust does not work nearly as well with
+--    closures as Haskell does
+
+-- 2. Rust does not do TCO. This could theoretically be fixed by using a coroutine
+--    style for the semantic domain (i.e. the values) but it is not clear if this
+--    approach is worth the effort in the tradeoff between maintainability and
+--    performance on real-world programs
+
+-- 3. The naive implementation of the semantic domain with Rc has worse memory
+--    performance than the equivalent Haskell (which is a GC backed arena). This also
+--    could theoretically be fixed with a thread-local arena, but initial
+--    experimentation suggests that a full-fledge tracing garbage collected arena
+--    would be needed to really see benefits. As of now there is no mature Rust
+--    crate (library) that does this safely.
+
+--------------------------------------------------------------------------------------
 -- Module System
 --------------------------------------------------------------------------------------
 -- There are various restrictions in the module system of Cedille that are now removed

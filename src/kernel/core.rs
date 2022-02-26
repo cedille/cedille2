@@ -114,6 +114,7 @@ pub enum Term {
         name: Symbol
     },
     InsertedMeta {
+        sort: Sort,
         name: Symbol,
         mask: Vec<EnvBound>
     },
@@ -160,8 +161,8 @@ impl Term {
             Term::Apply { sort, .. }
             | Term::Bound { sort, .. }
             | Term::Free { sort, .. }
-            | Term::Meta { sort, .. } => *sort,
-            Term::InsertedMeta { .. } => Sort::Unknown,
+            | Term::Meta { sort, .. }
+            | Term::InsertedMeta { sort, .. } => *sort,
             Term::Star => Sort::Kind,
             Term::SuperStar => Sort::Kind,
         }

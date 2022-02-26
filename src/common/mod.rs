@@ -44,7 +44,7 @@ impl From<Symbol> for Id {
     fn from(sym: Symbol) -> Self { Id { namespace: vec![], name: sym } }
 }
 
-#[derive(Debug, Hash, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Hash, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Display)]
 pub enum Mode {
     Erased,
     Free

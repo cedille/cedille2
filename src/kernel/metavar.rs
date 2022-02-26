@@ -86,7 +86,7 @@ fn rename(db: &Database, meta: Symbol, renaming: &PartialRenaming, value: Rc<Val
             if *name == meta {
                 Err(())
             } else {
-                let head = Term::Meta { sort, name: meta };
+                let head = Term::Meta { sort, name: *name };
                 rename_spine(db, meta, renaming, head, spine.clone())
             }
         }

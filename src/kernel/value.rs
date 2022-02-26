@@ -174,6 +174,10 @@ impl Closure {
 
 impl fmt::Display for Closure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // let ctx = self.env.iter()
+        //     .map(|EnvEntry { name, .. }| *name)
+        //     .collect::<im_rc::Vector<_>>();
+        // write!(f, "{}", self.code.to_string_with_context(ctx))
         write!(f, "<{};{}>", self.env, self.code)
     }
 }
@@ -187,7 +191,7 @@ struct LazyValueCode {
 
 #[derive(Debug, Clone)]
 pub struct LazyValue {
-    sort: Sort,
+    sort: Option<Sort>,
     value: OnceCell<Rc<Value>>,
     code: RefCell<Option<LazyValueCode>>
 }
@@ -219,7 +223,7 @@ impl From<Rc<Value>> for LazyValue {
 impl LazyValue {
     pub fn new(module: Symbol, env: Environment, term: Rc<Term>) -> LazyValue {
         LazyValue {
-            sort: term.sort(),
+            sort: Some(term.sort()),
             value: OnceCell::new(),
             code: RefCell::new(Some(LazyValueCode { module, env, term }))
         }
@@ -228,13 +232,13 @@ impl LazyValue {
     pub fn sort(&self, db: &Database) -> Sort {
         match self.value.get() {
             Some(value) => value.sort(db),
-            None => self.sort
+            None => self.sort.unwrap()
         }
     }
 
     pub fn computed(value: Rc<Value>) -> LazyValue {
         LazyValue {
-            sort: value.sort(&Database::new()),
+            sort: None,
             value: OnceCell::from(value),
             code: RefCell::new(None)
         }
@@ -270,6 +274,7 @@ pub enum Value {
         spine: Spine
     },
     MetaVariable {
+        sort: Sort,
         name: Symbol,
         module: Symbol,
         spine: Spine
@@ -379,8 +384,8 @@ impl Value {
         Rc::new(Value::Variable { sort, level:level.into(), spine })
     }
 
-    pub fn meta(name: Symbol, module: Symbol, spine: Spine) -> Rc<Value> {
-        Rc::new(Value::MetaVariable { name, module, spine })
+    pub fn meta(sort: Sort, name: Symbol, module: Symbol, spine: Spine) -> Rc<Value> {
+        Rc::new(Value::MetaVariable { sort, name, module, spine })
     }
 
     pub fn reference(sort: Sort, id: Id, spine: Spine, unfolded: Option<Rc<LazyValue>>) -> Rc<Value> {
@@ -414,10 +419,10 @@ impl Value {
     pub fn sort(&self, db: &Database) -> Sort {
         match self {
             Value::Variable { sort, .. } => *sort,
-            Value::MetaVariable { name, module, .. } => {
+            Value::MetaVariable { sort, name, module, .. } => {
                 match db.lookup_meta(*module, *name) {
-                    MetaState::Unsolved | MetaState::Frozen => Sort::Unknown,
-                    MetaState::Solved(ty) => ty.sort(db),
+                    MetaState::Unsolved | MetaState::Frozen => *sort,
+                    MetaState::Solved(val) => val.sort(db),
                 }
             }
             Value::Reference { sort, .. }
@@ -440,12 +445,12 @@ impl Value {
         Value::equality(Value::id(), Value::id())
     }
 
-    pub fn classifier(sort: Sort) -> Rc<Value> {
+    pub fn classifier(sort: Sort) -> Result<Rc<Value>, ()> {
         match sort {
-            Sort::Unknown => unreachable!(),
-            Sort::Term => unreachable!(),
-            Sort::Type => Value::star(),
-            Sort::Kind => Value::super_star(),
+            Sort::Unknown => Err(()),
+            Sort::Term => Err(()),
+            Sort::Type => Ok(Value::star()),
+            Sort::Kind => Ok(Value::super_star()),
         }
     }
 
@@ -456,10 +461,10 @@ impl Value {
                 spine.push_back(arg);
                 Value::variable_with_spine(*sort, *level, spine)
             },
-            Value::MetaVariable { name, module, spine } => {
+            Value::MetaVariable { sort, name, module, spine } => {
                 let mut spine = spine.clone();
                 spine.push_back(arg);
-                Value::meta(*name, *module, spine)
+                Value::meta(*sort, *name, *module, spine)
             }
             Value::Reference { sort, id, spine, unfolded } => {
                 let unfolded = unfolded.as_ref()
@@ -546,9 +551,9 @@ impl Value {
     }
 
     pub fn eval(db: &Database, module: Symbol, mut env: Environment, term: Rc<Term>) -> Rc<Value> {
-        fn eval_meta(db: &Database, module: Symbol, name: Symbol) -> Rc<Value> {
+        fn eval_meta(db: &Database, sort: Sort, module: Symbol, name: Symbol) -> Rc<Value> {
             match db.lookup_meta(module, name) {
-                MetaState::Unsolved | MetaState::Frozen => Value::meta(name, module, Spine::new()),
+                MetaState::Unsolved | MetaState::Frozen => Value::meta(sort, name, module, Spine::new()),
                 MetaState::Solved(v) => v
             }
         }
@@ -595,9 +600,9 @@ impl Value {
                 let unfolded = db.lookup_def(module, id);
                 Value::reference(*sort, id.clone(), Spine::new(), unfolded)
             }
-            Term::Meta { name, .. } => eval_meta(db, module, *name),
-            Term::InsertedMeta { name, mask } => {
-                let mut result = eval_meta(db, module, *name);
+            Term::Meta { sort, name } => eval_meta(db, *sort, module, *name),
+            Term::InsertedMeta { sort, name, mask } => {
+                let mut result = eval_meta(db,*sort,  module, *name);
                 for (level, bound) in mask.iter().enumerate() {
                     let level = Level::from(level);
                     match bound {

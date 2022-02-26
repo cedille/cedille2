@@ -1,76 +1,53 @@
 module basic.
 
 import ../church/inductive/nat as Nat.
+import ../church/inductive/list as List.
+import ../church/inductive/vec as Vec.
 
 Nat = Nat.Nat.
+zero = Nat.zero.
+succ = Nat.succ.
 
-add : Nat ➔ Nat ➔ Nat
-= λ n m. Nat.rec n m Nat.succ.
+List = List.List.
+nil = List.nil.
+cons = List.cons.
+
+Vec = Vec.Vec.
+vnil = Vec.vnil.
+vcons = Vec.vcons.
 
 IdT : ★ = ∀ X:★. X ➔ X.
 
 id : IdT
 = λ -X x. x.
 
-{- _ : IdT
-= id id id id id id id id id id id id id id id id id id id id
-    id id id id id id id id id id id id id id id id id id id id
-    id id id id id id id id id id id id id id id id id id id id
-    id id id id id id id id id id id id id id id id id id id id. -}
+_ : IdT = id id id id.
 
-Pair : ★ ➔ ★ ➔ ★ = λ A B. ∀ X:★. (A ➔ B ➔ X) ➔ X.
+_ : List Nat = nil.
+_ : List _ = (nil -Nat).
+_ = (nil -Nat).
+_ = cons zero nil.
+_ = cons zero (cons zero nil).
+_ = cons (succ zero) (cons (succ (succ zero)) (cons zero nil)).
 
-dup : ∀ X:★. X ➔ Pair·X·X
-= λ -X a -P p. p a a.
+_ : Vec Nat zero = vnil.
+_ : Vec _ _ = (vnil -Nat).
+_ = vnil -Nat.
 
--- meta solutions explode, need smarter (i.e. smaller) meta solutions
-{- _ =
-    [x0 = dup id] -
-    [x1 = dup x0] -
-    [x2 = dup x1] -
-    [x3 = dup x2] -
-    [x4 = dup x3] -
-    [x5 = dup x4] -
-    [x6 = dup x5] -
-    [x7 = dup x6] -
-    [x8 = dup x7] -
-    [x9 = dup x8] -
-    [x10 = dup x9] -
-    [x11 = dup x10] -
-    [x12 = dup x11] -
-    [x13 = dup x12] -
-    [x14 = dup x13] -
-    [x15 = dup x14] -
-    [x16 = dup x15] -
-    [x17 = dup x16] -
-    [x18 = dup x17] -
-    [x19 = dup x18] -
-    [x20 = dup x19] -
-    x20. -}
-    {-[x21 = dup x20] -
-    [x22 = dup x21] -
-    [x23 = dup x22] -
-    [x24 = dup x23] -
-    [x25 = dup x24] -
-    [x26 = dup x25] -
-    [x27 = dup x26] -
-    [x28 = dup x27] -
-    [x29 = dup x28] -
-    [x30 = dup x29] - -}
+v1 = vcons zero vnil.
+v2 = vcons -zero zero vnil.
+_ : {v1 ≃ v2} = β.
+v3 = vcons -_ -_ zero vnil.
+_ : {v2 ≃ v3} = β.
+v4 = vcons -Nat zero vnil.
+_ : {v3 ≃ v4} = β.
+v5 = vcons -_ -zero zero vnil.
+_ : {v4 ≃ v5} = β.
+v6 = vcons -Nat -_ zero vnil.
+_ : {v5 ≃ v6} = β.
+_ : {v6 ≃ v1} = β.
 
-
-import ../church/nat as ChNat.
-import ../church/vec as V.
-
-zero = ChNat.zero.
-vcons = V.vcons.
-vnil = V.vnil.
-{- 
-_ = vcons zero (vcons zero vnil). -}
-
-{- _ : {Nat.succ Nat.zero ≃ Nat.zero} ➾ {
-        add (Nat.succ Nat.zero)
-            (Nat.succ (Nat.succ (Nat.succ (Nat.succ (Nat.succ Nat.zero)))))
-        ≃ Nat.succ (Nat.succ (Nat.succ (Nat.succ (Nat.succ Nat.zero))))}
-= Λ e. ρ e @ x. { add _ x ≃ _ } - β.
- -}
+_ = vcons zero (vcons zero vnil).
+_ = vcons zero (vcons zero (vcons zero vnil)).
+_ = vcons zero (vcons zero (vcons zero (vcons zero vnil))).
+_ = vcons (succ zero) (vcons (succ zero) (vcons zero vnil)).
