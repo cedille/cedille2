@@ -31,7 +31,6 @@ mod tests {
         let path = Path::new(builder.as_str());
         let result = db.load_module_from_path(path);
 
-        println!("{:?}", result);
         if expected_success {
             assert!(result.is_ok())
         } else {

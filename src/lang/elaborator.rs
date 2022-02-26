@@ -453,11 +453,9 @@ fn check(db: &mut Database, ctx: Context, term: &syntax::Term, ty: Rc<Value>) ->
             let (mut result, mut inferred_type) = infer(db, ctx.clone(), term)?;
 
             loop {
-                match (ty.as_ref(), inferred_type.as_ref()) {
-                    (Value::Pi { mode, .. }, _) if *mode == Mode::Erased => break,
-                    (_, Value::Pi { mode, name, domain, closure, .. })
-                    if *mode == Mode::Erased
-                    && result.sort() == Sort::Term =>
+                match (result.as_ref(), inferred_type.as_ref()) {
+                    (core::Term::Free { sort, .. }, Value::Pi { mode, name, domain, closure, .. })
+                    if *mode == Mode::Erased && *sort == Sort::Term =>
                     {
                         let sort = domain.sort(db).demote();
                         let meta = Rc::new(fresh_meta(db, ctx.clone(), sort));

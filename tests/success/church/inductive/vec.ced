@@ -9,8 +9,8 @@ succ = Nat.succ.
 
 Inductive : Π A:★. Π n:Nat. Ch.Vec A n ➔ ★
 = λ A n v. ∀ P: Π n:Nat. Ch.Vec A n ➔ ★.
-    P zero (Ch.vnil -A)
-    ➔ (∀ m:Nat. ∀ x: Ch.Vec A m. Π a:A. P m x ➔ P (succ m) (Ch.vcons -A -m a x))
+    P zero Ch.vnil
+    ➔ (∀ m:Nat. ∀ x: Ch.Vec A m. Π a:A. P m x ➔ P (succ m) (Ch.vcons -m a x))
     ➔ P n v.
 
 Vec : ★ ➔ Nat ➔ ★ = λ A n. ι v:Ch.Vec A n. Inductive A n v.
@@ -23,7 +23,7 @@ vcons : ∀ A:★. ∀ n:Nat. A ➔ Vec A n ➔ Vec A (succ n)
     , λ -P nil c. c -n -x.1 a (x.2 -P nil c)].
 
 to : ∀ A:★. ∀ n:Nat. Ch.Vec A n ➔ Vec A n
-= λ -A -n v. v -(Vec A) (vnil -A) (vcons -A).
+= λ -A -n v. v -(Vec A) vnil vcons.
 
 reflect : ∀ A:★. ∀ n:Nat. Π v:Vec A n. { to v ≃ v }
 = λ -A -n v. v.2 -(λ _ x. {to x ≃ x}) β
@@ -31,8 +31,8 @@ reflect : ∀ A:★. ∀ n:Nat. Π v:Vec A n. { to v ≃ v }
         - ρ ih - β).
 
 induct : ∀ A:★. ∀ n:Nat. Π v:Vec A n. ∀ P: Π n:Nat. Vec A n ➔ ★.
-    P zero (vnil -A)
-    ➔ (∀ m:Nat. ∀ x: Vec A m. Π a:A. P m x ➔ P (succ m) (vcons -A -m a x))
+    P zero vnil
+    ➔ (∀ m:Nat. ∀ x: Vec A m. Π a:A. P m x ➔ P (succ m) (vcons -m a x))
     ➔ P n v
 = λ -A -n v -P nil cons. ρ ς (reflect v)
     - (v.2 ·(λ m x. P m (to x)) nil
