@@ -49,6 +49,7 @@ term_annotate = { "χ" ~ type_ ~ "-" }
 
 term_atom = {
     term_intersection ~ proj*
+    | term_motive
     | term_refl
     | term_cast ~ proj*
     | term_induction ~ proj*
@@ -62,6 +63,7 @@ term_atom = {
 }
 
 term_intersection = { "[" ~ term ~ "," ~ term ~ "]" }
+term_motive = { "θ" ~ "<" ~ qual_id ~ ">" ~ term_atom }
 term_refl = { "β" ~ term_guide? ~ ("{" ~ term ~ "}")? }
 term_cast = { "φ" ~ term_atom ~ "-" ~ term_application ~ "{" ~ term ~ "}" }
 term_induction = { "μ" ~ id ~ "." ~ term_application ~ ("@" ~ type_)? ~ "{" ~ cases ~ "}" }

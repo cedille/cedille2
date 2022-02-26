@@ -399,6 +399,12 @@ fn term_atom(atom: Pair<Rule>) -> Term {
                 let second = Box::new(inner.required(term));
                 Some(Term::Intersect { span, first, second })
             },
+            Rule::term_motive => {
+                let mut inner = p.into_inner();
+                let id = inner.required(qual_id);
+                let body = Box::new(inner.required(term_atom));
+                Some(Term::Motive { span, id, body })
+            }
             Rule::term_refl => {
                 let mut inner = p.into_inner();
                 let guide = inner.optional(Rule::term_guide, term_guide).map(Box::new);

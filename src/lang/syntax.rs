@@ -134,6 +134,11 @@ pub enum Term {
         left: Box<Term>,
         right: Box<Term>
     },
+    Motive {
+        span: Span,
+        id: Id,
+        body: Box<Term>
+    },
     Rewrite {
         span: Span,
         reduce: bool,
@@ -227,6 +232,7 @@ impl Term {
             | Term::Pi { span, .. }
             | Term::IntersectType { span, .. }
             | Term::Equality { span, .. }
+            | Term::Motive { span, .. }
             | Term::Rewrite { span, .. }
             | Term::Annotate { span, .. }
             | Term::Project { span, .. }

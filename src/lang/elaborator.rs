@@ -380,6 +380,33 @@ fn check(db: &mut Database, ctx: Context, term: &syntax::Term, ty: Rc<Value>) ->
             }
         }
 
+        (syntax::Term::Motive { span, id, body }, _) => {
+            println!("hello");
+            let (id_type, level) = lookup_type(db, &ctx, (0, 0), id)?;
+            let level = level.ok_or(ElabError::Unknown)?;
+            let (body_elabed, body_type) = infer(db, ctx.clone(), body)?;
+            match body_type.as_ref() {
+                Value::Pi { mode, domain, closure, .. }
+                if *mode == Mode::Erased =>
+                {
+                    unify(db, ctx.clone(), (0, 0), &id_type, domain)?;
+                    let input = EnvEntry::new(id.name, *mode, Value::variable(Sort::Term, level));
+                    unify(db, ctx.clone(), (0, 0), &closure.eval(db, input), &ty)?;
+                    let input = EnvEntry::new(id.name, *mode, Value::variable(Sort::Term, ctx.env_lvl()));
+                    let arg = closure.eval(db, input).quote(db, ctx.env_lvl());
+                    println!("{}", body_elabed);
+                    println!("{}", arg);
+                    Ok(Rc::new(core::Term::Apply {
+                        sort: Sort::Term,
+                        mode: Mode::Erased,
+                        fun: body_elabed,
+                        arg: Rc::new(arg)
+                    }))
+                },
+                _ => Err(ElabError::Unknown)
+            }
+        }
+
         (syntax::Term::Rewrite { span, equation, guide, body, occurrence, .. },
             _) =>
         {
@@ -455,7 +482,8 @@ fn check(db: &mut Database, ctx: Context, term: &syntax::Term, ty: Rc<Value>) ->
             loop {
                 match (result.as_ref(), inferred_type.as_ref()) {
                     (core::Term::Free { sort, .. }, Value::Pi { mode, name, domain, closure, .. })
-                    if *mode == Mode::Erased && *sort == Sort::Term =>
+                    if *mode == Mode::Erased && *sort == Sort::Term
+                    && !matches!(domain.as_ref(), Value::Lambda { .. }) =>
                     {
                         let sort = domain.sort(db).demote();
                         let meta = Rc::new(fresh_meta(db, ctx.clone(), sort));
@@ -769,9 +797,10 @@ pub fn erase(db: &mut Database, ctx: Context, term: &syntax::Term) -> Result<Rc<
         Term::Pi { .. }
         | Term::IntersectType { .. }
         | Term::Equality { .. } => Err(ElabError::ExpectedTerm { span:term.span() }),
-        Term::Rewrite { body, .. } => erase(db, ctx, body),
-        Term::Annotate { body, .. } => erase(db, ctx, body),
-        Term::Project { body, .. } => erase(db, ctx, body),
+        Term::Motive { body, .. }
+        | Term::Rewrite { body, .. }
+        | Term::Annotate { body, .. }
+        | Term::Project { body, .. } => erase(db, ctx, body),
         Term::Symmetry { .. } => unreachable!(),
         Term::Intersect { first, .. } => erase(db, ctx, first),
         Term::Separate { .. } => Ok(Rc::new(core::Term::id())),
@@ -845,7 +874,8 @@ fn infer_sort(db: &Database, ctx: Context, term: &syntax::Term) -> Sort {
         }
         syntax::Term::IntersectType { .. }
         | syntax::Term::Equality { .. } => Sort::Type,
-        syntax::Term::Rewrite { .. } => Sort::Term,
+        syntax::Term::Motive { .. }
+        | syntax::Term::Rewrite { .. } => Sort::Term,
         syntax::Term::Annotate { body, .. } => infer_sort(db, ctx.clone(), body),
         syntax::Term::Project { .. } => Sort::Term,
         syntax::Term::Symmetry { .. }
