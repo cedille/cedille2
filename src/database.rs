@@ -31,7 +31,7 @@ pub enum DatabaseError {
 #[derive(Debug)]
 struct DeclValues {
     type_value: Rc<LazyValue>,
-    def_value: Rc<LazyValue>
+    def_value: Option<Rc<LazyValue>>
 }
 
 #[derive(Debug)]
@@ -84,7 +84,7 @@ impl Database {
         }
     }
 
-    pub fn insert_decl(&mut self, module: Symbol, decl: core::Decl) -> Result<(), CedilleError> {
+    pub fn insert_decl(&mut self, module: Symbol, opaque: bool, decl: core::Decl) -> Result<(), CedilleError> {
         self.freeze_active_metas(module);
         if decl.name == Symbol::from("_") { return Ok(()) }
         let module_data = self.modules.get_mut(&module).unwrap();
@@ -95,7 +95,8 @@ impl Database {
             module_data.scope.insert(id.clone());
             module_data.exports.insert(id);
             let type_value = Rc::new(LazyValue::new(module, Environment::new(), decl.ty.clone()));
-            let def_value = Rc::new(LazyValue::new(module, Environment::new(), decl.body.clone()));
+            let def_value = if opaque { None } 
+                else { Some(Rc::new(LazyValue::new(module, Environment::new(), decl.body.clone()))) };
             let decl_values = DeclValues { type_value, def_value };
             module_data.values.insert(decl.name, decl_values);
             Ok(())
@@ -261,7 +262,7 @@ impl Database {
     pub fn lookup_def(&self, module: Symbol, id: &Id) -> Option<Rc<LazyValue>> {
         let mut namespace = id.namespace.clone();
         let decl = self.lookup_decl(true, module, &mut namespace, id.name);
-        decl.map(|decl| decl.def_value.clone())
+        decl.map(|decl| decl.def_value.clone()).flatten()
     }
 
     pub fn lookup_type(&self, module: Symbol, id: &Id) -> Option<Rc<LazyValue>> {

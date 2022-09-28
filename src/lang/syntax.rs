@@ -40,6 +40,7 @@ pub struct Import {
 #[derive(Debug, Clone)]
 pub struct DefineTerm {
     pub span: Span,
+    pub opaque: bool,
     pub name: Symbol,
     pub anno: Option<Box<Term>>,
     pub body: Box<Term>

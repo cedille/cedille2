@@ -5,7 +5,6 @@ use std::error::Error;
 
 use miette::{GraphicalReportHandler, GraphicalTheme};
 use rustyline::error::ReadlineError;
-use pest;
 
 use crate::lang::parser;
 use crate::lang::elaborator::ElabError;
@@ -35,9 +34,9 @@ impl fmt::Display for CedilleError {
                     .render_report(&mut out, e)?;
                 out.fmt(f)
             }
-            CedilleError::Database(_) => todo!(),
-            CedilleError::Repl(_) => todo!(),
-            CedilleError::External(_) => todo!(),
+            CedilleError::Database(e) => e.fmt(f),
+            CedilleError::Repl(e) => e.fmt(f),
+            CedilleError::External(e) => e.fmt(f),
             CedilleError::Collection(list) => {
                 for e in list {
                     e.fmt(f)?;

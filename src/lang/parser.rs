@@ -184,19 +184,21 @@ fn param(pairs: Pair<Rule>) -> Parameter {
 fn define_term(def: Pair<Rule>) -> DefineTerm {
     let span = span(def.as_span());
     let mut inner = def.into_inner();
+    let opaque = inner.flag(Rule::opaque);
     let name = inner.required(id);
     let anno = inner.optional(Rule::type_, type_).map(Box::new);
     let body = Box::new(inner.required(term));
-    DefineTerm { span, name, anno, body }
+    DefineTerm { span, opaque, name, anno, body }
 }
 
 fn define_type(def: Pair<Rule>) -> DefineTerm {
     let span = span(def.as_span());
     let mut inner = def.into_inner();
+    let opaque = inner.flag(Rule::opaque);
     let name = inner.required(id);
     let anno = inner.optional(Rule::kind, kind).map(Box::new);
     let body = Box::new(inner.required(type_));
-    DefineTerm { span, name, anno, body }
+    DefineTerm { span, opaque, name, anno, body }
 }
 
 fn define_kind(def: Pair<Rule>) -> DefineKind {

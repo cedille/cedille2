@@ -110,6 +110,9 @@ pub enum ElabError {
     #[error("Rewrite Failed")]
     #[diagnostic()]
     RewriteFailed,
+    #[error("Opaque definitions must have a valid type or kind")]
+    #[diagnostic()]
+    OpaqueMissingAnnotation,
     #[error("Unknown error!")]
     #[diagnostic()]
     Unknown
@@ -212,12 +215,16 @@ fn elaborate_decl(db: &mut Database, module: Symbol, params: &[syntax::Parameter
                 Err(ElabError::DefinitionCollision.into())
             } else {
                 let ctx = Context::new(module);
-                let result = elaborate_define_term(db, ctx, params, def);
+                let result = if def.opaque {
+                    elaborate_opaque_define_term(db, ctx, params, def)
+                } else {
+                    elaborate_define_term(db, ctx, params, def)
+                };
                 if let Ok(ref elabed) = result {
                     log::info!("\n{}\n{}\n{}", def.as_str(db.text_ref(module)), "elaborated to".green(), elabed);
                 }
                 match result {
-                    Ok(decl) => db.insert_decl(module, decl),
+                    Ok(decl) => db.insert_decl(module, def.opaque, decl),
                     e => e.map(|_| ()).map_err(|e| e.into()),
                 }
             }
@@ -237,13 +244,30 @@ fn elaborate_decl(db: &mut Database, module: Symbol, params: &[syntax::Parameter
     }
 }
 
+fn elaborate_opaque_define_term(db: &mut Database, ctx: Context, _params: &[syntax::Parameter], def: &syntax::DefineTerm) -> Result<core::Decl, ElabError> {
+    if let Some(anno) = &def.anno {
+        let anno_sort = infer_sort(db, ctx.clone(), anno);
+        let anno_classifier = Value::classifier(anno_sort).map_err(|_| ElabError::Unknown)?;
+        let ty = check(db, ctx, anno, anno_classifier)?;
+        let name = def.name;
+        let id = Id::from(def.name);
+        let body = Rc::new(core::Term::Free {
+            sort: anno_sort,
+            id
+        });
+        Ok(core::Decl { name, ty, body })
+    } else {
+        Err(ElabError::OpaqueMissingAnnotation)
+    }
+}
+
 fn elaborate_define_term(db: &mut Database, ctx: Context, _params: &[syntax::Parameter], def: &syntax::DefineTerm) -> Result<core::Decl, ElabError> {
     let (name, ty, body) = if let Some(anno) = &def.anno {
         let anno_sort = infer_sort(db, ctx.clone(), anno);
         let anno_classifier = Value::classifier(anno_sort).map_err(|_| ElabError::Unknown)?;
         let anno_elabed = check(db, ctx.clone(), anno, anno_classifier)?;
         let anno_value = Value::eval(db, ctx.module, ctx.env(), anno_elabed.clone());
-        let body = check(db, ctx.clone(), &def.body, anno_value)?;
+        let body = check(db, ctx, &def.body, anno_value)?;
         (def.name, anno_elabed, body)
     } else {
         let (body, inferred) = infer(db, ctx.clone(), &def.body)?;
@@ -630,7 +654,7 @@ fn infer(db: &mut Database, ctx: Context, term: &syntax::Term) -> Result<(Rc<cor
                 }
             };
 
-            let arg_elabed = check(db, ctx.clone(), arg, domain.clone())?;
+            let arg_elabed = check(db, ctx.clone(), arg, domain)?;
             let arg_value = LazyValue::new(module, ctx.env(), arg_elabed.clone());
             let closure_arg = EnvEntry::new(name, type_mode, arg_value);
             let result_type = closure.eval(db, closure_arg);

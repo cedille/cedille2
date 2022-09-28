@@ -1,0 +1,13 @@
+module opaque3.
+
+Top : ★ = { β ≃ β }.
+
+opaque t1 : Top = ●.
+opaque t2 : Top = β.
+
+_ : {t1 ≃ t1} = β.
+_ : {t2 ≃ t2} = β.
+
+import ../../success/core/not.
+
+_ : Not { t1 ≃ t2 } = λ -n -X. δ - n.

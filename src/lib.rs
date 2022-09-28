@@ -25,7 +25,7 @@ mod tests {
         let mut builder = String::new();
         if expected_success { builder.push_str("tests/success/"); }
         else { builder.push_str("tests/failure/"); }
-        let path = path.replace("_", "/");
+        let path = path.replace('_', "/");
         builder.push_str(path.as_str());
         builder.push_str(".ced");
         let path = Path::new(builder.as_str());
@@ -65,6 +65,7 @@ mod tests {
     test_file_success!(core_equality);
     test_file_success!(core_rewrites);
     test_file_success!(core_etalong);
+    test_file_success!(opaque);
 
     test_file_success!(church_bool);
     test_file_success!(church_inductive_bool);
@@ -89,6 +90,9 @@ mod tests {
 
     test_file_failure!(core_intersect);
     test_file_failure!(core_delta);
+    test_file_failure!(opaque_opaque1);
+    test_file_failure!(opaque_opaque2);
+    test_file_failure!(opaque_opaque3);
 
     test_file_failure!(module_cycle);
     test_file_failure!(module_mixed);

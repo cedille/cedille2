@@ -1,0 +1,9 @@
+module opaque1.
+
+Top : ★ = { β ≃ β }.
+
+opaque t1 : Top = ●.
+opaque t2 : Top = β.
+
+_ : {t1 ≃ t2} = β.
+

@@ -809,8 +809,17 @@ impl Value {
                     None => false
                 }
             }
-            Value::MetaVariable { spine, .. } => Value::spine_is_closed(db, spine, env),
-            Value::Reference { spine, .. } => Value::spine_is_closed(db, spine, env),
+            Value::MetaVariable { spine, name, module, .. } => {
+                match db.lookup_meta(*module, *name) {
+                    MetaState::Unsolved | MetaState::Frozen => false,
+                    MetaState::Solved(v) => v.is_closed(db) && Value::spine_is_closed(db, spine, env),
+                }
+            }
+            Value::Reference { spine, unfolded, .. } => {
+                // If there is no unfolded definition, then the reference is free
+                if unfolded.is_some() { Value::spine_is_closed(db, spine, env) }
+                else { false }
+            }
             Value::Lambda { domain_sort, name, closure, .. } => {
                 let input = LazyValue::computed(Value::variable(*domain_sort, env.len()));
                 let entry = EnvEntry::new(*name, Mode::Free, input);

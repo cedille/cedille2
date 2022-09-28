@@ -14,8 +14,8 @@ decl = _{
 }
 
 import = { "import" ~ public? ~ path ~ ("as" ~ id)? ~ import_argument* }
-define_term = { bound_id ~ ((":" | "◂") ~ type_)? ~ "=" ~ term }
-define_type = { bound_id ~ ((":" | "◂") ~ kind)? ~ "=" ~ type_ }
+define_term = { opaque? ~ bound_id ~ ((":" | "◂") ~ type_)? ~ "=" ~ term }
+define_type = { opaque? ~ bound_id ~ ((":" | "◂") ~ kind)? ~ "=" ~ type_ }
 define_kind = { kind_id ~ kind_arg* ~ "=" ~ kind }
 define_datatype = { "data" ~ id ~ param* ~ ":" ~ kind ~ "=" ~ ctors }
 normalize_command = { "#normalize" ~ term_atom }
@@ -73,7 +73,7 @@ type_ = { type_binder* ~ type_body }
 
 type_body = { 
     type_atom
-    ~ ((erased_arrow | arrow) ~ type_ | "·" ~ type_atom | term_atom)*
+    ~ ((erased_arrow | arrow) ~ type_ | "·"? ~ type_atom | term_atom)*
 }
 
 type_application = { type_atom ~ ("·"? ~ type_atom | term_atom)* }
@@ -155,6 +155,7 @@ star = @{ "★" }
 proj = @{ ".1" | ".2" }
 reduce = @{ "+" }
 public = @{ "public" }
+opaque = @{ "opaque" }
 mu_prime = @{ "μ'" }
 
 alpha = @{ 'a'..'z' | 'A'..'Z' }
