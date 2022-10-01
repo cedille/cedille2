@@ -102,8 +102,10 @@ pub fn module(pairs: Pairs<Rule>) -> Module {
             Rule::import => Some(Decl::Import(import(decl))),
             Rule::normalize_command => {
                 let mut inner = decl.into_inner();
+                let erase = inner.flag(Rule::erase);
+                let print = inner.flag(Rule::print);
                 let term = inner.required(term_atom);
-                Some(Decl::NormalizeCommand(term))
+                Some(Decl::NormalizeCommand(term, erase, print))
             }
             _ => None
         }

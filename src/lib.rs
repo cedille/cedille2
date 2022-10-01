@@ -90,6 +90,8 @@ mod tests {
 
     test_file_failure!(core_intersect);
     test_file_failure!(core_delta);
+    test_file_failure!(core_erasure1);
+    test_file_failure!(core_erasure2);
     test_file_failure!(opaque_opaque1);
     test_file_failure!(opaque_opaque2);
     test_file_failure!(opaque_opaque3);

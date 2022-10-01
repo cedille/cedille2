@@ -52,7 +52,15 @@ struct ModuleData {
     exports: HashSet<Id>,
     scope: HashSet<Id>,
     last_modified: time::SystemTime,
+    contains_error: bool
 }
+
+impl ModuleData {
+    fn flag_error(&mut self) {
+        self.contains_error = true;
+    }
+}
+
 
 #[derive(Debug)]
 pub struct Database {
@@ -105,17 +113,20 @@ impl Database {
 
     fn loaded(&self, module: Symbol) -> bool {
         if let Some(data) = self.modules.get(&module) {
-            let mut imports_loaded = true;
-            for ImportData { path, .. } in data.imports.iter() {
-                imports_loaded = imports_loaded && self.loaded(*path);
-            }
+            if data.contains_error { false }
+            else {
+                let mut imports_loaded = true;
+                for ImportData { path, .. } in data.imports.iter() {
+                    imports_loaded = imports_loaded && self.loaded(*path);
+                }
 
-            let current_modified = Path::new(module.as_ref())
-                .metadata()
-                .and_then(|m| m.modified())
-                .unwrap_or_else(|_| time::SystemTime::now());
-            
-            imports_loaded && current_modified <= data.last_modified
+                let current_modified = Path::new(module.as_ref())
+                    .metadata()
+                    .and_then(|m| m.modified())
+                    .unwrap_or_else(|_| time::SystemTime::now());
+                
+                imports_loaded && current_modified <= data.last_modified
+            }
         } else { false }
     }
 
@@ -174,6 +185,9 @@ impl Database {
             let result = self.load_module_inner(sym);
             self.queued.pop();
             log::info!("\nLoaded {}\nin {}ms", *sym, now.elapsed().as_millis());
+            if result.is_err() {
+                if let Some(module) = self.modules.get_mut(&sym) { module.flag_error() }
+            }
             result
         }
     }
@@ -197,7 +211,8 @@ impl Database {
             imports: Vec::new(),
             exports: HashSet::new(),
             scope: HashSet::new(),
-            last_modified
+            last_modified,
+            contains_error: false
         });
 
         let tree = parser::parse(self.text_ref(sym))?;

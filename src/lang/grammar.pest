@@ -18,7 +18,7 @@ define_term = { opaque? ~ bound_id ~ ((":" | "◂") ~ type_)? ~ "=" ~ term }
 define_type = { opaque? ~ bound_id ~ ((":" | "◂") ~ kind)? ~ "=" ~ type_ }
 define_kind = { kind_id ~ kind_arg* ~ "=" ~ kind }
 define_datatype = { "data" ~ id ~ param* ~ ":" ~ kind ~ "=" ~ ctors }
-normalize_command = { "#normalize" ~ term_atom }
+normalize_command = { "#normalize" ~ erase? ~ print? ~ term_atom }
 
 term = { term_binder* ~ term_application }
 
@@ -73,10 +73,10 @@ type_ = { type_binder* ~ type_body }
 
 type_body = { 
     type_atom
-    ~ ((erased_arrow | arrow) ~ type_ | "·"? ~ type_atom | term_atom)*
+    ~ ((erased_arrow | arrow) ~ type_ | term_atom | "·"? ~ type_atom )*
 }
 
-type_application = { type_atom ~ ("·"? ~ type_atom | term_atom)* }
+type_application = { type_atom ~ (term_atom | "·"? ~ type_atom)* }
 
 type_binder = _{
     type_forall
@@ -157,6 +157,9 @@ reduce = @{ "+" }
 public = @{ "public" }
 opaque = @{ "opaque" }
 mu_prime = @{ "μ'" }
+
+print = @{ "print" }
+erase = @{ "erase" }
 
 alpha = @{ 'a'..'z' | 'A'..'Z' }
 greek = @{ 'α'..'ω' | 'Α'..'Ω' }

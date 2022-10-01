@@ -1,0 +1,7 @@
+module erasure1.
+
+id : ∀ T:★. T ➔ T
+= λ -T t. t.
+
+test : ∀ T:★. T ➔ T
+= λ -T t. id T t.

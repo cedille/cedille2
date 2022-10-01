@@ -144,6 +144,61 @@ impl Term {
         Term::Lambda { sort, domain_sort, mode, name, body }
     }
 
+    // This is meant for pretty-printing erased terms, we intentionally don't erase lambdas so that we don't have to
+    // fix indices, plus the extra lambda abstractions don't obfuscate output very much
+    pub fn partial_erase(&self) -> Term {
+        match self {
+            Term::Lambda { sort, domain_sort, mode, name, body } => {
+                Term::Lambda {
+                    sort:*sort,
+                    domain_sort:*domain_sort,
+                    mode:*mode,
+                    name:*name,
+                    body:Rc::new(body.partial_erase())
+                }
+            }
+            Term::Let { sort, mode, name, let_body, body } => {
+                if *mode == Mode::Erased { body.partial_erase() }
+                else {
+                    Term::Let {
+                        sort:*sort,
+                        mode:*mode,
+                        name:*name,
+                        let_body:Rc::new(let_body.partial_erase()),
+                        body:Rc::new(body.partial_erase())
+                    }
+                }
+            }
+            t @ Term::Pi { .. }
+            | t @ Term::IntersectType { .. }
+            | t @ Term::Equality { .. } => t.clone(),
+            Term::Rewrite { body, .. } => body.partial_erase(),
+            Term::Annotate { body, .. } => body.partial_erase(),
+            Term::Project { body, .. } => body.partial_erase(),
+            Term::Intersect { first, .. } => first.partial_erase(),
+            Term::Separate { .. } => Term::id(),
+            Term::Refl { erasure } => erasure.partial_erase(),
+            Term::Cast { erasure, .. } => erasure.partial_erase(),
+            Term::Apply { sort, mode, fun, arg } => {
+                if *mode == Mode::Erased { fun.partial_erase() }
+                else {
+                    Term::Apply {
+                        sort:*sort,
+                        mode:*mode,
+                        fun:Rc::new(fun.partial_erase()),
+                        arg:Rc::new(arg.partial_erase())
+                    }
+                }
+            }
+            t @ Term::Bound { .. }
+            | t @ Term::Free { .. }
+            | t @ Term::Meta { .. }
+            | t @ Term::InsertedMeta { .. }
+            | t @ Term::Star
+            | t @ Term::SuperStar => t.clone()
+        }
+    }
+
     pub fn sort(&self) -> Sort {
         match self {
             Term::Lambda { sort, .. }
