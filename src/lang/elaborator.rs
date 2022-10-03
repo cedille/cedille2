@@ -82,7 +82,12 @@ pub enum ElabError {
     },
     #[error("Definition Collision")]
     #[diagnostic()]
-    DefinitionCollision,
+    DefinitionCollision {
+        #[source_code]
+        src: Arc<String>,
+        #[label("Defined here")]
+        span: SourceSpan,
+    },
     #[error("Missing Name")]
     #[diagnostic()]
     MissingName {
@@ -103,7 +108,12 @@ pub enum ElabError {
     },
     #[error("Inference Failed")]
     #[diagnostic()]
-    InferenceFailed { span: Span },
+    InferenceFailed {
+        #[source_code]
+        src: Arc<String>,
+        #[label("unable to infer type of term")]
+        span: SourceSpan
+    },
     #[error("Unsupported Projection")]
     #[diagnostic()]
     UnsupportedProjection,
@@ -194,7 +204,8 @@ impl Context {
         let mut result = String::new();
         for i in 0..self.names.len() {
             result.push('\n');
-            let type_string = self.types[i].quote(db, self.env_lvl())
+            let ty = self.types[i].clone();
+            let type_string = ty.quote(db, self.env_lvl())
                 .to_string_with_context(self.names.clone());
             let mode_prefix = if self.modes[i] == Mode::Erased { "-" } else { "" };
             result.push_str(format!("{}{}: {}", mode_prefix, self.names[i], type_string).as_str());
@@ -231,7 +242,10 @@ fn elaborate_decl(db: &mut Database, module: Symbol, params: &[syntax::Parameter
     match decl {
         syntax::Decl::Term(def) => {
             if db.lookup_type(module, &Id::from(def.name)).is_some() {
-                Err(ElabError::DefinitionCollision.into())
+                Err(ElabError::DefinitionCollision {
+                    src: db.text(module),
+                    span: source_span(db, module, def.span)
+                }.into())
             } else {
                 let ctx = Context::new(module);
                 let result = if def.opaque {
@@ -352,6 +366,7 @@ fn check(db: &mut Database, ctx: Context, term: &syntax::Term, ty: Rc<Value>) ->
         } else { check(db, ctx, body, ty) }
     }
 
+    let ty_folded = ty.clone();
     let ty = Value::unfold_to_head(db, ty);
     log::trace!("\n{}\n  {}\n{} {}", ctx.env(), term.as_str(db.text_ref(ctx.module)), "<=".bright_blue(), ty);
     match (term, ty.as_ref()) {
@@ -498,7 +513,7 @@ fn check(db: &mut Database, ctx: Context, term: &syntax::Term, ty: Rc<Value>) ->
             Err(ElabError::Hole {
                 src: db.text(ctx.module),
                 span: source_span(db, ctx.module, *span),
-                expected_type: ty.quote(db, ctx.env_lvl())
+                expected_type: ty_folded.quote(db, ctx.env_lvl())
                     .to_string_with_context(ctx.names.clone()),
                 context: ctx.to_string(db)
             })
@@ -783,7 +798,13 @@ fn infer(db: &mut Database, ctx: Context, term: &syntax::Term) -> Result<(Rc<cor
             Ok((result, anno_value))
         }
 
-        _ => Err(ElabError::InferenceFailed { span:term.span() })
+        _ => {
+            dbg!(term);
+            Err(ElabError::InferenceFailed {
+                src: db.text(module),
+                span: source_span(db, module, term.span())
+            })
+        }
     };
     if let Ok((_, ref inferred_type)) = result {
         log::trace!("\n{}\n  {}\n{} {}", ctx.env(), term.as_str(db.text_ref(module)), "=>".bright_blue(), inferred_type);

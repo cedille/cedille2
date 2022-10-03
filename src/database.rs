@@ -17,7 +17,7 @@ use crate::kernel::metavar::MetaState;
 use crate::kernel::value::{Environment, LazyValue, Value, ValueEx};
 use crate::lang::syntax;
 use crate::lang::parser;
-use crate::lang::elaborator::{self, ElabError};
+use crate::lang::elaborator;
 use crate::error::CedilleError;
 
 #[derive(Debug, Error)]
@@ -25,7 +25,18 @@ pub enum DatabaseError {
     #[error("Non unicode path {path:?}")]
     NonUnicodePath { path: PathBuf },
     #[error("Cycle in {module}")]
-    Cycle { module: String }
+    Cycle { module: String },
+    #[error("The module {current_module} has conflicting definitions with the import {imported_module} which are: {collisions}")]
+    ImportCollision {
+        current_module: String,
+        imported_module: String,
+        collisions: String
+    },
+    #[error("The name {id} already exists in the module {current_module}")]
+    DeclCollision {
+        current_module: String,
+        id: String
+    }
 }
 
 #[derive(Debug)]
@@ -73,7 +84,7 @@ pub fn path_to_module_symbol<P: AsRef<Path>>(prefix: P, path: P) -> Result<Symbo
         let windows_fix= path.as_ref()
             .to_str()
             .ok_or(DatabaseError::NonUnicodePath { path: path.as_ref().into() })?
-            .replace("/", "\\");
+            .replace('/', "\\");
         PathBuf::from(windows_fix)
     } else { path.as_ref().into() };
     let mut result: PathBuf = prefix.as_ref().into();
@@ -98,7 +109,10 @@ impl Database {
         let module_data = self.modules.get_mut(&module).unwrap();
         let id = Id::from(decl.name);
         if module_data.scope.contains(&id) || module_data.exports.contains(&id) {
-            Err(ElabError::DefinitionCollision.into())
+            Err(DatabaseError::DeclCollision {
+                current_module: module.to_string(),
+                id: id.to_string()
+            }.into())
         } else {
             module_data.scope.insert(id.clone());
             module_data.exports.insert(id);
@@ -147,14 +161,27 @@ impl Database {
             let import_data = ImportData { public: import.public, path, namespace: import.namespace };
             module_data.imports.push(import_data);
 
-            if module_data.scope.intersection(&import_module_data.exports).count() != 0 {
-                Err(ElabError::DefinitionCollision)
+            let exports = if let Some(namespace) = import.namespace {
+                import_module_data.exports.iter().map(|id| id.add_qualifier(namespace)).collect()
             } else {
-                for id in import_module_data.exports.iter() {
-                    let mut id = id.clone();
-                    if let Some(qual) = import.namespace { id.namespace.insert(0, qual); }
+                import_module_data.exports.clone()
+            };
+
+            let intersection = module_data.scope
+                .intersection(&exports)
+                .map(|id| id.to_string())
+                .collect::<Vec<_>>();
+            if !intersection.is_empty() {
+                let collisions = intersection.join(", ");
+                Err(DatabaseError::ImportCollision {
+                    current_module: module.to_string(),
+                    imported_module: path.to_string(),
+                    collisions
+                })
+            } else {
+                for id in exports.iter() {
                     module_data.scope.insert(id.clone());
-                    if import.public { module_data.exports.insert(id); }
+                    if import.public { module_data.exports.insert(id.clone()); }
                 }
                 Ok(())
             }
@@ -235,12 +262,12 @@ impl Database {
     }
 
     fn reverse_lookup_namespace(&self, module: Symbol, component: Symbol) -> Option<&ImportData> {
-        self.modules.get(&module).map(|data| {
+        self.modules.get(&module).and_then(|data| {
             data.imports.iter().find(|ImportData { namespace, .. }| {
                 if let Some(namespace) = namespace { component == *namespace }
                 else { false }
             })
-        }).flatten()
+        })
     }
 
     fn lookup_decl(&self, original: bool, module: Symbol, namespace: &mut Vec<Symbol>, name: Symbol) -> Option<&DeclValues> {
@@ -277,7 +304,7 @@ impl Database {
     pub fn lookup_def(&self, module: Symbol, id: &Id) -> Option<Rc<LazyValue>> {
         let mut namespace = id.namespace.clone();
         let decl = self.lookup_decl(true, module, &mut namespace, id.name);
-        decl.map(|decl| decl.def_value.clone()).flatten()
+        decl.and_then(|decl| decl.def_value.clone())
     }
 
     pub fn lookup_type(&self, module: Symbol, id: &Id) -> Option<Rc<LazyValue>> {
@@ -307,7 +334,7 @@ impl Database {
 
     pub fn lookup_meta(&self, module: Symbol, name: Symbol) -> MetaState {
         let module_data = self.modules.get(&module).unwrap();
-        module_data.metas.get(&name).map(|x| x.clone())
+        module_data.metas.get(&name).cloned()
             .expect("Impossible, any created meta must exist.")
     }
 
@@ -323,17 +350,18 @@ impl Database {
         Ok(())
     }
 
+    pub fn get_metas(&self, module: Symbol) -> Option<&HashMap<Symbol, MetaState>> {
+        self.modules.get(&module).map(|m| &m.metas)
+    }
+
     fn freeze_active_metas(&mut self, module: Symbol) {
         let module_data = self.modules.get_mut(&module).unwrap();
         for active in module_data.active_metas.drain() {
             let meta = module_data.metas.entry(active)
                 .or_insert(MetaState::Frozen);
-            match meta {
-                MetaState::Unsolved => {
-                    log::info!("{} is {}", active, "frozen".bright_blue());
-                    *meta = MetaState::Frozen
-                }
-                _ => { }
+            if let MetaState::Unsolved = meta {
+                log::info!("{} is {}", active, "frozen".bright_blue());
+                *meta = MetaState::Frozen
             }
         }
     }

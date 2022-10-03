@@ -30,6 +30,17 @@ pub struct Id {
     pub name: Symbol,
 }
 
+impl Id {
+    pub fn add_qualifier(&self, sym: Symbol) -> Id {
+        let mut namespace = vec![sym];
+        namespace.extend(self.namespace.iter());
+        Id {
+            namespace,
+            name: self.name
+        }
+    }
+}
+
 impl fmt::Display for Id {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut result = Ok(());

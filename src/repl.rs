@@ -19,6 +19,7 @@ use rustyline::{Cmd, CompletionType, Config, Context, Editor, Helper, KeyEvent, 
 
 use crate::error::CedilleError;
 use crate::database::Database;
+use crate::kernel::value::Value;
 
 const REPL_HISTORY_LIMIT : usize = 1000;
 
@@ -128,6 +129,25 @@ fn repl_inner<H:Helper>(db: &mut Database, rl : &mut Editor<H>) -> Result<bool, 
                 },
                 None => Err(ReplError::MissingFilePath.into())
             },
+            "m" | "meta" | "metas" => match words.next() {
+                Some(path) => {
+                    let path = Path::new(path);
+                    let sym = crate::database::path_to_module_symbol(Path::new(""), path)?;
+                    if let Some(module_data) = db.get_metas(sym) {
+                        use crate::kernel::metavar::MetaState;
+                        for (key, state) in module_data.iter() {
+                            print!("{} = ", *key);
+                            match state {
+                                MetaState::Unsolved => println!("{}", "unsolved".yellow()),
+                                MetaState::Frozen => println!("{}", "frozen".bright_blue()),
+                                MetaState::Solved(v) => println!("{}", Value::reify(v.clone(), db, 0.into(), false)),
+                            }
+                        }
+                    }
+                    Ok(true)
+                },
+                None => Err(ReplError::MissingFilePath.into())
+            }
             command => {
                 let command = command.to_string();
                 Err(ReplError::InvalidCommand { command }.into())
