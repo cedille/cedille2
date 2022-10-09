@@ -480,6 +480,7 @@ impl Value {
                         let body = closure.eval(db, SpineEntry::new(arg.mode, input));
                         body.apply(db, arg)
                     }
+                    (Mode::Free, Mode::Erased) => Rc::new(self.clone()),
                     _ => closure.eval(db, arg)
                 }
             }
@@ -740,7 +741,7 @@ impl Value {
                 Value::unify(db, env + 1, &v, &closure)
             }
             // Spines
-            (Value::Variable { sort, level:l1, spine:s1, ..},
+            (Value::Variable { sort, level:l1, spine:s1 },
                 Value::Variable { level:l2, spine:s2, .. }) =>
             {
                 Ok(l1 == l2 && Value::unify_spine(db, *sort, env, s1.clone(), s2.clone())?)

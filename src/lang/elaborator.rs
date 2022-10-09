@@ -799,7 +799,6 @@ fn infer(db: &mut Database, ctx: Context, term: &syntax::Term) -> Result<(Rc<cor
         }
 
         _ => {
-            dbg!(term);
             Err(ElabError::InferenceFailed {
                 src: db.text(module),
                 span: source_span(db, module, term.span())
@@ -812,6 +811,9 @@ fn infer(db: &mut Database, ctx: Context, term: &syntax::Term) -> Result<(Rc<cor
     result
 }
 
+// If something is represented at the level of values (i.e. abstractions and applications) then we do not want to
+// erase it here. Convertibility modulo erasure is handled in values, and erasing it here just causes problems with
+// indices and other things.
 pub fn erase(db: &mut Database, ctx: Context, term: &syntax::Term) -> Result<Rc<core::Term>, ElabError> {
     use syntax::Term;
     fn erase_lambda(db: &mut Database
@@ -822,39 +824,32 @@ pub fn erase(db: &mut Database, ctx: Context, term: &syntax::Term) -> Result<Rc<
         -> Result<Rc<core::Term>, ElabError>
     {
         if let Some(var) = vars.get(index) {
-            if var.mode == Mode::Erased {
-                erase_lambda(db, ctx, index + 1, vars, body)
-            } else {
-                let name = var.var.unwrap_or_default();
-                let ctx = ctx.bind(db, name, var.mode, Value::top_type());
-                let body = erase_lambda(db, ctx, index + 1, vars, body)?;
-                Ok(Rc::new(core::Term::Lambda {
-                    sort: Sort::Term,
-                    domain_sort: Sort::Term,
-                    mode: var.mode,
-                    name,
-                    body
-                }))
-            }
+            let name = var.var.unwrap_or_default();
+            let ctx = ctx.bind(db, name, var.mode, Value::top_type());
+            let body = erase_lambda(db, ctx, index + 1, vars, body)?;
+            Ok(Rc::new(core::Term::Lambda {
+                sort: Sort::Term,
+                domain_sort: Sort::Term,
+                mode: var.mode,
+                name,
+                body
+            }))
         } else { erase(db, ctx, body) }
     }
     match term {
         Term::Lambda { vars, body, .. } =>
             erase_lambda(db, ctx, 0, vars, body),
         Term::Let { mode, def, body, .. } => {
-            if *mode == Mode::Erased { erase(db, ctx, body) }
-            else {
-                let let_body = erase(db, ctx.clone(), &def.body)?;
-                let ctx = ctx.bind(db, def.name, *mode, Value::star());
-                let body = erase(db, ctx, body)?;
-                Ok(Rc::new(core::Term::Let {
-                    sort: Sort::Term,
-                    mode: *mode,
-                    name: def.name,
-                    let_body,
-                    body
-                }))
-            }
+            let let_body = erase(db, ctx.clone(), &def.body)?;
+            let ctx = ctx.bind(db, def.name, *mode, Value::star());
+            let body = erase(db, ctx, body)?;
+            Ok(Rc::new(core::Term::Let {
+                sort: Sort::Term,
+                mode: *mode,
+                name: def.name,
+                let_body,
+                body
+            }))
         },
         Term::Pi { .. }
         | Term::IntersectType { .. }
@@ -873,14 +868,10 @@ pub fn erase(db: &mut Database, ctx: Context, term: &syntax::Term) -> Result<Rc<
         Term::Induct { .. } => todo!(),
         Term::Match { .. } => todo!(),
         Term::Apply { mode, fun, arg, .. } => {
-            let sort = Sort::Term;
-            if *mode != Mode::Free { erase(db, ctx, fun) }
-            else {
-                let mode = Mode::Free;
-                let fun = erase(db, ctx.clone(), fun)?;
-                let arg = erase(db, ctx, arg)?;
-                Ok(Rc::new(core::Term::Apply { sort, mode, fun, arg }))
-            }
+            let (mode, sort) = (*mode, Sort::Term);
+            let fun = erase(db, ctx.clone(), fun)?;
+            let arg = erase(db, ctx, arg)?;
+            Ok(Rc::new(core::Term::Apply { sort, mode, fun, arg }))
         },
         Term::Variable { span, id, .. } => {
             let sort = Sort::Term;
