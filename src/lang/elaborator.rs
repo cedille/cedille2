@@ -13,7 +13,7 @@ use crate::lang::syntax;
 use crate::lang::rewriter;
 use crate::kernel::core;
 use crate::kernel::value::{Value, ValueEx, Closure, LazyValue, EnvEntry, Environment, EnvBound};
-use crate::database::Database;
+use crate::database::{Database, HoleData};
 use crate::error::CedilleError;
 
 type Span = (usize, usize);
@@ -132,7 +132,7 @@ pub enum ElabError {
 pub struct Context {
     env: Environment,
     env_mask: Vec<EnvBound>,
-    names: im_rc::Vector<Symbol>,
+    pub names: im_rc::Vector<Symbol>,
     types: im_rc::Vector<Rc<Value>>,
     sorts: im_rc::Vector<Sort>,
     modes: im_rc::Vector<Mode>,
@@ -202,7 +202,7 @@ impl Context {
 
     pub fn to_string(&self, db: &Database) -> String {
         let mut result = String::new();
-        for i in 0..self.names.len() {
+        for i in (0..self.names.len()).rev() {
             result.push('\n');
             let ty = self.types[i].clone();
             let type_string = ty.quote(db, self.env_lvl())
@@ -510,13 +510,15 @@ fn check(db: &mut Database, ctx: Context, term: &syntax::Term, ty: Rc<Value>) ->
         }
 
         (syntax::Term::Hole { span, .. }, _) => {
-            Err(ElabError::Hole {
-                src: db.text(ctx.module),
+            //println!("\n{}\n  {}\n{} {}", ctx.env(), term.as_str(db.text_ref(ctx.module)), "<=".bright_blue(), ty);
+            let data = HoleData {
                 span: source_span(db, ctx.module, *span),
-                expected_type: ty_folded.quote(db, ctx.env_lvl())
-                    .to_string_with_context(ctx.names.clone()),
-                context: ctx.to_string(db)
-            })
+                expected_type: ty_folded,
+                context: ctx.clone()
+            };
+            let sort = ty.sort(db).demote();
+            let hole = fresh_hole(db, ctx, data, sort);
+            Ok(hole)
         }
 
         (syntax::Term::Omission { .. }, _) => Ok(Rc::new(fresh_meta(db, ctx, ty.sort(db).demote()))),
@@ -769,15 +771,6 @@ fn infer(db: &mut Database, ctx: Context, term: &syntax::Term) -> Result<(Rc<cor
 
         syntax::Term::Star { .. } => Ok((Rc::new(core::Term::Star), Value::super_star())),
 
-        syntax::Term::Hole { span, .. } => {
-            Err(ElabError::Hole {
-                src: db.text(ctx.module),
-                span: source_span(db, ctx.module, *span),
-                expected_type: String::from(""),
-                context: ctx.to_string(db)
-            })
-        }
-
         syntax::Term::Omission { .. } => {
             let sort = Sort::Unknown;
             let ty_meta = Rc::new(fresh_meta(db, ctx.clone(), sort));
@@ -961,6 +954,12 @@ fn unify(db: &mut Database, ctx: Context, span: Span, left: &Rc<Value>, right: &
                 .to_string_with_context(ctx.names)
         })
     }
+}
+
+fn fresh_hole(db: &mut Database, ctx: Context, data: HoleData, sort: Sort) -> Rc<core::Term> {
+    let fresh_hole_name = db.fresh_hole(ctx.module, data);
+    let id = Id { namespace: vec![], name: fresh_hole_name };
+    Rc::new(core::Term::Free { sort, id })
 }
 
 fn fresh_meta(db: &mut Database, ctx: Context, sort: Sort) -> core::Term {

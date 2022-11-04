@@ -38,7 +38,7 @@ impl fmt::Display for CedilleError {
             CedilleError::Repl(e) => e.fmt(f),
             CedilleError::External(e) => e.fmt(f),
             CedilleError::Collection(list) => {
-                for e in list {
+                for e in list.iter().rev() {
                     e.fmt(f)?;
                     writeln!(f)?;
                 }

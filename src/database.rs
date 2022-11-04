@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::collections::{HashSet, HashMap};
 
 use colored::Colorize;
+use miette::SourceSpan;
 use thiserror::Error;
 use normpath::PathExt;
 
@@ -17,7 +18,7 @@ use crate::kernel::metavar::MetaState;
 use crate::kernel::value::{Environment, LazyValue, Value, ValueEx};
 use crate::lang::syntax;
 use crate::lang::parser;
-use crate::lang::elaborator;
+use crate::lang::elaborator::{self, Context, ElabError};
 use crate::error::CedilleError;
 
 #[derive(Debug, Error)]
@@ -37,6 +38,13 @@ pub enum DatabaseError {
         current_module: String,
         id: String
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct HoleData {
+    pub span: SourceSpan,
+    pub expected_type: Rc<Value>,
+    pub context: Context
 }
 
 #[derive(Debug)]
@@ -59,6 +67,8 @@ struct ModuleData {
     metas: HashMap<Symbol, MetaState>,
     active_metas: HashSet<Symbol>,
     next_meta: usize,
+    holes: HashMap<Symbol, HoleData>,
+    next_hole: usize,
     imports: Vec<ImportData>,
     exports: HashSet<Id>,
     scope: HashSet<Id>,
@@ -235,6 +245,8 @@ impl Database {
             metas: HashMap::new(),
             active_metas: HashSet::new(),
             next_meta: 0,
+            holes: HashMap::new(),
+            next_hole: 0,
             imports: Vec::new(),
             exports: HashSet::new(),
             scope: HashSet::new(),
@@ -311,6 +323,7 @@ impl Database {
         let mut namespace = id.namespace.clone();
         let decl = self.lookup_decl(true, module, &mut namespace, id.name);
         decl.map(|decl| decl.type_value.clone())
+            .or_else(|| self.lookup_hole(module, id.name).map(|x| Rc::new(LazyValue::computed(x))))
     }
 
     pub fn text(&self, module: Symbol) -> Arc<String> {
@@ -319,6 +332,38 @@ impl Database {
 
     pub fn text_ref(&self, module: Symbol) -> &str {
         self.modules.get(&module).unwrap().text.as_ref()
+    }
+
+    pub fn fresh_hole(&mut self, module: Symbol, data: HoleData) -> Symbol {
+        let mut module_data = self.modules.get_mut(&module).unwrap();
+        let next = module_data.next_hole;
+        module_data.next_hole += 1;
+        let name = format!("hole/{}", next);
+        let name = Symbol::from(name.as_str());
+        module_data.holes.insert(name, data);
+        name
+    }
+
+    fn lookup_hole(&self, module: Symbol, name: Symbol) -> Option<Rc<Value>> {
+        let module_data = self.modules.get(&module).unwrap();
+        module_data.holes.get(&name).map(|data| data.expected_type.clone())
+    }
+
+    pub fn holes_to_errors(&self, module: Symbol) -> CedilleError {
+        let mut result = vec![];
+        let module_data = self.modules.get(&module).unwrap();
+        for (_, data) in module_data.holes.iter() {
+            let error = ElabError::Hole {
+                src: module_data.text.clone(),
+                span: data.span.clone(),
+                expected_type: data.expected_type
+                    .quote(self, data.context.clone().env_lvl())
+                    .to_string_with_context(data.context.names.clone()),
+                context: data.context.to_string(self)
+            };
+            result.push(error.into());
+        }
+        CedilleError::Collection(result)
     }
 
     pub fn fresh_meta(&mut self, module: Symbol) -> Symbol {
