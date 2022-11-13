@@ -484,6 +484,7 @@ impl Value {
                     _ => closure.eval(db, arg)
                 }
             }
+            Value::Pi { closure, .. } => closure.eval(db, arg),
             _ => {
                 eprintln!("{}", self);
                 eprintln!("{}", arg);
@@ -691,6 +692,24 @@ impl Value {
                 }
             }
         }
+
+        let left_remainder_is_erased = {
+            let mut result = sort == Sort::Term;
+            for _ in i..left.len() {
+                if left[i].mode != Mode::Erased { result = false; }
+            }
+            result
+        };
+        if left_remainder_is_erased { i = left.len() }
+        let right_remainder_is_erased = {
+            let mut result = sort == Sort::Term;
+            for _ in j..right.len() {
+                if right[i].mode != Mode::Erased { result = false; }
+            }
+            result
+        };
+        if right_remainder_is_erased { j = right.len() }
+
         Ok(result && i == left.len() && j == right.len())
     }
 
@@ -728,6 +747,15 @@ impl Value {
                 && Value::unify(db, env, r1, r2)?)
             }
             // Lambda conversion + eta conversion
+            (Value::Lambda { domain_sort:d1, mode:m1, name:n1, closure:c1, .. },
+                Value::Lambda { domain_sort:d2, mode:m2, name:n2, closure:c2, .. }) 
+                if d1 == d2 && m1 == m2 =>
+            {
+                let input= LazyValue::computed(Value::variable(*d1, env));
+                let c1 = c1.eval(db, EnvEntry::new(*n1, *m1, input.clone()));
+                let c2 = c2.eval(db, EnvEntry::new(*n2, *m2, input));
+                Value::unify(db, env + 1, &c1, &c2)
+            }
             (Value::Lambda { domain_sort, mode, name, closure, .. }, _) => {
                 let input= LazyValue::computed(Value::variable(*domain_sort, env));
                 let closure = closure.eval(db, EnvEntry::new(*name, *mode, input.clone()));

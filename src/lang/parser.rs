@@ -137,13 +137,13 @@ fn import_argument(pairs: Pair<Rule>) -> (Mode, Term) {
     let mut inner = pairs.into_inner();
     // An import argument must have at least one rule
     let p = inner.peek().unwrap();
-    if p.as_rule() == Rule::type_ {
-        let type_ = inner.required(type_);
+    if p.as_rule() == Rule::type_atom {
+        let type_ = inner.required(type_atom);
         (Mode::Erased, type_)
     } else {
         let erased = inner.flag(Rule::erased_op);
         let mode = if erased { Mode::Erased } else { Mode::Free };
-        let term = inner.required(term);
+        let term = inner.required(term_atom);
         (mode, term)
     }
 }

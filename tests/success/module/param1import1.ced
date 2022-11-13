@@ -1,0 +1,11 @@
+module param1import1.
+
+import param1.
+
+other : ∀ F:★ ➔ ★. ∀ A:★. Π a:A. ∀ X:★. X ➔ X
+= λ -F -A a -X x. x.
+
+#normalize print test.
+#normalize print other.
+
+_ : {test ≃ other} = β.

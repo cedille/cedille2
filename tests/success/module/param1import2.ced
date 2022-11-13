@@ -1,0 +1,8 @@
+module param2import2.
+
+import unit.
+
+import param1 (λ x. x) Unit.
+
+other : Unit ➔ ∀ X:★. X ➔ X = test.
+

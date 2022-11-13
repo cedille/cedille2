@@ -108,6 +108,14 @@ impl ops::Add<usize> for Level {
     }
 }
 
+impl ops::Sub<usize> for Level {
+    type Output = Self;
+    
+    fn sub(self, rhs: usize) -> Self::Output {
+        (*self - rhs).into()
+    }
+}
+
 impl Level {
     pub fn to_index(self, env: usize) -> Index {
         (env - *self - 1).into()

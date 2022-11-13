@@ -15,6 +15,13 @@ pub struct Module {
 }
 
 #[derive(Debug, Hash, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Parameter {
+    pub name: Symbol,
+    pub mode: Mode,
+    pub body: Rc<Term>
+}
+
+#[derive(Debug, Hash, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Import {
     pub public: bool,
     pub path: Span,

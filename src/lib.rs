@@ -86,6 +86,11 @@ mod tests {
     test_file_success!(module_transitive3);
     test_file_success!(module_transitive4);
 
+    test_file_success!(module_param1);
+    test_file_success!(module_param1import1);
+    test_file_success!(module_param1import2);
+    test_file_success!(module_param1import3);
+
     test_file_success!(inference_basic);
 
     test_file_failure!(core_intersect);
@@ -101,5 +106,6 @@ mod tests {
     test_file_failure!(module_doubleimport);
     test_file_failure!(module_redefined);
     test_file_failure!(module_redefined2);
+    test_file_failure!(module_paramimport1);
 }
 

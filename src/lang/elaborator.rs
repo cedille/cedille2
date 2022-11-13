@@ -133,16 +133,16 @@ pub struct Context {
     env: Environment,
     env_mask: Vec<EnvBound>,
     pub names: im_rc::Vector<Symbol>,
-    types: im_rc::Vector<Rc<Value>>,
-    sorts: im_rc::Vector<Sort>,
-    modes: im_rc::Vector<Mode>,
+    pub types: im_rc::Vector<Rc<Value>>,
+    pub sorts: im_rc::Vector<Sort>,
+    pub modes: im_rc::Vector<Mode>,
     pub module: Symbol,
     pub mode: Mode,
     pub sort: Sort
 }
 
 impl Context {
-    fn new(module: Symbol) -> Context {
+    pub fn new(module: Symbol) -> Context {
         Context {
             env: Environment::new(),
             env_mask: Vec::new(),
@@ -202,7 +202,7 @@ impl Context {
 
     pub fn to_string(&self, db: &Database) -> String {
         let mut result = String::new();
-        for i in (0..self.names.len()).rev() {
+        for i in (0..self.len()).rev() {
             result.push('\n');
             let ty = self.types[i].clone();
             let type_string = ty.quote(db, self.env_lvl())
@@ -218,17 +218,20 @@ impl Context {
     pub fn env_mask(&self) -> Vec<EnvBound> { self.env_mask.clone() }
 
     pub fn env_lvl(&self) -> Level { self.env.len().into() }
+
+    pub fn len(&self) -> usize { self.names.len() }
 }
 
 pub fn elaborate(db: &mut Database, module: Symbol, syntax: &syntax::Module) -> Result<(), CedilleError> {
     let mut errors = vec![];
 
+    let ctx = elaborate_module_params(db, Context::new(module), &syntax.params)?;
     for import in syntax.header_imports.iter() {
-        db.load_import(module, import)?;
+        elaborate_import(db, ctx.clone(), import)?;
     }
 
     for decl in syntax.decls.iter() {
-        match elaborate_decl(db, module, &syntax.params, decl) {
+        match elaborate_decl(db, ctx.clone(), decl) {
             Ok(_) =>  { },
             Err(error) => errors.push(error)
         }
@@ -238,7 +241,21 @@ pub fn elaborate(db: &mut Database, module: Symbol, syntax: &syntax::Module) -> 
     else { Err(CedilleError::Collection(errors)) }
 }
 
-fn elaborate_decl(db: &mut Database, module: Symbol, params: &[syntax::Parameter], decl: &syntax::Decl) -> Result<(), CedilleError> {
+fn elaborate_module_params(db: &mut Database, ctx: Context, params: &[syntax::Parameter]) -> Result<Context, ElabError> {
+    let mut ctx = ctx;
+    let mut param_results = vec![];
+    for param in params.iter() {
+        let (body_elabed, _) = infer(db, ctx.clone(), &param.body)?;
+        let body_value = Value::eval(db, ctx.module, ctx.env(), body_elabed.clone());
+        param_results.push(core::Parameter { name: param.name, mode: param.mode, body: body_elabed });
+        ctx = ctx.bind(db, param.name, param.mode, body_value);
+    }
+    db.set_params(ctx.module, param_results);
+    Ok(ctx)
+}
+
+fn elaborate_decl(db: &mut Database, ctx: Context, decl: &syntax::Decl) -> Result<(), CedilleError> {
+    let module = ctx.module;
     match decl {
         syntax::Decl::Term(def) => {
             if db.lookup_type(module, &Id::from(def.name)).is_some() {
@@ -247,28 +264,27 @@ fn elaborate_decl(db: &mut Database, module: Symbol, params: &[syntax::Parameter
                     span: source_span(db, module, def.span)
                 }.into())
             } else {
-                let ctx = Context::new(module);
                 let result = if def.opaque {
-                    elaborate_opaque_define_term(db, ctx, params, def)
+                    elaborate_opaque_define_term(db, ctx.clone(), def)
                 } else {
-                    elaborate_define_term(db, ctx, params, def)
+                    elaborate_define_term(db, ctx.clone(), def)
+                }.map_err(CedilleError::Elaborator)?;
+                let result = core::Decl { 
+                    name: result.name,
+                    ty: wrap_type_from_context(db, ctx.clone(), result.ty),
+                    body: wrap_term_from_context(ctx, result.body)
                 };
-                if let Ok(ref elabed) = result {
-                    log::info!("\n{}\n{}\n{}", def.as_str(db.text_ref(module)), "elaborated to".green(), elabed);
-                }
-                match result {
-                    Ok(decl) => db.insert_decl(module, def.opaque, decl),
-                    e => e.map(|_| ()).map_err(|e| e.into()),
-                }
+                log::info!("\n{}\n{}\n{}", def.as_str(db.text_ref(module)), "elaborated to".green(), result);
+                db.insert_decl(module, def.opaque, result)
             }
         }
-        syntax::Decl::Import(import) => db.load_import(module, import),
+        syntax::Decl::Import(import) => elaborate_import(db, ctx, import),
         syntax::Decl::Kind(_) => todo!(),
         syntax::Decl::Datatype(_) => todo!(),
         syntax::Decl::NormalizeCommand(term, erase_flag, print) => {
             let (start, end) = term.span();
             let now = time::Instant::now();
-            let erased = erase(db, Context::new(module), term)?;
+            let erased = erase(db, ctx, term)?;
             let value = Value::eval(db, module, Environment::new(), erased);
             let mut normal_form = Value::reify(value, db, 0.into(), true);
             if *print {
@@ -281,7 +297,51 @@ fn elaborate_decl(db: &mut Database, module: Symbol, params: &[syntax::Parameter
     }
 }
 
-fn elaborate_opaque_define_term(db: &mut Database, ctx: Context, _params: &[syntax::Parameter], def: &syntax::DefineTerm) -> Result<core::Decl, ElabError> {
+fn elaborate_import_args(db: &mut Database
+    , ctx: Context
+    , args: &[(Mode, syntax::Term)]
+    , params: &[core::Parameter])
+    -> Result<Vec<(Mode, Rc<Value>)>, ElabError>
+{
+    let mut ctx = ctx;
+    let mut result = vec![];
+    for i in 0..args.len() {
+        if let Some(core::Parameter { name, mode, body }) = params.get(i) {
+            let ty = Value::eval(db, ctx.module, ctx.env(), body.clone());
+            let (arg_mode, arg) = &args[i];
+            let arg_elabed = check(db, ctx.clone(), arg, ty.clone())?;
+
+            if mode != arg_mode && arg_elabed.sort() == Sort::Term {
+                return Err(ElabError::ModeMismatch { 
+                    src: db.text(ctx.module), 
+                    span: source_span(db, ctx.module, arg.span()), 
+                    expected: *mode,
+                    provided: *arg_mode
+                })
+            }
+            let arg_value = Value::eval(db, ctx.module, ctx.env(), arg_elabed);
+            let arg_mode = if ty.sort(db) == Sort::Type { *arg_mode } else { Mode::Erased }; 
+            result.push((arg_mode, arg_value.clone()));
+            let value = LazyValue::computed(arg_value);
+            ctx = ctx.define(db, *name, *mode, value, ty);
+        } else {
+            // TODO: add a reasonable error
+            return Err(ElabError::Unknown)
+        }
+    }
+    Ok(result)
+}
+
+fn elaborate_import(db: &mut Database, ctx: Context, import: &syntax::Import) -> Result<(), CedilleError> {
+    let import_symbol = db.resolve_import_symbol(ctx.module, import.path)?;
+    db.load_module(import_symbol)?; // Imported module may not be loaded at all, which means no parameters
+    let params = db.lookup_params(import_symbol);
+    let args = elaborate_import_args(db, ctx.clone(), &import.args, &params)?;
+    db.load_import(ctx.module, import, args)?;
+    Ok(())
+}
+
+fn elaborate_opaque_define_term(db: &mut Database, ctx: Context, def: &syntax::DefineTerm) -> Result<core::Decl, ElabError> {
     if let Some(anno) = &def.anno {
         let anno_sort = infer_sort(db, ctx.clone(), anno)?;
         let ctx = ctx.phase_shift(Mode::Free, anno_sort);
@@ -299,7 +359,7 @@ fn elaborate_opaque_define_term(db: &mut Database, ctx: Context, _params: &[synt
     }
 }
 
-fn elaborate_define_term(db: &mut Database, ctx: Context, _params: &[syntax::Parameter], def: &syntax::DefineTerm) -> Result<core::Decl, ElabError> {
+fn elaborate_define_term(db: &mut Database, ctx: Context, def: &syntax::DefineTerm) -> Result<core::Decl, ElabError> {
     let (name, ty, body) = if let Some(anno) = &def.anno {
         let anno_sort = infer_sort(db, ctx.clone(), anno)?;
         let anno_classifier = Value::classifier(anno_sort).map_err(|_| ElabError::Unknown)?;
@@ -898,7 +958,7 @@ pub fn erase(db: &mut Database, ctx: Context, term: &syntax::Term) -> Result<Rc<
 fn infer_sort(db: &Database, ctx: Context, term: &syntax::Term) -> Result<Sort, ElabError> {
     let result: Sort = match term {
         syntax::Term::Lambda { vars, body, .. } => {
-            let mut ctx = ctx.clone();
+            let mut ctx = ctx;
             for var in vars {
                 let name = var.var.unwrap_or_default();
                 if let Some(anno) = &var.anno {
@@ -924,7 +984,7 @@ fn infer_sort(db: &Database, ctx: Context, term: &syntax::Term) -> Result<Sort, 
         syntax::Term::IntersectType { .. }
         | syntax::Term::Equality { .. } => Sort::Type,
         syntax::Term::Rewrite { .. } => Sort::Term,
-        syntax::Term::Annotate { body, .. } => infer_sort(db, ctx.clone(), body)?,
+        syntax::Term::Annotate { body, .. } => infer_sort(db, ctx, body)?,
         syntax::Term::Project { .. } => Sort::Term,
         syntax::Term::Symmetry { .. }
         | syntax::Term::Intersect { .. }
@@ -933,8 +993,8 @@ fn infer_sort(db: &Database, ctx: Context, term: &syntax::Term) -> Result<Sort, 
         | syntax::Term::Cast { .. }
         | syntax::Term::Induct { .. }
         | syntax::Term::Match { .. } => Sort::Term,
-        syntax::Term::Apply { fun, .. } => infer_sort(db, ctx.clone(), fun)?,
-        syntax::Term::Variable { id, span } => lookup_sort(db, &ctx, span.clone(), id)?,
+        syntax::Term::Apply { fun, .. } => infer_sort(db, ctx, fun)?,
+        syntax::Term::Variable { id, span } => lookup_sort(db, &ctx, *span, id)?,
         syntax::Term::Star { .. } => Sort::Kind,
         syntax::Term::Hole { .. } => Sort::Unknown,
         syntax::Term::Omission { .. } => Sort::Unknown,
@@ -980,7 +1040,9 @@ fn lookup_type(db: &Database, ctx: &Context, span: Span, id: &Id) -> Result<(Rc<
     match (toplevel_type, context_type) {
         (_, Some((v, level, mode))) => Ok((v, level, *mode)),
         (Some(v), None) => Ok((v.force(db), None, Mode::Free)),
-        (None, None) => { Err(ElabError::MissingName { source_code: db.text(ctx.module), span: source_span(db, ctx.module, span) }) }
+        (None, None) => {
+            Err(ElabError::MissingName { source_code: db.text(ctx.module), span: source_span(db, ctx.module, span) })
+        }
     }
 }
 
@@ -994,8 +1056,46 @@ fn lookup_sort(db: &Database, ctx: &Context, span: Span, id: &Id) -> Result<Sort
     match (toplevel_sort, context_sort) {
         (_, Some(sort)) => Ok(sort),
         (Some(sort), None) => Ok(sort),
-        (None, None) => { Err(ElabError::MissingName { source_code: db.text(ctx.module), span: source_span(db, ctx.module, span) }) }
+        (None, None) => {
+            Err(ElabError::MissingName { source_code: db.text(ctx.module), span: source_span(db, ctx.module, span) })
+        }
     }
+}
+
+fn wrap_term_from_context(ctx: Context, body: Rc<core::Term>) -> Rc<core::Term> {
+    let mut result = body;
+    for i in (0..ctx.len()).rev() {
+        let name = ctx.names[i];
+        let sort = ctx.sorts[i];
+        let mode = ctx.modes[i];
+        result = Rc::new(core::Term::Lambda {
+            sort: result.sort(),
+            domain_sort: sort,
+            mode,
+            name,
+            body: result
+        })
+    }
+    result
+}
+
+fn wrap_type_from_context(db: &Database, ctx: Context, body: Rc<core::Term>) -> Rc<core::Term> {
+    let mut result = body;
+    let mut level = ctx.env_lvl();
+    for i in (0..ctx.len()).rev() {
+        level = level - 1; // As we peel off a module parameter, the context maximum level is reduced by one
+        let name = ctx.names[i];
+        let domain = Rc::new(ctx.types[i].quote(db, level));
+        let mode = ctx.modes[i];
+        result = Rc::new(core::Term::Pi {
+            sort: result.sort(),
+            domain,
+            mode,
+            name,
+            body: result
+        })
+    }
+    result
 }
 
 fn source_span(db: &Database, module: Symbol, span: Span) -> SourceSpan {

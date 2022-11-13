@@ -51,7 +51,7 @@ add_comm : Π n:Nat. Π m:Nat. {add n m ≃ add m n}
     (λ m. ρ (add_zero_right m) - β)
     (λ -x ih m. χ {succ (add x m) ≃ add m (succ x)}
         - ρ (ih m)
-        - ρ (add_succ_right m x)
+        - ρ (add_succ_right m x) @ z. {succ (add m x) ≃ z}
         - β).
 
 import ../../core/not.

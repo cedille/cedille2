@@ -1,0 +1,10 @@
+module param3import3.
+
+import unit.
+
+import param1 (λ x. x) Unit unit.
+
+#normalize print test.
+
+other : ∀ X:★. X ➔ X = λ -X. test -X.
+

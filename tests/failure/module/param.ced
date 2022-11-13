@@ -1,0 +1,4 @@
+module param (F:★ ➔ ★) (A:★) (a:A).
+
+test : ∀ X:★. F X ➔ F X
+= λ -X x. x.

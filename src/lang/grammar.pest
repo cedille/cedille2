@@ -127,7 +127,7 @@ cases = { "|"? ~ case ~ ("|" ~ case)* }
 case = { qual_id ~ case_arg* ~ "➔" ~ term }
 case_arg = ${ (type_op | erased_op)? ~ id }
 
-import_argument = { "·" ~ type_ | erased_op? ~ term }
+import_argument = { erased_op? ~ term_atom | "·"? ~ type_atom }
 param = { relevant_param | erased_param }
 relevant_param = { "(" ~ id ~ ":" ~ (kind | type_) ~ ")" }
 erased_param = { "{" ~ id ~ ":" ~ type_ ~ "}" }

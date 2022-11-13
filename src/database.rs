@@ -1,4 +1,5 @@
 
+use std::any::type_name;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::io::prelude::*;
@@ -15,7 +16,7 @@ use normpath::PathExt;
 use crate::common::*;
 use crate::kernel::core;
 use crate::kernel::metavar::MetaState;
-use crate::kernel::value::{Environment, LazyValue, Value, ValueEx};
+use crate::kernel::value::{Environment, LazyValue, Value, ValueEx, SpineEntry, Spine};
 use crate::lang::syntax;
 use crate::lang::parser;
 use crate::lang::elaborator::{self, Context, ElabError};
@@ -47,17 +48,31 @@ pub struct HoleData {
     pub context: Context
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct DeclValues {
     type_value: Rc<LazyValue>,
     def_value: Option<Rc<LazyValue>>
+}
+
+impl DeclValues {
+    fn apply(self, db: &Database, args: &[(Mode, Rc<Value>)]) -> DeclValues {
+        let DeclValues { mut type_value, mut def_value } = self;
+        for (mode, arg) in args {
+            let arg = LazyValue::computed(arg.clone());
+            let entry = SpineEntry::new(*mode, arg);
+            type_value = type_value.apply(db, entry.clone());
+            def_value = def_value.map(|x| x.apply(db, entry));
+        }
+        DeclValues { type_value, def_value }
+    }
 }
 
 #[derive(Debug)]
 struct ImportData {
     public: bool,
     path: Symbol,
-    namespace: Option<Symbol>
+    namespace: Option<Symbol>,
+    args: Vec<(Mode, Rc<Value>)>
 }
 
 #[derive(Debug)]
@@ -71,6 +86,7 @@ struct ModuleData {
     next_hole: usize,
     imports: Vec<ImportData>,
     exports: HashSet<Id>,
+    params: Vec<core::Parameter>,
     scope: HashSet<Id>,
     last_modified: time::SystemTime,
     contains_error: bool
@@ -154,21 +170,23 @@ impl Database {
         } else { false }
     }
 
-    pub fn load_import(&mut self, module: Symbol, import: &syntax::Import) -> Result<(), CedilleError> {
-        let path = {
-            let module_data = self.modules.get(&module).unwrap();
-            let (start, end) = import.path;
-            let parent_path = Path::new(&**module).parent().unwrap();
-            let path = Path::new(&module_data.text[start..end]).with_extension("ced");
-            path_to_module_symbol(parent_path, &path)?
-        };
+    pub fn resolve_import_symbol(&self, module: Symbol, import: (usize, usize)) -> Result<Symbol, CedilleError> {
+        let module_data = self.modules.get(&module).unwrap();
+        let (start, end) = import;
+        let parent_path = Path::new(&**module).parent().unwrap();
+        let path = Path::new(&module_data.text[start..end]).with_extension("ced");
+        path_to_module_symbol(parent_path, &path)
+    }
+
+    pub fn load_import(&mut self, module: Symbol, import: &syntax::Import, args: Vec<(Mode, Rc<Value>)>) -> Result<(), CedilleError> {
+        let path = self.resolve_import_symbol(module, import.path)?;
 
         self.load_module(path)?;
         let import_module_data = self.modules.remove(&path).unwrap();
         
         let result = {
             let module_data = self.modules.get_mut(&module).unwrap();
-            let import_data = ImportData { public: import.public, path, namespace: import.namespace };
+            let import_data = ImportData { public: import.public, path, namespace: import.namespace, args };
             module_data.imports.push(import_data);
 
             let exports = if let Some(namespace) = import.namespace {
@@ -210,7 +228,7 @@ impl Database {
         Ok(sym)
     }
 
-    fn load_module(&mut self, sym: Symbol) -> Result<(), CedilleError> {
+    pub fn load_module(&mut self, sym: Symbol) -> Result<(), CedilleError> {
         if self.queued.contains(&sym) {
             Err(DatabaseError::Cycle { module: (*sym).clone() }.into())
         } else if self.loaded(sym) {
@@ -249,6 +267,7 @@ impl Database {
             next_hole: 0,
             imports: Vec::new(),
             exports: HashSet::new(),
+            params: Vec::new(),
             scope: HashSet::new(),
             last_modified,
             contains_error: false
@@ -282,8 +301,9 @@ impl Database {
         })
     }
 
-    fn lookup_decl(&self, original: bool, module: Symbol, namespace: &mut Vec<Symbol>, name: Symbol) -> Option<&DeclValues> {
+    fn lookup_decl(&self, original: bool, module: Symbol, namespace: &mut Vec<Symbol>, name: Symbol) -> Option<DeclValues> {
         let mut result = None;
+        // We have a namespace, so we should find the declaration in an imported module
         if_chain! {
             if let Some(component) = namespace.get(0);
             if let Some(import_data) = self.reverse_lookup_namespace(module, *component);
@@ -291,21 +311,41 @@ impl Database {
             then {
                 namespace.remove(0);
                 result = self.lookup_decl(false, import_data.path, namespace, name);
+                result = result.map(|x| x.apply(self, &import_data.args));
             }
         }
+        // There is no namespace, so check the current module first
         if_chain! {
             if result.is_none();
             if namespace.is_empty();
             if let Some(module_data) = self.modules.get(&module);
-            then { result = module_data.values.get(&name); }
+            then {
+                result = module_data.values.get(&name).cloned();
+                // If we are pulling the definition from the same module, then we know that parameters are in context,
+                // so we should apply variables with levels corresponding to the implied context
+                if original {
+                    let params: Vec<_> = module_data.params.iter()
+                        .enumerate()
+                        .map(|(level, p)| {
+                            let sort = p.body.sort().demote();
+                            (p.mode, Value::variable(sort, level))
+                        }).collect();
+                    result = result.map(|x| x.apply(self, &params));
+                }
+            }
         }
+        // There is no namespace, but the definition does not exist in the current module, search the public exports
+        // of the current modules imports
         if_chain! {
             if result.is_none();
             if let Some(module_data) = self.modules.get(&module);
             then {
-                for ImportData { public, path, namespace:qual } in module_data.imports.iter() {
+                for ImportData { public, path, namespace:qual, args } in module_data.imports.iter() {
                     if (original || *public) && qual.is_none() {
-                        result = result.or_else(|| self.lookup_decl(false, *path, namespace, name));
+                        result = result.or_else(|| {
+                            let result = self.lookup_decl(false, *path, namespace, name);
+                            result.map(|x| x.apply(self, args))
+                        });
                     }
                 }
             }
@@ -316,14 +356,27 @@ impl Database {
     pub fn lookup_def(&self, module: Symbol, id: &Id) -> Option<Rc<LazyValue>> {
         let mut namespace = id.namespace.clone();
         let decl = self.lookup_decl(true, module, &mut namespace, id.name);
-        decl.and_then(|decl| decl.def_value.clone())
+        decl.and_then(|decl| decl.def_value)
     }
 
     pub fn lookup_type(&self, module: Symbol, id: &Id) -> Option<Rc<LazyValue>> {
         let mut namespace = id.namespace.clone();
         let decl = self.lookup_decl(true, module, &mut namespace, id.name);
-        decl.map(|decl| decl.type_value.clone())
+        decl.map(|decl| decl.type_value)
             .or_else(|| self.lookup_hole(module, id.name).map(|x| Rc::new(LazyValue::computed(x))))
+    }
+
+    pub fn set_params(&mut self, module: Symbol, params: Vec<core::Parameter>) {
+        if let Some(module_data) = self.modules.get_mut(&module) {
+            module_data.params = params
+        }
+    }
+
+    pub fn lookup_params(&self, module: Symbol) -> Vec<core::Parameter> {
+        self.modules.get(&module)
+            .map(|data| &data.params)
+            .cloned()
+            .unwrap_or_default()
     }
 
     pub fn text(&self, module: Symbol) -> Arc<String> {
