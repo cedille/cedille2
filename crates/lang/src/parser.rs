@@ -2,16 +2,17 @@
 // TODO: Centralize any of the possible panics in the Extract combinators
 
 use pest::Parser;
+use pest_derive::Parser;
 use pest::iterators::{Pair, Pairs};
 use pest::error::Error;
 
-use crate::common::*;
-use crate::lang::syntax::*;
+use cedille2_core::utility::*;
+use crate::syntax::*;
 
 type Span = (usize, usize);
 
 #[derive(Parser)]
-#[grammar = "lang/grammar.pest"]
+#[grammar = "grammar.pest"]
 pub struct CedilleParser;
 
 pub fn parse(input : &str) -> Result<Pairs<Rule>, Error<Rule>> {

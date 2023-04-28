@@ -6,17 +6,15 @@ use std::error::Error;
 use miette::{GraphicalReportHandler, GraphicalTheme};
 use rustyline::error::ReadlineError;
 
-use crate::lang::parser;
-use crate::lang::elaborator::ElabError;
+use crate::parser;
+use crate::elaborator::ElabError;
 use crate::database::DatabaseError;
-use crate::repl::ReplError;
 
 #[derive(Debug)]
 pub enum CedilleError {
     Parser(pest::error::Error<parser::Rule>),
     Elaborator(ElabError),
     Database(DatabaseError),
-    Repl(ReplError),
     External(Box<dyn Error + Send + Sync>),
     Collection(Vec<CedilleError>)
 }
@@ -35,7 +33,6 @@ impl fmt::Display for CedilleError {
                 out.fmt(f)
             }
             CedilleError::Database(e) => e.fmt(f),
-            CedilleError::Repl(e) => e.fmt(f),
             CedilleError::External(e) => e.fmt(f),
             CedilleError::Collection(list) => {
                 for e in list.iter().rev() {
@@ -58,10 +55,6 @@ impl From<ElabError> for CedilleError {
 
 impl From<DatabaseError> for CedilleError {
     fn from(error: DatabaseError) -> Self { CedilleError::Database(error) }
-}
-
-impl From<ReplError> for CedilleError {
-    fn from(error: ReplError) -> Self { CedilleError::Repl(error) }
 }
 
 impl From<io::Error> for CedilleError {

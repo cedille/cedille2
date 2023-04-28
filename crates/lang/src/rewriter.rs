@@ -1,11 +1,11 @@
 
 use std::rc::Rc;
 
-use crate::common::*;
-use crate::database::Database;
-use crate::lang::elaborator::{Context, ElabError};
-use crate::kernel::core::Term;
-use crate::kernel::value::{Value, ValueEx, Spine, SpineEntry, EnvEntry};
+use cedille2_core::utility::*;
+use cedille2_core::database::Database;
+use crate::elaborator::{Context, ElabError};
+use cedille2_core::term::Term;
+use cedille2_core::value::{Value, ValueEx, Spine, SpineEntry, EnvEntry};
 
 #[derive(Debug, Clone, Copy)]
 struct MatchArg<'a> {

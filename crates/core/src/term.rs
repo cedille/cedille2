@@ -2,8 +2,8 @@
 use std::rc::Rc;
 use std::fmt;
 
-use crate::common::*;
-use crate::kernel::value::EnvBound;
+use crate::utility::*;
+use crate::value::EnvBound;
 
 type Span = (usize, usize);
 

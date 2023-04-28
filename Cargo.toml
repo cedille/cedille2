@@ -2,10 +2,27 @@
 name = "cedille2"
 version = "0.1.0"
 edition = "2021"
+authors = ["Andrew Marmaduke <marmaduke.andrew@gmail.com>"]
+description = """
+cedille2 is a proof assistant
+"""
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[[bin]]
+path = "crates/cli/main.rs"
+name = "cedille2"
+
+[workspace]
+members = [
+    "crates/core",
+    "crates/lang"
+]
+
+# # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+
+cedille2-core = { version = "*", path = "crates/core" }
+cedille2-lang = { version = "*", path = "crates/lang" }
 
 # Error handling libraries
 anyhow = "=1.0"

@@ -7,9 +7,9 @@ use std::cell::RefCell;
 use colored::Colorize;
 use once_cell::unsync::OnceCell;
 
-use crate::common::*;
-use crate::kernel::core::Term;
-use crate::kernel::metavar::{self, MetaState};
+use crate::utility::*;
+use crate::term::Term;
+use crate::metavar::{self, MetaState};
 use crate::database::Database;
 
 #[derive(Debug, Clone)]

@@ -1,5 +1,5 @@
 
-use crate::common::*;
+use cedille2_core::utility::*;
 
 type Span = (usize, usize);
 

@@ -17,9 +17,10 @@ use rustyline::hint::{Hinter, HistoryHinter};
 use rustyline::validate::{self, MatchingBracketValidator, Validator};
 use rustyline::{Cmd, CompletionType, Config, Context, Editor, Helper, KeyEvent, Modifiers};
 
-use crate::error::CedilleError;
-use crate::database::Database;
-use crate::kernel::value::Value;
+use cedille2_lang::error::CedilleError;
+use cedille2_lang::database::DatabaseExt;
+use cedille2_core::database::Database;
+use cedille2_core::value::Value;
 
 const REPL_HISTORY_LIMIT : usize = 1000;
 
@@ -122,22 +123,22 @@ fn repl_inner<H:Helper>(db: &mut Database, rl : &mut Editor<H>) -> Result<bool, 
                     let path = Path::new(path);
                     if path.is_file() {
                         let module = db.load_module_from_path(path)?;
-                        let holes = db.holes_to_errors(module);
-                        println!("{}", holes);
+                        // let holes = db.holes_to_errors(module);
+                        // println!("{}", holes);
                     } else {
                         db.load_dir(path)?;
                     }
 
                     Ok(true)
                 },
-                None => Err(ReplError::MissingFilePath.into())
+                None => Err(CedilleError::Collection(vec![]))
             },
             "m" | "meta" | "metas" => match words.next() {
                 Some(path) => {
                     let path = Path::new(path);
-                    let sym = crate::database::path_to_module_symbol(Path::new(""), path)?;
+                    let sym = cedille2_lang::database::path_to_module_symbol(Path::new(""), path)?;
                     if let Some(module_data) = db.get_metas(sym) {
-                        use crate::kernel::metavar::MetaState;
+                        use cedille2_core::metavar::MetaState;
                         for (key, state) in module_data.iter() {
                             print!("{} = ", *key);
                             match state {
@@ -149,11 +150,11 @@ fn repl_inner<H:Helper>(db: &mut Database, rl : &mut Editor<H>) -> Result<bool, 
                     }
                     Ok(true)
                 },
-                None => Err(ReplError::MissingFilePath.into())
+                None => Err(CedilleError::Collection(vec![]))
             }
             command => {
                 let command = command.to_string();
-                Err(ReplError::InvalidCommand { command }.into())
+                Err(CedilleError::Collection(vec![]))
             }
         },
         None => Ok(true)
