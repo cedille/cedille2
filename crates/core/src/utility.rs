@@ -1,10 +1,8 @@
 
 use std::{ops, fmt};
-
-use derive_more::{From, AsRef, AsMut, Deref, Display};
 use internment::LocalIntern;
 
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord, Display)]
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Symbol(LocalIntern<String>);
 
 impl From<&str> for Symbol {
@@ -22,6 +20,12 @@ impl ops::Deref for Symbol {
 
 impl Default for Symbol {
     fn default() -> Self { Self::from("_") }
+}
+
+impl fmt::Display for Symbol {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.as_ref().fmt(f)
+    }
 }
 
 #[derive(Debug, Hash, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -55,13 +59,22 @@ impl From<Symbol> for Id {
     fn from(sym: Symbol) -> Self { Id { namespace: vec![], name: sym } }
 }
 
-#[derive(Debug, Hash, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Display)]
+#[derive(Debug, Hash, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Mode {
     Erased,
     Free
 }
 
-#[derive(Debug, Hash, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Display)]
+impl fmt::Display for Mode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Mode::Erased => write!(f, "Erased"),
+            Mode::Free => write!(f, "Free")
+        }
+    }
+}
+
+#[derive(Debug, Hash, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Sort {
     Unknown,
     Term,
@@ -80,7 +93,9 @@ impl Sort {
     }
 }
 
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord, From, AsRef, AsMut, Deref, Display)]
+// , From, AsRef, AsMut, Deref, Display
+
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Index(usize);
 
 impl ops::Add<usize> for Index {
@@ -91,13 +106,29 @@ impl ops::Add<usize> for Index {
     }
 }
 
+impl ops::Deref for Index {
+    type Target = usize;
+
+    fn deref(&self) -> &Self::Target {
+        let Index(result) = self;
+        result
+    }
+}
+
+impl From<usize> for Index {
+    fn from(value: usize) -> Self {
+        Index(value)
+    }
+}
+
 impl Index {
     pub fn to_level(self, env: usize) -> Level {
         (env - *self - 1).into()
     }
 }
 
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord, From, AsRef, AsMut, Deref, Display)]
+
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Level(usize);
 
 impl ops::Add<usize> for Level {
@@ -113,6 +144,27 @@ impl ops::Sub<usize> for Level {
     
     fn sub(self, rhs: usize) -> Self::Output {
         (*self - rhs).into()
+    }
+}
+
+impl ops::Deref for Level {
+    type Target = usize;
+
+    fn deref(&self) -> &Self::Target {
+        let Level(result) = self;
+        result
+    }
+}
+
+impl From<usize> for Level {
+    fn from(value: usize) -> Self {
+        Level(value)
+    }
+}
+
+impl fmt::Display for Level {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        (**self).fmt(f)
     }
 }
 

@@ -9,6 +9,70 @@ use pest::error::Error;
 use cedille2_core::utility::*;
 use crate::syntax::*;
 
+/*
+    file ::= module (import|command|decl|def)* <eof>
+
+    module ::= "module" ident ann* <nl>
+
+    import ::= "import" ident ("as" ident term*)? <nl>
+
+    command ::=
+    | "#infer" term <nl>
+    | "#check" term ":" term <nl>
+    | "#erase" term <nl>
+    | "#value" term <nl>
+
+    decl ::= ident ":" term <nl>
+
+    def ::= ident+ ":=" term <nl>
+
+    term ::=
+    | "let" ident ":" term ":=" term <nl>
+    | ann ("->"|"=>"|"∩") term
+    | ("λ"|"Λ") (ann|ident)+ "." term
+    | atom ("->"|"=>"|"∩") term
+    | atom "=" term
+    | atom "=[" term "]" term
+    | atom term
+    | atom (".1" | ".2")
+
+    atom ::=
+    | "[" term "," term (";" term)? "]"
+    | "rfl" atom
+    | "J"
+    | "φ" term "{" term "," term "}"
+    | "δ" atom
+    | "(" term ")"
+    | ident
+
+
+    ann ::= "(" ident+ ":" term ")"
+
+
+*/
+
+#[derive(Logos, Debug, PartialEq)]
+enum Token {
+    #[token("module")]
+    ModuleKeyword,
+
+    #[token("import")]
+    ImportKeyword,
+
+    #[regex("[a-zA-Z]+([\-_]?[a-zA-Z0-9']+)*")]
+    Ident,
+}
+
+
+
+
+
+
+
+
+
+
+
 type Span = (usize, usize);
 
 #[derive(Parser)]

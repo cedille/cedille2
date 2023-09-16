@@ -9,9 +9,7 @@ use std::path::{Path, PathBuf};
 use std::collections::{HashSet, HashMap};
 
 use colored::Colorize;
-use miette::SourceSpan;
 use thiserror::Error;
-use normpath::PathExt;
 use if_chain::if_chain;
 
 use crate::utility::*;
