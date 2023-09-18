@@ -6,7 +6,7 @@
 // use pest::iterators::{Pair, Pairs};
 // use pest::error::Error;
 
-use std::iter;
+use std::{iter, intrinsics::unreachable};
 use std::ops::Range;
 
 use ariadne::{Color, Label, Report, ReportKind, Source};
@@ -130,6 +130,7 @@ fn parse_term(input : In) -> IResult<In, Term> {
         parse_term_binder,
         parse_term_lambda,
         parse_term_equal,
+        parse_term_simple_binder,
         parse_term_body
     ));
     
@@ -190,11 +191,54 @@ fn parse_term_binder(input : In) -> IResult<In, Term> {
         "∩" => Term::IntersectType { span, var, first: domain, second: body },
         _ => unreachable!()
     };
+
+    Ok((rest, term))
+}
+
+fn parse_term_simple_binder(input : In) -> IResult<In, Term> {
+    let (rest, (lhs, kind, rhs))
+    = tuple((
+        parse_term_atom,
+        alt((tag("->"), tag("=>"), tag("∩"), tag("="))),
+        parse_term
+    ))(input)?;
+
+    let span = (lhs.span().0, rhs.span().1);
+    let lhs = lhs.boxed();
+    let rhs = rhs.boxed();
+
+    let term = match *kind.fragment() {
+        "->" => Term::Pi { span, mode: Mode::Free, var: None, domain: lhs, body: rhs},
+        "=>" => Term::Pi { span, mode: Mode::Erased, var: None, domain: lhs, body: rhs},
+        "∩" => Term::IntersectType { span, var: None, first: lhs, second: rhs },
+        "=" => Term::Equality { span, left: lhs, right: rhs, domain: None },
+        _ => unreachable!()
+    };
+
     Ok((rest, term))
 }
 
 fn parse_term_lambda(input : In) -> IResult<In, Term> {
-    unimplemented!()
+    let (rest, (start, _, vars, _, _, body))
+    = tuple((
+        alt((tag("λ"), tag("Λ"))),
+        multispace0,
+        separated_list1(multispace1, parse_lambda_var),
+        multispace0,
+        tag("."),
+        parse_term
+    ))(input)?;
+
+    let span = (start.location_offset(), body.span().1);
+    let body = body.boxed();
+    let mode = match *start.fragment() {
+        "λ" => Mode::Free,
+        "Λ" => Mode::Erased,
+        _ => unreachable!()
+    };
+    let term = Term::Lambda { span, vars, body };
+
+    Ok((rest, term))
 }
 
 fn parse_term_equal(input : In) -> IResult<In, Term> {
@@ -205,13 +249,22 @@ fn parse_term_body(input : In) -> IResult<In, Term> {
     unimplemented!()
 }
 
+fn parse_term_atom(input: In) -> IResult<In, Term> {
+    unimplemented!()
+}
+
 fn parse_symbol(input : In) -> IResult<In, Out<Symbol>> {
+    unimplemented!()
+}
+
+fn parse_lambda_var(input: In) -> IResult<In, LambdaVar> {
     unimplemented!()
 }
 
 fn parse_ident(input : In) -> IResult<In, Out<Id>> {
     unimplemented!()
 }
+
 
 
 

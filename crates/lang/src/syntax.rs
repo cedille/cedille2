@@ -133,7 +133,8 @@ pub enum Term {
     Equality {
         span: Span,
         left: Box<Term>,
-        right: Box<Term>
+        right: Box<Term>,
+        domain: Option<Box<Term>>
     },
     Rewrite {
         span: Span,
