@@ -184,8 +184,8 @@ fn load_module_inner(db : &mut Database, sym: Symbol) -> Result<(), CedilleError
         contains_error: false
     });
 
-    let tree = parser::parse(db.text_ref(sym))?;
-    let ast = parser::module(tree);
-    elaborator::elaborate(db, sym, &ast)?;
+    // let tree = parser::parse(db.text_ref(sym))?;
+    // let ast = parser::module(tree);
+    // elaborator::elaborate(db, sym, &ast)?;
     Ok(())
 }

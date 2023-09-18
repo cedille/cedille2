@@ -12,7 +12,7 @@ use crate::database::DatabaseError;
 
 #[derive(Debug)]
 pub enum CedilleError {
-    Parser(pest::error::Error<parser::Rule>),
+    // Parser(pest::error::Error<parser::Rule>),
     Elaborator(ElabError),
     Database(DatabaseError),
     External(Box<dyn Error + Send + Sync>),
@@ -22,9 +22,9 @@ pub enum CedilleError {
 impl fmt::Display for CedilleError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            CedilleError::Parser(error) => {
-                error.fmt(f)
-            }
+            // CedilleError::Parser(error) => {
+            //     error.fmt(f)
+            // }
             CedilleError::Elaborator(e) => {
                 let mut out = String::new();
                 GraphicalReportHandler::new_themed(GraphicalTheme::unicode())
@@ -45,9 +45,9 @@ impl fmt::Display for CedilleError {
     }
 }
 
-impl From<pest::error::Error<parser::Rule>> for CedilleError {
-    fn from (error: pest::error::Error<parser::Rule>) -> Self { CedilleError::Parser(error) }
-}
+// impl From<pest::error::Error<parser::Rule>> for CedilleError {
+//     fn from (error: pest::error::Error<parser::Rule>) -> Self { CedilleError::Parser(error) }
+// }
 
 impl From<ElabError> for CedilleError {
     fn from (error: ElabError) -> Self { CedilleError::Elaborator(error) }

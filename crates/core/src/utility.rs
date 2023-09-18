@@ -2,6 +2,16 @@
 use std::{ops, fmt};
 use internment::LocalIntern;
 
+pub trait Boxable {
+    fn boxed(self) -> Box<Self>;
+}
+
+impl<T> Boxable for T {
+    fn boxed(self: T) -> Box<T> {
+        Box::new(self)
+    }
+}
+
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Symbol(LocalIntern<String>);
 
