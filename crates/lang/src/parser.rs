@@ -3,11 +3,11 @@ use nom::{
     IResult,
     Parser,
     branch::alt,
-    combinator::{opt, recognize, all_consuming},
+    combinator::{opt, recognize, all_consuming, value, eof},
     sequence::{delimited, tuple, pair},
     multi::{separated_list1, separated_list0},
-    character::complete::{multispace0, multispace1, alpha1},
-    bytes::complete::tag
+    character::complete::{multispace0, multispace1, alpha1, alphanumeric1},
+    bytes::complete::{tag, is_not}
 };
 use nom_locate::LocatedSpan;
 
@@ -20,14 +20,15 @@ type Span = (usize, usize);
 pub fn parse_file(input: In) -> IResult<In, Module> {
     let inner
     = tuple((
-        separated_list0(multispace0, parse_command),
+        parse_command_sequence,
         tag("module"),
         parse_path,
         tag(";"),
-        separated_list0(multispace0, parse_command)
+        parse_command_sequence,
+        eof
     ));
 
-    let (rest, (c1, _, path, _, c2)) = all_consuming(inner)(input)?;
+    let (rest, (c1, _, path, _, c2, _)) = all_consuming(inner)(input)?;
     let module = Module {
         header_commands: c1,
         path,
@@ -38,14 +39,25 @@ pub fn parse_file(input: In) -> IResult<In, Module> {
     Ok((rest, module))
 }
 
+fn parse_command_sequence(input : In) -> IResult<In, Vec<Command>> {
+    delimited(
+        multispace0,
+        separated_list0(multispace1, parse_command),
+        multispace0)
+    (input)
+}
+
 pub fn parse_command(input : In) -> IResult<In, Command> {
-    let inner = alt((
+    alt((
+        parse_comment,
         parse_import,
         parse_def,
         parse_decl,
-    ));
-    
-    delimited(multispace0, inner, multispace0)(input)
+    ))(input)
+}
+
+fn parse_comment(input: In) -> IResult<In, Command> {
+    value(Command::Comment, pair(tag("--"), is_not("\n\r")))(input)
 }
 
 fn parse_import(input: In) -> IResult<In, Command> {
@@ -69,10 +81,11 @@ fn parse_import(input: In) -> IResult<In, Command> {
 }
 
 fn parse_def(input: In) -> IResult<In, Command> {
-    let (rest, (name, vars, _, body, end))
+    let (rest, (name, vars, _, _, body, end))
     = tuple((
-        parse_symbol,
+        parse_delimited_symbol,
         separated_list0(multispace1, parse_lambda_var),
+        multispace0,
         tag(":="),
         parse_term,
         tag(";")
@@ -91,7 +104,7 @@ fn parse_def(input: In) -> IResult<In, Command> {
 fn parse_decl(input: In) -> IResult<In, Command> {
     let (rest, (name, _, body, end))
     = tuple((
-        parse_symbol,
+        parse_delimited_symbol,
         tag(":"),
         parse_term,
         tag(";")
@@ -123,7 +136,7 @@ fn parse_term_let(input : In) -> IResult<In, Term> {
     let (rest, (start, sym, ann, _, def, end, body))
     = tuple((
         tag("let"),
-        parse_symbol,
+        parse_delimited_symbol,
         opt(pair(tag(":"), parse_term)),
         tag(":="),
         parse_term,
@@ -153,7 +166,7 @@ fn parse_term_binder(input : In) -> IResult<In, Term> {
     let (rest, (start, sym, _, ann, _, _, kind, body))
     = tuple((
         tag("("),
-        parse_symbol,
+        parse_delimited_symbol,
         tag(":"),
         parse_term,
         tag(")"),
@@ -203,7 +216,7 @@ fn parse_term_simple_binder(input : In) -> IResult<In, Term> {
 fn parse_term_lambda(input : In) -> IResult<In, Term> {
     let (rest, (start, _, vars, _, _, body))
     = tuple((
-        alt((tag("λ"), tag("Λ"))),
+        tag("λ"),
         multispace0,
         separated_list1(multispace1, parse_lambda_var),
         multispace0,
@@ -213,11 +226,6 @@ fn parse_term_lambda(input : In) -> IResult<In, Term> {
 
     let span = (start.location_offset(), body.span().1);
     let body = body.boxed();
-    let mode = match *start.fragment() {
-        "λ" => Mode::Free,
-        "Λ" => Mode::Erased,
-        _ => unreachable!()
-    };
     let term = Term::Lambda { span, vars, body };
 
     Ok((rest, term))
@@ -250,10 +258,11 @@ fn parse_term_application(input : In) -> IResult<In, Term> {
 
     // Safety: Parser guarantees that args.len() > 0
     let head = unsafe { args.pop().unwrap_unchecked() };
+    let start = head.span().0;
 
     let term = args.drain(..)
         .fold(head, |acc, t| {
-            let span = (head.span().0, t.span().1);
+            let span = (start, t.span().1);
             Term::Apply { span, fun: acc.boxed(), arg: t.boxed() }
         });
 
@@ -271,6 +280,7 @@ fn parse_term_atom(input: In) -> IResult<In, Term> {
     let inner = alt((
         parse_term_pair,
         parse_term_cast,
+        parse_term_paren,
         parse_term_variable
     ));
     
@@ -375,11 +385,11 @@ fn parse_lambda_var(input: In) -> IResult<In, LambdaVar> {
     let parse_ann = tuple((
         opt(tag("-")),
         tag("("),
-        parse_symbol,
+        parse_delimited_symbol,
         tag(":"),
         parse_term,
         tag(")")
-    )).map(|(is_erased, start, sym, _, ann, end)| {
+    )).map(|(is_erased, _, sym, _, ann, _)| {
         let mode = if is_erased.is_some() { Mode::Erased } else { Mode::Free };
         (mode, sym.0, Some(ann))
     });
@@ -396,7 +406,8 @@ fn parse_lambda_var(input: In) -> IResult<In, LambdaVar> {
 }
 
 fn parse_ident(input : In) -> IResult<In, (Id, Span)> {
-    let (rest, mut names) = separated_list1(tag("."), parse_symbol)(input)?;
+    let inner = separated_list1(tag("."), parse_symbol);
+    let (rest, mut names) = delimited(multispace0, inner, multispace0)(input)?;
 
     let start =
         if let Some((_, (start, _))) = names.first() { *start }
@@ -407,11 +418,11 @@ fn parse_ident(input : In) -> IResult<In, (Id, Span)> {
     let span = (start, end);
 
     let len = names.len();
-    let mut iter = names.drain(..);
-    let namespace: Vec<_> = iter.take(len - 1).map(|(x, _)| x).collect();
+    let iter = &mut names.drain(..);
 
     // Safety: Parser guarantees there is at least one symbol
-    let name = unsafe { iter.next().unwrap_unchecked().0 };
+    let name = unsafe { iter.last().unwrap_unchecked().0 };
+    let namespace: Vec<_> = iter.take(len - 1).map(|(x, _)| x).collect();
 
     let id = Id { namespace, name };
     let result = (id, span);
@@ -434,6 +445,34 @@ fn parse_symbol(input : In) -> IResult<In, (Symbol, Span)> {
     Ok((rest, (sym, span)))
 }
 
+fn parse_delimited_symbol(input : In) -> IResult<In, (Symbol, Span)> {
+    delimited(multispace0, parse_symbol, multispace0)(input)
+}
+
 fn parse_path(input : In) -> IResult<In, Span> {
-    unimplemented!()
+    let inner = recognize(separated_list1(
+        tag("/"),
+        alt((alphanumeric1, tag(".."), tag(".")))
+    ));
+
+    let (rest, path) = delimited(multispace0, inner, multispace0)(input)?;
+
+    let span = (path.location_offset(), path.location_offset() + path.fragment().len());
+    Ok((rest, span))
+}
+
+mod tests {
+    use super::*;
+
+    #[test]
+    fn basic_test() {
+        let input = r#"
+            module nat;
+            --hmmm
+        "#;
+        let input = LocatedSpan::new(input);
+        let output = parse_file(input);
+        assert!(output.is_ok());
+    }
+
 }

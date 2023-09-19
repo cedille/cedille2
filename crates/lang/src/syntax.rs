@@ -27,7 +27,8 @@ pub enum Command {
     Infer(Term),
     Check(Term, Term),
     Erase(Term),
-    Value(Term)
+    Value(Term),
+    Comment
 }
 
 #[derive(Debug, Clone)]
@@ -244,13 +245,13 @@ impl Term {
             Term::Lambda { span, .. }
             | Term::Let { span, .. }
             | Term::Pi { span, .. }
-            | Term::IntersectType { span, .. }
+            | Term::Intersect { span, .. }
             | Term::Equality { span, .. }
             | Term::Rewrite { span, .. }
             | Term::Annotate { span, .. }
             | Term::Project { span, .. }
             | Term::Symmetry { span, .. }
-            | Term::Intersect { span, .. }
+            | Term::Pair { span, .. }
             | Term::Separate { span, .. }
             | Term::Reflexivity { span, .. }
             | Term::Cast { span, .. }

@@ -13,6 +13,7 @@ use miette::SourceSpan;
 use thiserror::Error;
 use normpath::PathExt;
 use if_chain::if_chain;
+use nom_locate::LocatedSpan;
 
 use cedille2_core::utility::*;
 use cedille2_core::term;
@@ -21,7 +22,7 @@ use cedille2_core::value::{Environment, LazyValue, Value, ValueEx, SpineEntry, S
 use cedille2_core::database::{Database, ModuleData, ImportData};
 use crate::syntax;
 use crate::parser;
-use crate::elaborator::{self, Context, ElabError};
+//use crate::elaborator::{self, Context, ElabError};
 use crate::error::CedilleError;
 
 #[derive(Debug, Error)]
@@ -141,6 +142,7 @@ impl DatabaseExt for Database {
         let ext = path.extension().unwrap_or_default();
         if ext.to_string_lossy() != "ced" { return Ok(Symbol::from("")); }
         let sym = path_to_module_symbol(Path::new(""), path)?;
+        dbg!(sym);
         self.load_module(sym)?;
         Ok(sym)
     }
@@ -184,7 +186,9 @@ fn load_module_inner(db : &mut Database, sym: Symbol) -> Result<(), CedilleError
         contains_error: false
     });
 
-    // let tree = parser::parse(db.text_ref(sym))?;
+    let input = LocatedSpan::new(db.text_ref(sym));
+    let tree = parser::parse_file(input);
+    dbg!(tree);
     // let ast = parser::module(tree);
     // elaborator::elaborate(db, sym, &ast)?;
     Ok(())
