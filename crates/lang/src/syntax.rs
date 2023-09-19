@@ -1,5 +1,5 @@
 
-use cedille2_core::utility::*;
+use cedille2_core::{utility::*, term::Decl};
 
 type Span = (usize, usize);
 
@@ -13,19 +13,21 @@ pub struct Parameter {
 
 #[derive(Debug, Clone)]
 pub struct Module {
-    pub header_imports: Vec<Import>,
+    pub header_commands: Vec<Command>,
     pub path: Span,
-    pub decls: Vec<Decl>,
+    pub commands: Vec<Command>,
     pub params: Vec<Parameter>
 }
 
 #[derive(Debug, Clone)]
-pub enum Decl {
-    Term(DefineTerm),
-    Kind(DefineKind),
+pub enum Command {
+    Declare(Declaration),
+    Define(Definition),
     Import(Import),
-    Datatype(DefineDatatype),
-    NormalizeCommand(Term, bool, bool)
+    Infer(Term),
+    Check(Term, Term),
+    Erase(Term),
+    Value(Term)
 }
 
 #[derive(Debug, Clone)]
@@ -35,6 +37,21 @@ pub struct Import {
     pub path: Span,
     pub namespace: Option<Symbol>,
     pub args : Vec<(Mode, Term)>
+}
+
+#[derive(Debug, Clone)]
+pub struct Declaration {
+    pub span: Span,
+    pub name: Symbol,
+    pub body: Box<Term>
+}
+
+#[derive(Debug, Clone)]
+pub struct Definition {
+    pub span: Span,
+    pub name: Symbol,
+    pub vars: Vec<LambdaVar>,
+    pub body: Box<Term>
 }
 
 #[derive(Debug, Clone)]
@@ -124,7 +141,7 @@ pub enum Term {
         domain: Box<Term>,
         body: Box<Term>
     },
-    IntersectType {
+    Intersect {
         span: Span,
         var: Option<Symbol>,
         first: Box<Term>,
@@ -158,8 +175,9 @@ pub enum Term {
         span: Span,
         equation: Box<Term>
     },
-    Intersect {
+    Pair {
         span: Span,
+        anno: Option<Box<Term>>,
         first: Box<Term>,
         second: Box<Term>
     },
@@ -175,9 +193,9 @@ pub enum Term {
     },
     Cast {
         span: Span,
-        equation: Box<Term>,
         input: Box<Term>,
-        erasure: Box<Term>
+        witness: Box<Term>,
+        evidence: Box<Term>
     },
     Induct {
         span: Span,
@@ -195,7 +213,6 @@ pub enum Term {
     },
     Apply {
         span: Span,
-        mode: Mode,
         fun: Box<Term>,
         arg: Box<Term>
     },
