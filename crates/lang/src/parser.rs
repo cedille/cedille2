@@ -6,7 +6,7 @@ use nom::{
     combinator::{opt, recognize, all_consuming, value, eof},
     sequence::{delimited, tuple, pair},
     multi::{separated_list1, separated_list0},
-    character::complete::{multispace0, multispace1, alpha1, alphanumeric1},
+    character::complete::{multispace0, multispace1, alpha1, alphanumeric1, alphanumeric0},
     bytes::complete::{tag, is_not}
 };
 use nom_locate::LocatedSpan;
@@ -420,9 +420,9 @@ fn parse_ident(input : In) -> IResult<In, (Id, Span)> {
     let len = names.len();
     let iter = &mut names.drain(..);
 
+    let namespace: Vec<_> = iter.take(len - 1).map(|(x, _)| x).collect();
     // Safety: Parser guarantees there is at least one symbol
     let name = unsafe { iter.last().unwrap_unchecked().0 };
-    let namespace: Vec<_> = iter.take(len - 1).map(|(x, _)| x).collect();
 
     let id = Id { namespace, name };
     let result = (id, span);
@@ -434,9 +434,10 @@ fn parse_symbol(input : In) -> IResult<In, (Symbol, Span)> {
     let (rest, symbol)
     = recognize(tuple((
         alpha1,
+        alphanumeric0,
         opt(pair(
             alt((tag("-"), tag("_"))),
-            alpha1
+            alphanumeric0
         )),
     )))(input)?;
 

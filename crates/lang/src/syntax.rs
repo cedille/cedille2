@@ -1,5 +1,5 @@
 
-use cedille2_core::{utility::*, term::Decl};
+use cedille2_core::utility::*;
 
 type Span = (usize, usize);
 
