@@ -1,9 +1,6 @@
 
-use std::any::type_name;
 use std::rc::Rc;
 use std::sync::Arc;
-use std::io::prelude::*;
-use std::fs::{self, File};
 use std::time;
 use std::path::{Path, PathBuf};
 use std::collections::{HashSet, HashMap};
@@ -91,6 +88,12 @@ impl ModuleData {
 pub struct Database {
     pub modules: HashMap<Symbol, ModuleData>,
     pub queued: Vec<Symbol>
+}
+
+impl Default for Database {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Database {

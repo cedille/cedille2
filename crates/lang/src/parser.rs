@@ -1,74 +1,89 @@
 
 use nom::{
-    IResult,
     Parser,
     branch::alt,
-    combinator::{opt, recognize, all_consuming, value, eof},
-    sequence::{delimited, tuple, pair},
-    multi::{separated_list1, separated_list0},
-    character::complete::{multispace0, multispace1, alpha1, alphanumeric1, alphanumeric0},
-    bytes::complete::{tag, is_not}
+    error::context,
+    combinator::{opt, recognize, value, peek, not, eof},
+    sequence::{tuple, pair},
+    multi::{separated_list1, separated_list0, many0_count, many1_count},
+    character::complete::{multispace0, alpha1, alphanumeric1, alphanumeric0, line_ending, not_line_ending},
+    bytes::complete::{is_not, is_a, take_while}
 };
 use nom_locate::LocatedSpan;
+use nom_supreme::{
+    error::ErrorTree,
+    tag::complete::tag,
+    multi::collect_separated_terminated,
+    parser_ext::ParserExt,
+    final_parser::final_parser
+};
+
 
 use cedille2_core::utility::*;
 use crate::syntax::*;
 
 type In<'a> = LocatedSpan<&'a str>;
 type Span = (usize, usize);
+type IResult<I, O> = Result<(I, O), nom::Err<ErrorTree<I>>>;
 
-pub fn parse_file(input: In) -> IResult<In, Module> {
-    let inner
-    = tuple((
-        parse_command_sequence,
-        tag("module"),
-        parse_path,
-        tag(";"),
-        parse_command_sequence,
-        eof
-    ));
-
-    let (rest, (c1, _, path, _, c2, _)) = all_consuming(inner)(input)?;
-    let module = Module {
-        header_commands: c1,
-        path,
-        commands: c2,
-        params: vec![]
-    };
-
-    Ok((rest, module))
+pub fn parse_file(input: In) -> Result<Vec<Command>, ErrorTree<In>> {
+    let mut result = final_parser(parse_command_sequence);
+    result(input)
 }
 
-fn parse_command_sequence(input : In) -> IResult<In, Vec<Command>> {
-    delimited(
-        multispace0,
-        separated_list0(multispace1, parse_command),
-        multispace0)
-    (input)
+fn parse_command_sequence(mut input : In) -> IResult<In, Vec<Command>> {
+    let mut result = Vec::with_capacity(8);
+
+    let (rest, _) = many0_count(empty_line)(input)?;
+    input = rest;
+
+    while input.len() > 0 {
+        let (rest, command) = parse_command(input)?;
+        result.push(command);
+
+        let (rest, _) = alt((
+            eof.preceded_by(multispace0).map(|_| ()),
+            many1_count(empty_line).map(|_| ()),
+        ))(rest)?;
+
+        input = rest;
+    }
+
+    Ok((input, result))
 }
 
 pub fn parse_command(input : In) -> IResult<In, Command> {
-    alt((
-        parse_comment,
-        parse_import,
-        parse_def,
-        parse_decl,
-    ))(input)
+    let (_, keyword) = peek(alt((
+        tag("module").preceded_by(bspace0(2)),
+        tag("import").preceded_by(bspace0(2)),
+        tag("").preceded_by(bspace0(2))
+    )))(input)?;
+
+    match *keyword {
+        "module" => parse_module(input),
+        "import" => parse_import(input),
+        _ => parse_def(input)
+    }
 }
 
-fn parse_comment(input: In) -> IResult<In, Command> {
-    value(Command::Comment, pair(tag("--"), is_not("\n\r")))(input)
+fn parse_module(input: In) -> IResult<In, Command> {
+    let (rest, (_, path)) = context("module", tuple((
+        tag("module").preceded_by(bspace0(2)),
+        parse_path.preceded_by(bspace0(2))
+    )))(input)?;
+
+    let module = Command::Module(path, vec![]);
+    Ok((rest, module))
 }
 
 fn parse_import(input: In) -> IResult<In, Command> {
-    let (rest, (start, path, end))
-    = tuple((
-        tag("import"),
-        parse_path,
-        tag(";")
-    ))(input)?;
+    let (rest, (start, path))
+    = context("import", tuple((
+        tag("import").preceded_by(bspace0(2)),
+        parse_path.preceded_by(bspace0(2))
+    )))(input)?;
 
-    let span = (start.location_offset(), end.location_offset());
+    let span = (start.location_offset(), path.1);
     let import = Import {
         span,
         public: false,
@@ -81,42 +96,36 @@ fn parse_import(input: In) -> IResult<In, Command> {
 }
 
 fn parse_def(input: In) -> IResult<In, Command> {
-    let (rest, (name, vars, _, _, body, end))
-    = tuple((
-        parse_delimited_symbol,
-        separated_list0(multispace1, parse_lambda_var),
-        multispace0,
-        tag(":="),
-        parse_term,
-        tag(";")
-    ))(input)?;
+    let (rest, (name, vars, kind, body))
+    = context("def", tuple((
+        parse_symbol.preceded_by(bspace0(2)),
+        separated_list0(bspace1(2), parse_lambda_var).preceded_by(bspace0(2)),
+        alt((tag(":="), tag(":"))).preceded_by(bspace0(2)),
+        parse_term
+    )))(input)?;
 
-    let span = (name.1.0, end.location_offset());
-    let def = Definition {
-        span,
-        name: name.0,
-        vars,
-        body: body.boxed()
+    let span = (name.1.0, body.span().1);
+    let command = match *kind {
+        ":" => {
+            let decl = Declaration {
+                span,
+                name: name.0,
+                body: body.boxed()
+            };
+            Command::Declare(decl)
+        }
+        ":=" => {
+            let def = Definition {
+                span,
+                name: name.0,
+                vars,
+                body: body.boxed()
+            };
+            Command::Define(def)
+        },
+        _ => unreachable!()
     };
-    Ok((rest, Command::Define(def)))
-}
-
-fn parse_decl(input: In) -> IResult<In, Command> {
-    let (rest, (name, _, body, end))
-    = tuple((
-        parse_delimited_symbol,
-        tag(":"),
-        parse_term,
-        tag(";")
-    ))(input)?;
-
-    let span = (name.1.0, end.location_offset());
-    let decl = Declaration {
-        span,
-        name: name.0,
-        body: body.boxed()
-    };
-    Ok((rest, Command::Declare(decl)))
+    Ok((rest, command))
 }
 
 pub fn parse_term(input : In) -> IResult<In, Term> {
@@ -129,20 +138,23 @@ pub fn parse_term(input : In) -> IResult<In, Term> {
         parse_term_application
     ));
     
-    delimited(multispace0, inner, multispace0)(input)
+    inner.preceded_by(bspace0(0)).parse(input)
 }
 
 fn parse_term_let(input : In) -> IResult<In, Term> {
     let (rest, (start, sym, ann, _, def, end, body))
-    = tuple((
-        tag("let"),
-        parse_delimited_symbol,
-        opt(pair(tag(":"), parse_term)),
-        tag(":="),
+    = context("let", tuple((
+        tag("let").preceded_by(bspace0(2)),
+        parse_symbol.preceded_by(bspace0(2)),
+        opt(pair(
+            tag(":").preceded_by(bspace0(2)), 
+            parse_term
+        )),
+        tag(":=").preceded_by(bspace0(2)),
         parse_term,
-        tag(";"),
+        tag(";").preceded_by(bspace0(2)),
         parse_term
-    ))(input)?;
+    )))(input)?;
 
     let def = DefineTerm {
         span: (start.location_offset(), end.location_offset()),
@@ -163,17 +175,16 @@ fn parse_term_let(input : In) -> IResult<In, Term> {
 }
 
 fn parse_term_binder(input : In) -> IResult<In, Term> {
-    let (rest, (start, sym, _, ann, _, _, kind, body))
-    = tuple((
-        tag("("),
-        parse_delimited_symbol,
-        tag(":"),
+    let (rest, (start, sym, _, ann, _, kind, body))
+    = context("binder", tuple((
+        tag("(").preceded_by(bspace0(2)),
+        parse_symbol.preceded_by(bspace0(2)),
+        tag(":").preceded_by(bspace0(2)),
         parse_term,
-        tag(")"),
-        multispace1,
-        alt((tag("->"), tag("=>"), tag("∩"))),
+        tag(")").preceded_by(bspace0(2)),
+        alt((tag("->"), tag("=>"), tag("∩"))).preceded_by(bspace0(2)),
         parse_term
-    ))(input)?;
+    )))(input)?;
 
     let span = (start.location_offset(), body.span().1);
     let var = Some(sym.0);
@@ -192,11 +203,11 @@ fn parse_term_binder(input : In) -> IResult<In, Term> {
 
 fn parse_term_simple_binder(input : In) -> IResult<In, Term> {
     let (rest, (lhs, kind, rhs))
-    = tuple((
-        parse_term_atom,
-        alt((tag("->"), tag("=>"), tag("∩"), tag("="))),
-        parse_term
-    ))(input)?;
+    = context("simple_binder", tuple((
+        parse_term_atom.preceded_by(bspace0(2)),
+        alt((tag("->"), tag("=>"), tag("∩"), tag("="))).preceded_by(bspace0(2)),
+        parse_term.preceded_by(bspace0(2))
+    )))(input)?;
 
     let span = (lhs.span().0, rhs.span().1);
     let lhs = lhs.boxed();
@@ -214,15 +225,13 @@ fn parse_term_simple_binder(input : In) -> IResult<In, Term> {
 }
 
 fn parse_term_lambda(input : In) -> IResult<In, Term> {
-    let (rest, (start, _, vars, _, _, body))
-    = tuple((
-        tag("λ"),
-        multispace0,
-        separated_list1(multispace1, parse_lambda_var),
-        multispace0,
-        tag("."),
-        parse_term
-    ))(input)?;
+    let (rest, (start, vars, _, body))
+    = context("lambda", tuple((
+        tag("λ").preceded_by(bspace0(2)),
+        separated_list1(bspace1(2), parse_lambda_var).preceded_by(bspace0(2)),
+        tag(".").preceded_by(bspace0(2)),
+        parse_term.preceded_by(bspace0(2))
+    )))(input)?;
 
     let span = (start.location_offset(), body.span().1);
     let body = body.boxed();
@@ -234,13 +243,13 @@ fn parse_term_lambda(input : In) -> IResult<In, Term> {
 // atom "=[" term "]" term
 fn parse_term_equal(input : In) -> IResult<In, Term> {
     let (rest, (lhs, _, ann, _, rhs))
-    = tuple((
+    = context("equal", tuple((
         parse_term_atom,
-        tag("=["),
+        tag("=[").preceded_by(bspace0(2)),
         parse_term,
-        tag("]"),
+        tag("]").preceded_by(bspace0(2)),
         parse_term
-    ))(input)?;
+    )))(input)?;
 
     let span = (lhs.span().0, rhs.span().1);
     let term = Term::Equality {
@@ -254,13 +263,17 @@ fn parse_term_equal(input : In) -> IResult<In, Term> {
 }
 
 fn parse_term_application(input : In) -> IResult<In, Term> {
-    let (rest, mut args) = separated_list1(multispace1, parse_term_atom)(input)?;
+    let (rest, mut args)
+    = context("application",
+        separated_list1(bspace1(2), parse_term_atom).preceded_by(bspace0(2))
+    )(input)?;
 
+    let mut tail = args.split_off(1);
     // Safety: Parser guarantees that args.len() > 0
-    let head = unsafe { args.pop().unwrap_unchecked() };
+    let head = args.drain(..).next().unwrap();
     let start = head.span().0;
 
-    let term = args.drain(..)
+    let term = tail.drain(..)
         .fold(head, |acc, t| {
             let span = (start, t.span().1);
             Term::Apply { span, fun: acc.boxed(), arg: t.boxed() }
@@ -284,16 +297,14 @@ fn parse_term_atom(input: In) -> IResult<In, Term> {
         parse_term_variable
     ));
     
-    let (rest, (_, term, proj, _))
-    = tuple((
-        multispace0,
-        inner,
+    let (rest, (term, proj))
+    = context("projection", tuple((
+        inner.preceded_by(bspace0(2)),
         opt(alt((
             tag(".1"),
             tag(".2")
         ))),
-        multispace0
-    ))(input)?;
+    )))(input)?;
 
     let term = if let Some(proj) = proj {
         let span = (term.span().0, proj.location_offset() + 1);
@@ -310,14 +321,17 @@ fn parse_term_atom(input: In) -> IResult<In, Term> {
 // "[" term "," term (";" term)? "]"
 fn parse_term_pair(input: In) -> IResult<In, Term> {
     let (rest, (start, lhs, _, rhs, ann, end))
-    = tuple((
-        tag("["),
+    = context("pair", tuple((
+        tag("[").preceded_by(bspace0(2)),
         parse_term,
-        tag(","),
+        tag(",").preceded_by(bspace0(2)),
         parse_term,
-        opt(pair(tag(";"), parse_term)),
-        tag("]")
-    ))(input)?;
+        opt(pair(
+            tag(";").preceded_by(bspace0(2)), 
+            parse_term
+        )),
+        tag("]").preceded_by(bspace0(2))
+    )))(input)?;
 
     let span = (start.location_offset(), end.location_offset());
     let ann = ann.map(|(_, t)| t.boxed());
@@ -334,15 +348,15 @@ fn parse_term_pair(input: In) -> IResult<In, Term> {
 // "φ" term "{" term "," term "}"
 fn parse_term_cast(input: In) -> IResult<In, Term> {
     let (rest, (start, input, _, witness, _, evidence, end))
-    = tuple((
-        tag("φ"),
+    = context("cast", tuple((
+        tag("φ").preceded_by(bspace0(2)),
         parse_term,
-        tag("{"),
+        tag("{").preceded_by(bspace0(2)),
         parse_term,
-        tag(","),
+        tag(",").preceded_by(bspace0(2)),
         parse_term,
-        tag("}")
-    ))(input)?;
+        tag("}").preceded_by(bspace0(2))
+    )))(input)?;
 
     let span = (start.location_offset(), end.location_offset());
     let term = Term::Cast {
@@ -358,11 +372,11 @@ fn parse_term_cast(input: In) -> IResult<In, Term> {
 // "(" term ")"
 fn parse_term_paren(input: In) -> IResult<In, Term> {
     let (rest, (_, term, _))
-    = tuple((
-        tag("("),
+    = context("paren", tuple((
+        tag("(").preceded_by(bspace0(2)),
         parse_term,
-        tag(")")
-    ))(input)?;
+        tag(")").preceded_by(bspace0(2))
+    )))(input)?;
 
     Ok((rest, term))
 }
@@ -375,21 +389,21 @@ fn parse_term_variable(input: In) -> IResult<In, Term> {
 
 fn parse_lambda_var(input: In) -> IResult<In, LambdaVar> {
     let parse_sym = pair(
-        opt(tag("-")),
-        parse_symbol
+        opt(tag("-")).preceded_by(bspace0(2)),
+        parse_symbol.preceded_by(bspace0(2))
     ).map(|(is_erased, x)| {
         let mode = if is_erased.is_some() { Mode::Erased } else { Mode::Free };
         (mode, x.0, None)
     });
 
-    let parse_ann = tuple((
-        opt(tag("-")),
-        tag("("),
-        parse_delimited_symbol,
-        tag(":"),
+    let parse_ann = context("annotation", tuple((
+        opt(tag("-")).preceded_by(bspace0(2)),
+        tag("(").preceded_by(bspace0(2)),
+        parse_symbol.preceded_by(bspace0(2)),
+        tag(":").preceded_by(bspace0(2)),
         parse_term,
-        tag(")")
-    )).map(|(is_erased, _, sym, _, ann, _)| {
+        tag(")").preceded_by(bspace0(2))
+    ))).map(|(is_erased, _, sym, _, ann, _)| {
         let mode = if is_erased.is_some() { Mode::Erased } else { Mode::Free };
         (mode, sym.0, Some(ann))
     });
@@ -406,8 +420,8 @@ fn parse_lambda_var(input: In) -> IResult<In, LambdaVar> {
 }
 
 fn parse_ident(input : In) -> IResult<In, (Id, Span)> {
-    let inner = separated_list1(tag("."), parse_symbol);
-    let (rest, mut names) = delimited(multispace0, inner, multispace0)(input)?;
+    let inner = context("ident", separated_list1(tag("."), parse_symbol));
+    let (rest, mut names) = inner.preceded_by(bspace0(2)).parse(input)?;
 
     let start =
         if let Some((_, (start, _))) = names.first() { *start }
@@ -432,34 +446,64 @@ fn parse_ident(input : In) -> IResult<In, (Id, Span)> {
 
 fn parse_symbol(input : In) -> IResult<In, (Symbol, Span)> {
     let (rest, symbol)
-    = recognize(tuple((
+    = context("symbol", recognize(tuple((
         alpha1,
         alphanumeric0,
         opt(pair(
             alt((tag("-"), tag("_"))),
             alphanumeric0
         )),
-    )))(input)?;
+    ))))(input)?;
 
     let span = (symbol.location_offset(), symbol.location_offset() + symbol.fragment().len());
     let sym: Symbol = (*symbol.fragment()).into();
     Ok((rest, (sym, span)))
 }
 
-fn parse_delimited_symbol(input : In) -> IResult<In, (Symbol, Span)> {
-    delimited(multispace0, parse_symbol, multispace0)(input)
-}
-
 fn parse_path(input : In) -> IResult<In, Span> {
-    let inner = recognize(separated_list1(
+    let (rest, path) = context("path", recognize(separated_list1(
         tag("/"),
         alt((alphanumeric1, tag(".."), tag(".")))
-    ));
-
-    let (rest, path) = delimited(multispace0, inner, multispace0)(input)?;
+    )))(input)?;
 
     let span = (path.location_offset(), path.location_offset() + path.fragment().len());
     Ok((rest, span))
+}
+
+fn bspace0<'a>(margin: usize) -> impl FnMut(In<'a>) -> IResult<In<'a>, usize> {
+    many0_count(alt((
+        tag(" ").map(|_| ()),
+        tuple((
+            line_ending,
+            take_while(|c| c == ' ')
+                .verify(move |s: &In| s.len() == margin),
+            not(alt((line_ending, tag(" "))))
+        )).map(|_| ())
+    )))
+}
+
+fn bspace1<'a>(margin: usize) -> impl FnMut(In<'a>) -> IResult<In<'a>, usize> {
+    many1_count(alt((
+        tag(" ").map(|_| ()),
+        tuple((
+            line_ending,
+            take_while(|c| c == ' ')
+                .verify(move |s: &In| s.len() == margin),
+            not(alt((line_ending, tag(" "))))
+        )).map(|_| ())
+    )))
+}
+
+fn empty_line(input: In) -> IResult<In, ()> {
+    let (rest, _) = tuple((
+        line_ending,
+        many0_count(tag(" ")),
+        opt(tuple((
+            tag("--"),
+            many0_count(not_line_ending)
+        )))
+    ))(input)?;
+    Ok((rest, ()))
 }
 
 mod tests {

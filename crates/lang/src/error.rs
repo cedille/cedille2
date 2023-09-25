@@ -7,13 +7,13 @@ use miette::{GraphicalReportHandler, GraphicalTheme};
 use rustyline::error::ReadlineError;
 
 use crate::parser;
-//use crate::elaborator::ElabError;
+use crate::elaborator::ElabError;
 use crate::database::DatabaseError;
 
 #[derive(Debug)]
 pub enum CedilleError {
     // Parser(pest::error::Error<parser::Rule>),
-    //Elaborator(ElabError),
+    Elaborator(ElabError),
     Database(DatabaseError),
     External(Box<dyn Error + Send + Sync>),
     Collection(Vec<CedilleError>)
@@ -25,13 +25,13 @@ impl fmt::Display for CedilleError {
             // CedilleError::Parser(error) => {
             //     error.fmt(f)
             // }
-            // CedilleError::Elaborator(e) => {
-            //     let mut out = String::new();
-            //     GraphicalReportHandler::new_themed(GraphicalTheme::unicode())
-            //         .with_width(80)
-            //         .render_report(&mut out, e)?;
-            //     out.fmt(f)
-            // }
+            CedilleError::Elaborator(e) => {
+                let mut out = String::new();
+                GraphicalReportHandler::new_themed(GraphicalTheme::unicode())
+                    .with_width(80)
+                    .render_report(&mut out, e)?;
+                out.fmt(f)
+            }
             CedilleError::Database(e) => e.fmt(f),
             CedilleError::External(e) => e.fmt(f),
             CedilleError::Collection(list) => {
@@ -49,9 +49,9 @@ impl fmt::Display for CedilleError {
 //     fn from (error: pest::error::Error<parser::Rule>) -> Self { CedilleError::Parser(error) }
 // }
 
-// impl From<ElabError> for CedilleError {
-//     fn from (error: ElabError) -> Self { CedilleError::Elaborator(error) }
-// }
+impl From<ElabError> for CedilleError {
+    fn from (error: ElabError) -> Self { CedilleError::Elaborator(error) }
+}
 
 impl From<DatabaseError> for CedilleError {
     fn from(error: DatabaseError) -> Self { CedilleError::Database(error) }

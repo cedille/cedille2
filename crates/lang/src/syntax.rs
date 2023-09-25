@@ -12,15 +12,8 @@ pub struct Parameter {
 }
 
 #[derive(Debug, Clone)]
-pub struct Module {
-    pub header_commands: Vec<Command>,
-    pub path: Span,
-    pub commands: Vec<Command>,
-    pub params: Vec<Parameter>
-}
-
-#[derive(Debug, Clone)]
 pub enum Command {
+    Module(Span, Vec<Parameter>),
     Declare(Declaration),
     Define(Definition),
     Import(Import),
@@ -28,7 +21,6 @@ pub enum Command {
     Check(Term, Term),
     Erase(Term),
     Value(Term),
-    Comment
 }
 
 #[derive(Debug, Clone)]
@@ -65,54 +57,9 @@ pub struct DefineTerm {
 }
 
 #[derive(Debug, Clone)]
-pub struct DefineKind {
-    pub span: Span,
-    pub name: Symbol,
-    pub args: Vec<KindArg>,
-    pub body: Box<Term>
-}
-
-#[derive(Debug, Clone)]
-pub struct DefineDatatype {
-    pub span: Span,
-    pub name: Symbol,
-    pub params: Vec<Parameter>,
-    pub kind: Box<Term>,
-    pub ctors: Vec<Constructor>
-}
-
-#[derive(Debug, Clone)]
-pub struct RewriteGuide {
-    pub name: Symbol,
-    pub hint: Option<Box<Term>>,
-    pub ty: Box<Term>
-}
-
-#[derive(Debug, Clone)]
 pub struct KindArg {
     pub name: Symbol,
     pub body: Term
-}
-
-#[derive(Debug, Clone)]
-pub enum CaseArg {
-    Erased(Symbol),
-    Free(Symbol),
-    Type(Symbol)
-}
-
-#[derive(Debug, Clone)]
-pub struct Case {
-    pub span: Span,
-    pub id: Id,
-    pub args: Vec<CaseArg>,
-    pub body: Term
-}
-
-#[derive(Debug, Clone)]
-pub struct Constructor {
-    pub name: Symbol,
-    pub anno: Term
 }
 
 #[derive(Debug, Clone)]
@@ -154,27 +101,10 @@ pub enum Term {
         right: Box<Term>,
         domain: Option<Box<Term>>
     },
-    Rewrite {
-        span: Span,
-        reduce: bool,
-        occurrence: Option<usize>,
-        equation: Box<Term>,
-        guide: Option<RewriteGuide>,
-        body: Box<Term>
-    },
-    Annotate {
-        span: Span,
-        anno: Box<Term>,
-        body: Box<Term>
-    },
     Project {
         span: Span,
         variant: usize,
         body: Box<Term>
-    },
-    Symmetry {
-        span: Span,
-        equation: Box<Term>
     },
     Pair {
         span: Span,
@@ -198,20 +128,6 @@ pub enum Term {
         witness: Box<Term>,
         evidence: Box<Term>
     },
-    Induct {
-        span: Span,
-        var: Symbol,
-        inductee: Box<Term>,
-        motive: Option<Box<Term>>,
-        cases: Vec<Case>
-    },
-    Match {
-        span: Span,
-        guide: Option<Box<Term>>,
-        matched: Box<Term>,
-        motive: Option<Box<Term>>,
-        cases: Vec<Case>
-    },
     Apply {
         span: Span,
         fun: Box<Term>,
@@ -220,9 +136,6 @@ pub enum Term {
     Variable {
         span: Span,
         id: Id
-    },
-    Star { 
-        span: Span
     },
     Hole {
         span: Span
@@ -247,19 +160,13 @@ impl Term {
             | Term::Pi { span, .. }
             | Term::Intersect { span, .. }
             | Term::Equality { span, .. }
-            | Term::Rewrite { span, .. }
-            | Term::Annotate { span, .. }
             | Term::Project { span, .. }
-            | Term::Symmetry { span, .. }
             | Term::Pair { span, .. }
             | Term::Separate { span, .. }
             | Term::Reflexivity { span, .. }
             | Term::Cast { span, .. }
-            | Term::Induct { span, .. }
-            | Term::Match { span, .. }
             | Term::Apply { span, .. }
             | Term::Variable { span, .. }
-            | Term::Star { span }
             | Term::Hole { span, .. }
             | Term::Omission { span, .. }
             => *span,

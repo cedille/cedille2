@@ -24,10 +24,7 @@ directories = "=4"
 # Parsing libraries
 nom = "7.1.3"
 nom_locate = "4.2.0"
-logos = "0.13.0"
-chumsky = "0.9"
-pest = "=2.1.3"
-pest_derive = "=2.1.0"
+nom-supreme = "0.8.0"
 ## Consider: https://lib.rs/crates/chumsky (not mature, grammar is combinator based)
 
 # Memory management libraries

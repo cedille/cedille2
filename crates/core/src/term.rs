@@ -36,13 +36,6 @@ pub struct Decl {
 }
 
 #[derive(Debug, Hash, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct RewriteGuide {
-    pub name: Symbol,
-    pub hint: Rc<Term>,
-    pub ty: Rc<Term>
-}
-
-#[derive(Debug, Hash, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Term {
     Lambda {
         sort: Sort,
@@ -53,7 +46,6 @@ pub enum Term {
     },
     Let {
         sort: Sort,
-        mode: Mode,
         name: Symbol,
         let_body: Rc<Term>,
         body: Rc<Term>
@@ -74,15 +66,6 @@ pub enum Term {
         left: Rc<Term>,
         right: Rc<Term>
     },
-    Rewrite {
-        equation: Rc<Term>,
-        guide: RewriteGuide,
-        body: Rc<Term>
-    },
-    Annotate {
-        anno: Rc<Term>,
-        body: Rc<Term>
-    },
     Project {
         variant: usize,
         body: Rc<Term>
@@ -98,9 +81,9 @@ pub enum Term {
         erasure: Rc<Term>
     },
     Cast {
-        equation: Rc<Term>,
         input: Rc<Term>,
-        erasure: Rc<Term>
+        witness: Rc<Term>,
+        evidence: Rc<Term>,
     },
     Apply {
         sort: Sort,
@@ -129,15 +112,6 @@ pub enum Term {
     SuperStar,
 }
 
-impl RewriteGuide {
-    pub fn to_string_with_context(&self, mut ctx: im_rc::Vector<Symbol>) -> String {
-        let hint = self.hint.to_string_with_context(ctx.clone());
-        ctx.push_back(self.name);
-        let ty = self.ty.to_string_with_context(ctx);
-        format!("@ {} <{}>. {}", self.name, hint, ty)
-    }
-}
-
 impl fmt::Display for Decl {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{} : {} = {}", self.name, self.ty, self.body)
@@ -164,28 +138,22 @@ impl Term {
                     body:Rc::new(body.partial_erase())
                 }
             }
-            Term::Let { sort, mode, name, let_body, body } => {
-                if *mode == Mode::Erased { body.partial_erase() }
-                else {
-                    Term::Let {
-                        sort:*sort,
-                        mode:*mode,
-                        name:*name,
-                        let_body:Rc::new(let_body.partial_erase()),
-                        body:Rc::new(body.partial_erase())
-                    }
+            Term::Let { sort, name, let_body, body } => {
+                Term::Let {
+                    sort:*sort,
+                    name:*name,
+                    let_body:Rc::new(let_body.partial_erase()),
+                    body:Rc::new(body.partial_erase())
                 }
             }
             t @ Term::Pi { .. }
             | t @ Term::IntersectType { .. }
             | t @ Term::Equality { .. } => t.clone(),
-            Term::Rewrite { body, .. } => body.partial_erase(),
-            Term::Annotate { body, .. } => body.partial_erase(),
             Term::Project { body, .. } => body.partial_erase(),
             Term::Intersect { first, .. } => first.partial_erase(),
             Term::Separate { .. } => Term::id(),
             Term::Refl { erasure } => erasure.partial_erase(),
-            Term::Cast { erasure, .. } => erasure.partial_erase(),
+            Term::Cast { input, .. } => input.partial_erase(),
             Term::Apply { sort, mode, fun, arg } => {
                 if *mode == Mode::Erased { fun.partial_erase() }
                 else {
@@ -213,8 +181,6 @@ impl Term {
             | Term::Pi { sort, .. } => *sort,
             Term::IntersectType { .. }
             | Term::Equality { .. } => Sort::Type,
-            Term::Rewrite { .. }
-            | Term::Annotate { .. }
             | Term::Project { .. }
             | Term::Intersect { .. }
             | Term::Separate { .. }
@@ -237,8 +203,6 @@ impl Term {
             | Term::Pi { .. }
             | Term::IntersectType { .. } => true,
             Term::Equality { .. } => false,
-            Term::Rewrite { .. }
-            | Term::Annotate { .. } => true,
             Term::Project { .. }
             | Term::Intersect { .. } => false,
             Term::Separate { .. } => true,
@@ -262,25 +226,23 @@ impl Term {
                 let binder = match mode {
                     Mode::Erased => "Λ",
                     Mode::Free => "λ",
+                    Mode::TypeLevel => "λ"
                 };
                 ctx.push_back(*name);
                 let body = body.to_string_with_context(ctx);
                 format!("{} {}. {}", binder, name, body)
             }
-            Term::Let { mode, name, let_body, body, .. } => {
-                let (left, right) = match mode {
-                    Mode::Erased => ("{", "}"),
-                    Mode::Free => ("[", "]")
-                };
+            Term::Let { name, let_body, body, .. } => {
                 let let_body = let_body.to_string_with_context(ctx.clone());
                 ctx.push_back(*name);
                 let body = body.to_string_with_context(ctx);
-                format!("{}{} = {}{} - {}", left, name, let_body, right, body)
+                format!("let {} := {}; {}", name, let_body, body)
             }
             Term::Pi { mode, name, domain, body, .. } => {
                 let binder = match mode {
                     Mode::Erased => "∀",
-                    Mode::Free => "Π"
+                    Mode::Free => "Π",
+                    Mode::TypeLevel => "Π"
                 };
                 let domain_str = domain.to_string_with_context(ctx.clone());
                 ctx.push_back(*name);
@@ -300,17 +262,6 @@ impl Term {
                 let right = right.to_string_with_context(ctx);
                 format!("{{{} ≃ {}}}", left, right)
             }
-            Term::Rewrite { equation, guide, body } => {
-                let equation = equation.to_string_with_context(ctx.clone());
-                let guide = guide.to_string_with_context(ctx.clone());
-                let body = body.to_string_with_context(ctx);
-                format!("ρ {} {} - {}", equation, guide, body)
-            }
-            Term::Annotate { anno, body } => {
-                let anno = anno.to_string_with_context(ctx.clone());
-                let body = body.to_string_with_context(ctx);
-                format!("χ {} - {}", anno, body)
-            }
             Term::Project { variant, body } => {
                 let body = body.to_string_with_context(ctx);
                 format!("{}.{}", body, variant)
@@ -328,17 +279,18 @@ impl Term {
                 let erasure = erasure.to_string_with_context(ctx);
                 format!("β{{{}}}", erasure)
             }
-            Term::Cast { equation, input, erasure } => {
-                let equation_str = equation.to_string_with_context(ctx.clone());
+            Term::Cast { input, witness, evidence } => {
+                let equation_str = evidence.to_string_with_context(ctx.clone());
                 let input = input.to_string_with_context(ctx.clone());
-                let erasure = erasure.to_string_with_context(ctx);
-                if equation.ambiguous() { format!("φ ({}) - {} {{{}}}", equation_str, input, erasure) }
-                else { format!("φ {} - {} {{{}}}", equation_str, input, erasure) }
+                let witness = witness.to_string_with_context(ctx);
+                if evidence.ambiguous() { format!("φ ({}) - {} {{{}}}", equation_str, input, witness) }
+                else { format!("φ {} - {} {{{}}}", equation_str, input, witness) }
             }
             Term::Apply { mode, fun, arg, .. } => {
                 let operator = match mode {
                     Mode::Free => "",
                     Mode::Erased => "-",
+                    Mode::TypeLevel => ""
                 };
                 let fun_str = fun.to_string_with_context(ctx.clone());
                 let arg_str = arg.to_string_with_context(ctx);

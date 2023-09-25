@@ -20,7 +20,7 @@ use cedille2_core::term;
 use cedille2_core::metavar::MetaState;
 use cedille2_core::value::{Environment, LazyValue, Value, ValueEx, SpineEntry, Spine};
 use cedille2_core::database::{Database, ModuleData, ImportData};
-use crate::syntax;
+use crate::{syntax, elaborator};
 use crate::parser;
 //use crate::elaborator::{self, Context, ElabError};
 use crate::error::CedilleError;
@@ -189,10 +189,12 @@ fn load_module_inner(db : &mut Database, sym: Symbol) -> Result<(), CedilleError
     let input = LocatedSpan::new(db.text_ref(sym));
     let tree = parser::parse_file(input);
     match tree {
-        Ok((_s, t)) => println!("{:#?}", t),
-        Err(e) => println!("{}", e)
+        Ok(commands) => {
+            elaborator::elaborate(db, sym, commands)?;
+        }
+        Err(e) => {
+            println!("{:#?}", e)
+        }
     }
-    // let ast = parser::module(tree);
-    // elaborator::elaborate(db, sym, &ast)?;
     Ok(())
 }

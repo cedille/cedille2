@@ -98,6 +98,7 @@ impl fmt::Display for SpineEntry {
         let operator = match self.mode {
             Mode::Free => "∞",
             Mode::Erased => "-",
+            Mode::TypeLevel => "t"
         };
         write!(f, "({}; {})", operator, self.value)
     }
@@ -332,6 +333,7 @@ impl fmt::Display for Value {
                 let mode = match mode {
                     Mode::Erased => "Λ",
                     Mode::Free => "λ",
+                    Mode::TypeLevel => "λ"
                 };
                 write!(f, "{} {}. {}", mode, name, closure)
             },
@@ -339,6 +341,7 @@ impl fmt::Display for Value {
                 let mode = match mode {
                     Mode::Erased => "∀",
                     Mode::Free => "Π",
+                    Mode::TypeLevel => "Π",
                 };
                 write!(f, "{} {}:({}). {}", mode, name, domain, closure)
             },
@@ -565,9 +568,9 @@ impl Value {
                 let closure = Closure::new(module, env.clone(), body.clone());
                 Value::lambda(*sort, *domain_sort, *mode, *name, closure)
             },
-            Term::Let { mode, name, let_body, body, .. } => {
+            Term::Let { name, let_body, body, .. } => {
                 let def_value = LazyValue::new(module, env.clone(), let_body.clone());
-                env.push_back(EnvEntry::new(*name, *mode, def_value));
+                env.push_back(EnvEntry::new(*name, Mode::Free, def_value));
                 Value::eval(db, module, env.clone(), body.clone())
             },
             Term::Pi { sort, mode, name, domain, body } => {
@@ -585,13 +588,11 @@ impl Value {
                 let right = Value::eval(db, module, env.clone(), right.clone());
                 Value::equality(left, right)
             },
-            Term::Rewrite { body, .. }
-            | Term::Annotate { body, .. }
-            | Term::Project { body, .. } => Value::eval(db, module, env.clone(), body.clone()),
+            Term::Project { body, .. } => Value::eval(db, module, env.clone(), body.clone()),
             Term::Intersect { first, .. } => Value::eval(db, module, env.clone(), first.clone()),
             Term::Separate { .. } => Value::eval(db, module, env.clone(), Rc::new(Term::id())),
-            Term::Refl { erasure }
-            | Term::Cast { erasure, .. } => Value::eval(db, module, env.clone(), erasure.clone()),
+            Term::Refl { erasure } => Value::eval(db, module, env.clone(), erasure.clone()),
+            Term::Cast { input, .. } => Value::eval(db, module, env.clone(), input.clone()),
             Term::Apply { mode, fun, arg, .. } => {
                 let arg = LazyValue::new(module, env.clone(), arg.clone());
                 let fun = Value::eval(db, module, env.clone(), fun.clone());
@@ -648,17 +649,23 @@ impl Value {
 
     pub fn unfold_meta_to_head(db: &Database, value: Rc<Value>) -> Rc<Value> {
         let mut result = value;
-        loop {
-            match result.as_ref() {
-                Value::MetaVariable { name, module, spine, .. } => {
-                    match db.lookup_meta(*module, *name) {
-                        MetaState::Solved(v) => result = v.apply_spine(db, spine.clone()),
-                        MetaState::Unsolved | MetaState::Frozen => break
-                    }
-                },
-                _ => break
+        while let Value::MetaVariable { name, module, spine, .. } = result.as_ref() {
+            match db.lookup_meta(*module, *name) {
+                MetaState::Solved(v) => result = v.apply_spine(db, spine.clone()),
+                MetaState::Unsolved | MetaState::Frozen => break
             }
         }
+        // loop {
+        //     match result.as_ref() {
+        //         Value::MetaVariable { name, module, spine, .. } => {
+        //             match db.lookup_meta(*module, *name) {
+        //                 MetaState::Solved(v) => result = v.apply_spine(db, spine.clone()),
+        //                 MetaState::Unsolved | MetaState::Frozen => break
+        //             }
+        //         },
+        //         _ => break
+        //     }
+        // }
         result
     }
 
@@ -756,18 +763,18 @@ impl Value {
                 let c2 = c2.eval(db, EnvEntry::new(*n2, *m2, input));
                 Value::unify(db, env + 1, &c1, &c2)
             }
-            (Value::Lambda { domain_sort, mode, name, closure, .. }, _) => {
-                let input= LazyValue::computed(Value::variable(*domain_sort, env));
-                let closure = closure.eval(db, EnvEntry::new(*name, *mode, input.clone()));
-                let v = right.apply(db, SpineEntry::new(*mode, input));
-                Value::unify(db, env + 1, &closure, &v)
-            }
-            (_, Value::Lambda { domain_sort, mode, name, closure, .. }) => {
-                let input = LazyValue::computed(Value::variable(*domain_sort, env));
-                let closure = closure.eval(db, EnvEntry::new(*name, *mode, input.clone()));
-                let v = left.apply(db, SpineEntry::new(*mode, input));
-                Value::unify(db, env + 1, &v, &closure)
-            }
+            // (Value::Lambda { domain_sort, mode, name, closure, .. }, _) => {
+            //     let input= LazyValue::computed(Value::variable(*domain_sort, env));
+            //     let closure = closure.eval(db, EnvEntry::new(*name, *mode, input.clone()));
+            //     let v = right.apply(db, SpineEntry::new(*mode, input));
+            //     Value::unify(db, env + 1, &closure, &v)
+            // }
+            // (_, Value::Lambda { domain_sort, mode, name, closure, .. }) => {
+            //     let input = LazyValue::computed(Value::variable(*domain_sort, env));
+            //     let closure = closure.eval(db, EnvEntry::new(*name, *mode, input.clone()));
+            //     let v = left.apply(db, SpineEntry::new(*mode, input));
+            //     Value::unify(db, env + 1, &v, &closure)
+            // }
             // Spines
             (Value::Variable { sort, level:l1, spine:s1 },
                 Value::Variable { level:l2, spine:s2, .. }) =>

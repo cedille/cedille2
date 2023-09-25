@@ -72,14 +72,16 @@ impl From<Symbol> for Id {
 #[derive(Debug, Hash, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Mode {
     Erased,
-    Free
+    Free,
+    TypeLevel
 }
 
 impl fmt::Display for Mode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Mode::Erased => write!(f, "Erased"),
-            Mode::Free => write!(f, "Free")
+            Mode::Free => write!(f, "Free"),
+            Mode::TypeLevel => write!(f, "TypeLevel")
         }
     }
 }
