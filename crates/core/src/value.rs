@@ -543,7 +543,7 @@ impl Value {
                 let input = EnvEntry::new(*name, Mode::Free, LazyValue::computed(Value::variable(first.sort(db), level)));
                 let first = Rc::new(Value::reify(first.clone(), db, level, unfold));
                 let second = Rc::new(Value::reify(second.eval(db, input), db, level + 1, unfold));
-                Term::IntersectType { name:*name, first, second }
+                Term::Intersect { name:*name, first, second }
             },
             Value::Equality { left, right } => {
                 let left = Rc::new(Value::reify(left.clone(), db, level, unfold));
@@ -578,7 +578,7 @@ impl Value {
                 let closure = Closure::new(module, env.clone(), body.clone());
                 Value::pi(*sort, *mode, *name, domain, closure)
             },
-            Term::IntersectType { name, first, second } => {
+            Term::Intersect { name, first, second } => {
                 let first = Value::eval(db, module, env.clone(), first.clone());
                 let second = Closure::new(module, env.clone(), second.clone());
                 Value::intersect_type(*name, first, second)
@@ -589,9 +589,11 @@ impl Value {
                 Value::equality(left, right)
             },
             Term::Project { body, .. } => Value::eval(db, module, env.clone(), body.clone()),
-            Term::Intersect { first, .. } => Value::eval(db, module, env.clone(), first.clone()),
+            Term::Pair { first, .. } => Value::eval(db, module, env.clone(), first.clone()),
             Term::Separate { .. } => Value::eval(db, module, env.clone(), Rc::new(Term::id())),
-            Term::Refl { erasure } => Value::eval(db, module, env.clone(), erasure.clone()),
+            Term::Refl { input: erasure } => Value::eval(db, module, env.clone(), erasure.clone()),
+            Term::Promote { .. } => unimplemented!(),
+            Term::J { .. } => unimplemented!(),
             Term::Cast { input, .. } => Value::eval(db, module, env.clone(), input.clone()),
             Term::Apply { mode, fun, arg, .. } => {
                 let arg = LazyValue::new(module, env.clone(), arg.clone());

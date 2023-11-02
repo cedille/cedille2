@@ -57,7 +57,7 @@ pub enum Term {
         domain: Rc<Term>,
         body: Rc<Term>
     },
-    IntersectType {
+    Intersect {
         name: Symbol,
         first: Rc<Term>,
         second: Rc<Term>
@@ -70,7 +70,7 @@ pub enum Term {
         variant: usize,
         body: Rc<Term>
     },
-    Intersect {
+    Pair {
         first: Rc<Term>,
         second: Rc<Term>
     },
@@ -78,12 +78,23 @@ pub enum Term {
         equation: Rc<Term>
     },
     Refl {
-        erasure: Rc<Term>
+        input: Rc<Term>
     },
     Cast {
         input: Rc<Term>,
         witness: Rc<Term>,
         evidence: Rc<Term>,
+    },
+    Promote {
+        equation: Rc<Term>
+    },
+    J {
+        equality: Rc<Term>,
+        predicate: Rc<Term>,
+        lhs: Rc<Term>,
+        rhs: Rc<Term>,
+        equation: Rc<Term>,
+        case: Rc<Term>
     },
     Apply {
         sort: Sort,
@@ -147,13 +158,22 @@ impl Term {
                 }
             }
             t @ Term::Pi { .. }
-            | t @ Term::IntersectType { .. }
+            | t @ Term::Intersect { .. }
             | t @ Term::Equality { .. } => t.clone(),
             Term::Project { body, .. } => body.partial_erase(),
-            Term::Intersect { first, .. } => first.partial_erase(),
+            Term::Pair { first, .. } => first.partial_erase(),
             Term::Separate { .. } => Term::id(),
-            Term::Refl { erasure } => erasure.partial_erase(),
+            Term::Refl { input: erasure } => erasure.partial_erase(),
             Term::Cast { input, .. } => input.partial_erase(),
+            Term::Promote { equation } => equation.partial_erase(),
+            Term::J { equation, case, ..} => {
+                Term::Apply {
+                    sort: Sort::Term,
+                    mode: Mode::Free,
+                    fun: Rc::new(equation.partial_erase()),
+                    arg: Rc::new(case.partial_erase())
+                }
+            }
             Term::Apply { sort, mode, fun, arg } => {
                 if *mode == Mode::Erased { fun.partial_erase() }
                 else {
@@ -179,13 +199,15 @@ impl Term {
             Term::Lambda { sort, .. }
             | Term::Let { sort, .. }
             | Term::Pi { sort, .. } => *sort,
-            Term::IntersectType { .. }
+            Term::Intersect { .. }
             | Term::Equality { .. } => Sort::Type,
             | Term::Project { .. }
-            | Term::Intersect { .. }
+            | Term::Pair { .. }
             | Term::Separate { .. }
             | Term::Refl { .. }
-            | Term::Cast { .. } => Sort::Term,
+            | Term::Cast { .. }
+            | Term::Promote { .. }
+            | Term::J { .. } => Sort::Term,
             Term::Apply { sort, .. }
             | Term::Bound { sort, .. }
             | Term::Free { sort, .. }
@@ -201,13 +223,15 @@ impl Term {
             Term::Lambda { .. }
             | Term::Let { .. }
             | Term::Pi { .. }
-            | Term::IntersectType { .. } => true,
+            | Term::Intersect { .. } => true,
             Term::Equality { .. } => false,
             Term::Project { .. }
-            | Term::Intersect { .. } => false,
+            | Term::Pair { .. } => false,
             Term::Separate { .. } => true,
             Term::Refl { .. } => false,
             Term::Cast { .. } => true,
+            Term::Promote { .. } => true,
+            Term::J { .. } => true,
             Term::Apply { .. } => true,
             Term::Bound { .. }
             | Term::Free { .. }
@@ -250,7 +274,7 @@ impl Term {
                 if domain.ambiguous() { format!("{} {}:({}). {}", binder, name, domain_str, body) }
                 else { format!("{} {}:{}. {}", binder, name, domain_str, body) }
             }
-            Term::IntersectType { name, first, second } => {
+            Term::Intersect { name, first, second } => {
                 let first_str = first.to_string_with_context(ctx.clone());
                 ctx.push_back(*name);
                 let second = second.to_string_with_context(ctx);
@@ -266,7 +290,7 @@ impl Term {
                 let body = body.to_string_with_context(ctx);
                 format!("{}.{}", body, variant)
             }
-            Term::Intersect { first, second } => {
+            Term::Pair { first, second } => {
                 let first = first.to_string_with_context(ctx.clone());
                 let second = second.to_string_with_context(ctx);
                 format!("[{}, {}]", first, second)
@@ -275,7 +299,7 @@ impl Term {
                 let equation = equation.to_string_with_context(ctx);
                 format!("δ - {}", equation)
             }
-            Term::Refl { erasure } => {
+            Term::Refl { input: erasure } => {
                 let erasure = erasure.to_string_with_context(ctx);
                 format!("β{{{}}}", erasure)
             }
@@ -285,6 +309,19 @@ impl Term {
                 let witness = witness.to_string_with_context(ctx);
                 if evidence.ambiguous() { format!("φ ({}) - {} {{{}}}", equation_str, input, witness) }
                 else { format!("φ {} - {} {{{}}}", equation_str, input, witness) }
+            }
+            Term::Promote { equation } => {
+                let equation_str = equation.to_string_with_context(ctx.clone());
+                format!("ϑ {{ {} }}", equation_str)
+            }
+            Term::J { equality, predicate, lhs, rhs, equation, case } => {
+                let equality_str = equality.to_string_with_context(ctx.clone());
+                let predicate_str = predicate.to_string_with_context(ctx.clone());
+                let lhs_str = lhs.to_string_with_context(ctx.clone());
+                let rhs_str = rhs.to_string_with_context(ctx.clone());
+                let equation_str = equation.to_string_with_context(ctx.clone());
+                let case_str = case.to_string_with_context(ctx.clone());
+                format!("J {{ {}, {}, {}, {}, {}, {} }}", equality_str, predicate_str, lhs_str, rhs_str, equation_str, case_str)
             }
             Term::Apply { mode, fun, arg, .. } => {
                 let operator = match mode {

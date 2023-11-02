@@ -285,16 +285,24 @@ fn parse_term_application(input : In) -> IResult<In, Term> {
 /*
     atom ::=
     | "[" term "," term (";" term)? "]" (".1" | ".2")?
+    | "J" { term "," term "," term "," term "," term "," term } (".1" | ".2")?
     | "φ" term "{" term "," term "}" (".1" | ".2")?
+    | "ϑ" { term } (".1" | ".2")?
+    | "β" { term } (".1" | ".2")?
     | "(" term ")" (".1" | ".2")?
     | ident (".1" | ".2")?
+    | "Set" (".1" | ".2")?
 */
 fn parse_term_atom(input: In) -> IResult<In, Term> {
     let inner = alt((
         parse_term_pair,
+        parse_term_equality_induction,
         parse_term_cast,
+        parse_term_promote,
+        parse_term_refl,
         parse_term_paren,
-        parse_term_variable
+        parse_term_variable,
+        parse_set_keyword
     ));
     
     let (rest, (term, proj))
@@ -345,6 +353,40 @@ fn parse_term_pair(input: In) -> IResult<In, Term> {
     Ok((rest, term))
 }
 
+// "J" { term "," term "," term "," term "," term "," term }
+fn parse_term_equality_induction(input: In) -> IResult<In, Term> {
+    let (rest, (start, _, t1, _, t2, _, t3, _, t4, _, t5, _, t6, end))
+    = context("induct", tuple((
+        tag("J").preceded_by(bspace0(2)),
+        tag("{").preceded_by(bspace0(2)),
+        parse_term,
+        tag(",").preceded_by(bspace0(2)),
+        parse_term,
+        tag(",").preceded_by(bspace0(2)),
+        parse_term,
+        tag(",").preceded_by(bspace0(2)),
+        parse_term,
+        tag(",").preceded_by(bspace0(2)),
+        parse_term,
+        tag(",").preceded_by(bspace0(2)),
+        parse_term,
+        tag("}").preceded_by(bspace0(2)),
+    )))(input)?;
+
+    let span = (start.location_offset(), end.location_offset());
+    let term = Term::J {
+        span,
+        equality: t1.boxed(),
+        predicate: t2.boxed(),
+        lhs: t3.boxed(),
+        rhs: t4.boxed(),
+        equation: t5.boxed(),
+        case: t6.boxed()
+    };
+
+    Ok((rest, term))
+}
+
 // "φ" term "{" term "," term "}"
 fn parse_term_cast(input: In) -> IResult<In, Term> {
     let (rest, (start, input, _, witness, _, evidence, end))
@@ -369,6 +411,44 @@ fn parse_term_cast(input: In) -> IResult<In, Term> {
     Ok((rest, term))
 }
 
+// "ϑ" "{" term "}"
+fn parse_term_promote(input: In) -> IResult<In, Term> {
+    let (rest, (start, _, term, end))
+    = context("promote", tuple((
+        tag("ϑ").preceded_by(bspace0(2)),
+        tag("{").preceded_by(bspace0(2)),
+        parse_term,
+        tag("}").preceded_by(bspace0(2))
+    )))(input)?;
+
+    let span = (start.location_offset(), end.location_offset());
+    let term = Term::Promote {
+        span,
+        equation: term.boxed()
+    };
+
+    Ok((rest, term))
+}
+
+// "β" { term }
+fn parse_term_refl(input: In) -> IResult<In, Term> {
+    let (rest, (start, _, term, end))
+    = context("refl", tuple((
+        tag("β").preceded_by(bspace0(2)),
+        tag("{").preceded_by(bspace0(2)),
+        parse_term,
+        tag("}").preceded_by(bspace0(2))
+    )))(input)?;
+
+    let span = (start.location_offset(), end.location_offset());
+    let term = Term::Refl {
+        span,
+        input: term.boxed()
+    };
+
+    Ok((rest, term))
+}
+
 // "(" term ")"
 fn parse_term_paren(input: In) -> IResult<In, Term> {
     let (rest, (_, term, _))
@@ -384,6 +464,13 @@ fn parse_term_paren(input: In) -> IResult<In, Term> {
 fn parse_term_variable(input: In) -> IResult<In, Term> {
     let (rest, id) = parse_ident(input)?;
     let term = Term::Variable { span: id.1, id: id.0 };
+    Ok((rest, term))
+}
+
+fn parse_set_keyword(input: In) -> IResult<In, Term> {
+    let (rest, keyword) = tag("Set")(input)?;
+    let span = (keyword.location_offset(), keyword.location_offset() + keyword.len());
+    let term = Term::Set { span };
     Ok((rest, term))
 }
 
@@ -438,10 +525,18 @@ fn parse_ident(input : In) -> IResult<In, (Id, Span)> {
     // Safety: Parser guarantees there is at least one symbol
     let name = unsafe { iter.last().unwrap_unchecked().0 };
 
-    let id = Id { namespace, name };
-    let result = (id, span);
-
-    Ok((rest, result))
+    // Disallow keywords
+    match name.as_str() {
+        "Set" | "module" | "import" | "def" | "let" => {
+            unimplemented!()
+        }
+        _ => {
+            let id = Id { namespace, name };
+            let result = (id, span);
+        
+            Ok((rest, result))
+        }
+    }
 }
 
 fn parse_symbol(input : In) -> IResult<In, (Symbol, Span)> {

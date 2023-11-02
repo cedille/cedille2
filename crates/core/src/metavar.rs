@@ -124,7 +124,7 @@ fn rename(db: &Database, meta: Symbol, renaming: &PartialRenaming, value: Rc<Val
             let arg = EnvEntry::new(*name, Mode::Free, Value::variable(first.sort(), renaming.codomain));
             let second = second.eval(db, arg);
             let second = rename(db, meta, &lift(renaming), second)?;
-            Ok(Rc::new(Term::IntersectType {
+            Ok(Rc::new(Term::Intersect {
                 name: *name,
                 first,
                 second

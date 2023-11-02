@@ -512,19 +512,18 @@ fn check(db: &mut Database, ctx: Context, term: &syntax::Term, ty: Rc<Value>) ->
                         left: source_span(db, ctx.module, first.span()),
                         right: source_span(db, ctx.module, second.span())
                     })?;
-            Ok(Rc::new(term::Term::Intersect {
+            Ok(Rc::new(term::Term::Pair {
                 first: first_elabed,
                 second: second_elabed
             }))
         }
 
-        (syntax::Term::Reflexivity { span, erasure, .. },
+        (syntax::Term::Refl { span, input, .. },
             Value::Equality { left, right }) =>
         {
-            let erasure_elabed = if let Some(t) = erasure { erase(db, ctx.clone(), t)? }
-                else { Rc::new(term::Term::id()) };
+            let input_elabed = erase(db, ctx.clone(), input)?;
             unify(db, ctx, *span, left, right)?;
-            Ok(Rc::new(term::Term::Refl { erasure: erasure_elabed }))
+            Ok(Rc::new(term::Term::Refl { input: input_elabed }))
         }
 
         (syntax::Term::Separate { span, equation, .. }, _) =>
@@ -686,7 +685,7 @@ fn infer(db: &mut Database, ctx: Context, term: &syntax::Term) -> Result<(Rc<ter
             let name = var.unwrap_or_default();
             let ctx = ctx.bind(db, name, Mode::Free, first_value);
             let second_elabed = check(db, ctx, second, Value::star())?;
-            let result = Rc::new(term::Term::IntersectType {
+            let result = Rc::new(term::Term::Intersect {
                 name,
                 first: first_elabed,
                 second: second_elabed
@@ -725,13 +724,6 @@ fn infer(db: &mut Database, ctx: Context, term: &syntax::Term) -> Result<(Rc<ter
         }
 
         syntax::Term::Variable { span, id, .. } => {
-            // Is it a special name?
-            if id.name == Symbol::from("Set") {
-                let elab = Rc::new(term::Term::Star);
-                let ty = Value::super_star();
-                return Ok((elab, ty));
-            }
-            // All other names
             let (var_type, level, mode) = lookup_type(db, &ctx, *span, id)?;
             //dbg!(id, mode, ctx.mode, ctx.sort);
             if mode == Mode::Erased && ctx.mode == Mode::Free && ctx.sort == Sort::Term {
@@ -936,10 +928,11 @@ pub fn erase(db: &mut Database, ctx: Context, term: &syntax::Term) -> Result<Rc<
         Term::Project { body, .. } => erase(db, ctx, body),
         Term::Pair { first, .. } => erase(db, ctx, first),
         Term::Separate { .. } => Ok(Rc::new(term::Term::id())),
-        Term::Reflexivity { erasure, .. } => {
-            if let Some(erasure) = erasure { erase(db, ctx, erasure) }
-            else { Ok(Rc::new(term::Term::id())) }
+        Term::Refl { .. } => {
+            Ok(Rc::new(term::Term::id()))
         },
+        Term::Promote { equation, .. } => erase(db, ctx, equation),
+        Term::J { .. } => unimplemented!(),
         Term::Cast { input, .. } => erase(db, ctx, input),
         Term::Apply { fun, arg, .. } => {
             let (mode, sort) = (Mode::Free, Sort::Term);
@@ -972,6 +965,7 @@ pub fn erase(db: &mut Database, ctx: Context, term: &syntax::Term) -> Result<Rc<
                 mask: ctx.env_mask()
             }))
         }
+        Term::Set { .. } => unimplemented!()
     }
 }
 
@@ -1006,12 +1000,15 @@ fn infer_sort(db: &Database, ctx: Context, term: &syntax::Term) -> Result<Sort, 
         syntax::Term::Project { .. } => Sort::Term,
         syntax::Term::Pair { .. }
         | syntax::Term::Separate { .. }
-        | syntax::Term::Reflexivity { .. }
-        | syntax::Term::Cast { .. } => Sort::Term,
+        | syntax::Term::Refl { .. }
+        | syntax::Term::Cast { .. }
+        | syntax::Term::Promote { .. }
+        | syntax::Term::J { .. } => Sort::Term,
         syntax::Term::Apply { fun, .. } => infer_sort(db, ctx, fun)?,
         syntax::Term::Variable { id, span } => lookup_sort(db, &ctx, *span, id)?,
         syntax::Term::Hole { .. } => Sort::Unknown,
         syntax::Term::Omission { .. } => Sort::Unknown,
+        syntax::Term::Set { .. } => Sort::Kind
     };
     Ok(result)
 }
