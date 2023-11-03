@@ -512,7 +512,7 @@ fn check(db: &mut Database, ctx: Context, term: &syntax::Term, ty: Rc<Value>) ->
                         left: source_span(db, ctx.module, first.span()),
                         right: source_span(db, ctx.module, second.span())
                     })?;
-            Ok(Rc::new(term::Term::Intersect {
+            Ok(Rc::new(term::Term::Pair {
                 first: first_elabed,
                 second: second_elabed
             }))
@@ -687,7 +687,7 @@ fn infer(db: &mut Database, ctx: Context, term: &syntax::Term) -> Result<(Rc<ter
             let name = var.unwrap_or_default();
             let ctx = ctx.bind(db, name, Mode::Free, first_value);
             let second_elabed = check(db, ctx, second, Value::star())?;
-            let result = Rc::new(term::Term::IntersectType {
+            let result = Rc::new(term::Term::Intersect {
                 name,
                 first: first_elabed,
                 second: second_elabed
@@ -726,16 +726,6 @@ fn infer(db: &mut Database, ctx: Context, term: &syntax::Term) -> Result<(Rc<ter
         }
 
         syntax::Term::Variable { span, id, .. } => {
-            // Is it a special name?
-            if id.name == Symbol::from("Set") {
-                let elab = Rc::new(term::Term::Star);
-                let ty = Value::super_star();
-                return Ok((elab, ty));
-            }
-            if id.name == Symbol::from("induct") && id.namespace == vec![Symbol::from("Eq")] {
-                todo!()
-            }
-            // All other names
             let (var_type, level, mode) = lookup_type(db, &ctx, *span, id)?;
             //dbg!(id, mode, ctx.mode, ctx.sort);
             if mode == Mode::Erased && ctx.mode == Mode::Free && ctx.sort == Sort::Term {
@@ -845,15 +835,15 @@ fn infer(db: &mut Database, ctx: Context, term: &syntax::Term) -> Result<(Rc<ter
             }
         }
 
-        syntax::Term::Reflexivity { span, input, .. } => {
+        syntax::Term::Refl { span, input, .. } => {
             let (input_elabed, _inner_type) = infer(db, ctx.clone(), input)?;
             let input_value = Value::eval(db, module, ctx.env(), input_elabed.clone());
             let result_type = Value::equality(input_value.clone(), input_value);
             Ok((input_elabed, result_type))
         }
 
-        syntax::Term::Promote { span, input } => {
-            let (input_elabed, eq_type) = infer(db, ctx.clone(), input)?;
+        syntax::Term::Promote { span, equation } => {
+            let (equation_elabed, eq_type) = infer(db, ctx.clone(), equation)?;
             let eq_type_unfolded = Value::unfold_to_head(db, eq_type);
             match eq_type_unfolded.as_ref() {
                 Value::Equality { left, right } => {
@@ -958,8 +948,11 @@ pub fn erase(db: &mut Database, ctx: Context, term: &syntax::Term) -> Result<Rc<
         Term::Project { body, .. } => erase(db, ctx, body),
         Term::Pair { first, .. } => erase(db, ctx, first),
         Term::Separate { .. } => Ok(Rc::new(term::Term::id())),
-        Term::Reflexivity { .. } => Ok(Rc::new(term::Term::id())),
-        Term::Promote { input, .. } => erase(db, ctx, input),
+        Term::Refl { .. } => {
+            Ok(Rc::new(term::Term::id()))
+        },
+        Term::Promote { equation, .. } => erase(db, ctx, equation),
+        Term::J { .. } => unimplemented!(),
         Term::Cast { input, .. } => erase(db, ctx, input),
         Term::Apply { fun, arg, .. } => {
             let (mode, sort) = (Mode::Free, Sort::Term);
@@ -992,6 +985,7 @@ pub fn erase(db: &mut Database, ctx: Context, term: &syntax::Term) -> Result<Rc<
                 mask: ctx.env_mask()
             }))
         }
+        Term::Set { .. } => unimplemented!()
     }
 }
 
@@ -1026,13 +1020,15 @@ fn infer_sort(db: &Database, ctx: Context, term: &syntax::Term) -> Result<Sort, 
         syntax::Term::Project { .. } => Sort::Term,
         syntax::Term::Pair { .. }
         | syntax::Term::Separate { .. }
-        | syntax::Term::Reflexivity { .. }
+        | syntax::Term::Refl { .. }
+        | syntax::Term::Cast { .. }
         | syntax::Term::Promote { .. }
-        | syntax::Term::Cast { .. } => Sort::Term,
+        | syntax::Term::J { .. } => Sort::Term,
         syntax::Term::Apply { fun, .. } => infer_sort(db, ctx, fun)?,
         syntax::Term::Variable { id, span } => lookup_sort(db, &ctx, *span, id)?,
         syntax::Term::Hole { .. } => Sort::Unknown,
         syntax::Term::Omission { .. } => Sort::Unknown,
+        syntax::Term::Set { .. } => Sort::Kind
     };
     Ok(result)
 }
@@ -1067,10 +1063,6 @@ fn fresh_meta(db: &mut Database, ctx: Context, sort: Sort) -> term::Term {
 }
 
 fn lookup_type(db: &Database, ctx: &Context, span: Span, id: &Id) -> Result<(Rc<Value>, Option<Level>, Mode), ElabError> {
-    // Is it a special name?
-    if id.name == Symbol::from("Set") {
-        return Ok((Value::super_star(), None, Mode::TypeLevel))
-    }
     // All other names
     let has_namespace = if id.namespace.is_empty() { Some(()) } else { None };
     let toplevel_type = db.lookup_type(ctx.module, id);
@@ -1087,10 +1079,6 @@ fn lookup_type(db: &Database, ctx: &Context, span: Span, id: &Id) -> Result<(Rc<
 }
 
 fn lookup_sort(db: &Database, ctx: &Context, span: Span, id: &Id) -> Result<Sort, ElabError> {
-    // Is it a special name?
-    if id.name == Symbol::from("Set") {
-        return Ok(Sort::Kind)
-    }
     // All other names
     let has_namespace = if id.namespace.is_empty() { Some(()) } else { None };
     let toplevel_sort = db.lookup_type(ctx.module, id)

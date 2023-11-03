@@ -117,11 +117,7 @@ pub enum Term {
         anno: Option<Box<Term>>,
         equation: Box<Term>
     },
-    Reflexivity {
-        span: Span,
-        input: Box<Term>
-    },
-    Promote {
+    Refl {
         span: Span,
         input: Box<Term>
     },
@@ -130,6 +126,19 @@ pub enum Term {
         input: Box<Term>,
         witness: Box<Term>,
         evidence: Box<Term>
+    },
+    Promote {
+        span: Span,
+        equation: Box<Term>
+    },
+    J {
+        span: Span,
+        equality: Box<Term>,
+        predicate: Box<Term>,
+        lhs: Box<Term>,
+        rhs: Box<Term>,
+        equation: Box<Term>,
+        case: Box<Term>
     },
     Apply {
         span: Span,
@@ -144,6 +153,9 @@ pub enum Term {
         span: Span
     },
     Omission {
+        span: Span
+    },
+    Set {
         span: Span
     }
 }
@@ -166,13 +178,15 @@ impl Term {
             | Term::Project { span, .. }
             | Term::Pair { span, .. }
             | Term::Separate { span, .. }
-            | Term::Reflexivity { span, .. }
+            | Term::Refl { span, .. }
             | Term::Promote { span, .. }
+            | Term::J { span, .. }
             | Term::Cast { span, .. }
             | Term::Apply { span, .. }
             | Term::Variable { span, .. }
             | Term::Hole { span, .. }
             | Term::Omission { span, .. }
+            | Term::Set { span, ..}
             => *span,
         }
     }
