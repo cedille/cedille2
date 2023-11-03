@@ -518,14 +518,15 @@ fn check(db: &mut Database, ctx: Context, term: &syntax::Term, ty: Rc<Value>) ->
             }))
         }
 
-        (syntax::Term::Reflexivity { span, erasure, .. },
-            Value::Equality { left, right }) =>
-        {
-            let erasure_elabed = if let Some(t) = erasure { erase(db, ctx.clone(), t)? }
-                else { Rc::new(term::Term::id()) };
-            unify(db, ctx, *span, left, right)?;
-            Ok(Rc::new(term::Term::Refl { erasure: erasure_elabed }))
-        }
+        // (syntax::Term::Reflexivity { span, input, .. },
+        //     Value::Equality { left, right }) =>
+        // {
+        //     let input_elabed = 
+        //     let erasure_elabed = if let Some(t) = erasure { erase(db, ctx.clone(), t)? }
+        //         else { Rc::new(term::Term::id()) };
+        //     unify(db, ctx, *span, left, right)?;
+        //     Ok(Rc::new(term::Term::Refl { erasure: erasure_elabed }))
+        // }
 
         (syntax::Term::Separate { span, equation, .. }, _) =>
         {
@@ -608,7 +609,7 @@ fn check(db: &mut Database, ctx: Context, term: &syntax::Term, ty: Rc<Value>) ->
         }
 
         (syntax::Term::Hole { span, .. }, _) => {
-            //println!("\n{}\n  {}\n{} {}", ctx.env(), term.as_str(db.text_ref(ctx.module)), "<=".bright_blue(), ty);
+            // println!("\n{}\n  {}\n{} {}", ctx.env(), term.as_str(db.text_ref(ctx.module)), "<=".bright_blue(), ty);
             // let data = HoleData {
             //     span: source_span(db, ctx.module, *span),
             //     expected_type: ty_folded,
@@ -617,7 +618,7 @@ fn check(db: &mut Database, ctx: Context, term: &syntax::Term, ty: Rc<Value>) ->
             // let sort = ty.sort(db).demote();
             // let hole = fresh_hole(db, ctx, data, sort);
             // Ok(hole)
-            unimplemented!()
+            todo!()
         }
 
         (syntax::Term::Omission { .. }, _) => Ok(Rc::new(fresh_meta(db, ctx, ty.sort(db).demote()))),
@@ -731,6 +732,9 @@ fn infer(db: &mut Database, ctx: Context, term: &syntax::Term) -> Result<(Rc<ter
                 let ty = Value::super_star();
                 return Ok((elab, ty));
             }
+            if id.name == Symbol::from("induct") && id.namespace == vec![Symbol::from("Eq")] {
+                todo!()
+            }
             // All other names
             let (var_type, level, mode) = lookup_type(db, &ctx, *span, id)?;
             //dbg!(id, mode, ctx.mode, ctx.sort);
@@ -753,27 +757,27 @@ fn infer(db: &mut Database, ctx: Context, term: &syntax::Term) -> Result<(Rc<ter
             let arg_sort = infer_sort(db, ctx.clone(), arg)?;
             let (mut fun_elabed, mut fun_type) = infer(db, ctx.clone(), fun)?;
 
-            loop {
-                fun_type = Value::unfold_to_head(db, fun_type);
-                match fun_type.as_ref() {
-                    Value::Pi { mode, name, domain, closure, .. }
-                    if *mode == Mode::Erased =>
-                    {
-                        let arg_sort = domain.sort(db).demote();
-                        let meta = Rc::new(fresh_meta(db, ctx.clone(), arg_sort));
-                        fun_elabed = Rc::new(term::Term::Apply {
-                            sort,
-                            mode: *mode,
-                            fun: fun_elabed,
-                            arg: meta.clone()
-                        });
-                        let arg = LazyValue::new(module, ctx.env(), meta);
-                        let arg = EnvEntry::new(*name, *mode, arg);
-                        fun_type = closure.eval(db, arg);
-                    },
-                    _ => break
-                }
-            }
+            // loop {
+            //     fun_type = Value::unfold_to_head(db, fun_type);
+            //     match fun_type.as_ref() {
+            //         Value::Pi { mode, name, domain, closure, .. }
+            //         if *mode == Mode::Erased =>
+            //         {
+            //             let arg_sort = domain.sort(db).demote();
+            //             let meta = Rc::new(fresh_meta(db, ctx.clone(), arg_sort));
+            //             fun_elabed = Rc::new(term::Term::Apply {
+            //                 sort,
+            //                 mode: *mode,
+            //                 fun: fun_elabed,
+            //                 arg: meta.clone()
+            //             });
+            //             let arg = LazyValue::new(module, ctx.env(), meta);
+            //             let arg = EnvEntry::new(*name, *mode, arg);
+            //             fun_type = closure.eval(db, arg);
+            //         },
+            //         _ => break
+            //     }
+            // }
 
             fun_type = Value::unfold_to_head(db, fun_type);
             let (name, mode, domain, closure) = match fun_type.as_ref() {
@@ -838,6 +842,24 @@ fn infer(db: &mut Database, ctx: Context, term: &syntax::Term) -> Result<(Rc<ter
                     span: source_span(db, ctx.module, *span),
                     inferred_type: body_type.quote(db, ctx.env_lvl()).to_string()
                 })
+            }
+        }
+
+        syntax::Term::Reflexivity { span, input, .. } => {
+            let (input_elabed, _inner_type) = infer(db, ctx.clone(), input)?;
+            let input_value = Value::eval(db, module, ctx.env(), input_elabed.clone());
+            let result_type = Value::equality(input_value.clone(), input_value);
+            Ok((input_elabed, result_type))
+        }
+
+        syntax::Term::Promote { span, input } => {
+            let (input_elabed, eq_type) = infer(db, ctx.clone(), input)?;
+            let eq_type_unfolded = Value::unfold_to_head(db, eq_type);
+            match eq_type_unfolded.as_ref() {
+                Value::Equality { left, right } => {
+                    todo!()
+                }
+                _ => Err(ElabError::ExpectedEqualityType)
             }
         }
 
@@ -936,10 +958,8 @@ pub fn erase(db: &mut Database, ctx: Context, term: &syntax::Term) -> Result<Rc<
         Term::Project { body, .. } => erase(db, ctx, body),
         Term::Pair { first, .. } => erase(db, ctx, first),
         Term::Separate { .. } => Ok(Rc::new(term::Term::id())),
-        Term::Reflexivity { erasure, .. } => {
-            if let Some(erasure) = erasure { erase(db, ctx, erasure) }
-            else { Ok(Rc::new(term::Term::id())) }
-        },
+        Term::Reflexivity { .. } => Ok(Rc::new(term::Term::id())),
+        Term::Promote { input, .. } => erase(db, ctx, input),
         Term::Cast { input, .. } => erase(db, ctx, input),
         Term::Apply { fun, arg, .. } => {
             let (mode, sort) = (Mode::Free, Sort::Term);
@@ -1007,6 +1027,7 @@ fn infer_sort(db: &Database, ctx: Context, term: &syntax::Term) -> Result<Sort, 
         syntax::Term::Pair { .. }
         | syntax::Term::Separate { .. }
         | syntax::Term::Reflexivity { .. }
+        | syntax::Term::Promote { .. }
         | syntax::Term::Cast { .. } => Sort::Term,
         syntax::Term::Apply { fun, .. } => infer_sort(db, ctx, fun)?,
         syntax::Term::Variable { id, span } => lookup_sort(db, &ctx, *span, id)?,

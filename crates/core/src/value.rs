@@ -591,7 +591,9 @@ impl Value {
             Term::Project { body, .. } => Value::eval(db, module, env.clone(), body.clone()),
             Term::Intersect { first, .. } => Value::eval(db, module, env.clone(), first.clone()),
             Term::Separate { .. } => Value::eval(db, module, env.clone(), Rc::new(Term::id())),
-            Term::Refl { erasure } => Value::eval(db, module, env.clone(), erasure.clone()),
+            Term::Refl { .. } => Value::id(),
+            Term::Promote { input } => Value::eval(db, module, env.clone(), input.clone()),
+            Term::Induct => Value::id(),
             Term::Cast { input, .. } => Value::eval(db, module, env.clone(), input.clone()),
             Term::Apply { mode, fun, arg, .. } => {
                 let arg = LazyValue::new(module, env.clone(), arg.clone());

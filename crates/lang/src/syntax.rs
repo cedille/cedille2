@@ -119,8 +119,11 @@ pub enum Term {
     },
     Reflexivity {
         span: Span,
-        guide: Option<Box<Term>>,
-        erasure: Option<Box<Term>>
+        input: Box<Term>
+    },
+    Promote {
+        span: Span,
+        input: Box<Term>
     },
     Cast {
         span: Span,
@@ -164,6 +167,7 @@ impl Term {
             | Term::Pair { span, .. }
             | Term::Separate { span, .. }
             | Term::Reflexivity { span, .. }
+            | Term::Promote { span, .. }
             | Term::Cast { span, .. }
             | Term::Apply { span, .. }
             | Term::Variable { span, .. }

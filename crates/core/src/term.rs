@@ -78,8 +78,12 @@ pub enum Term {
         equation: Rc<Term>
     },
     Refl {
-        erasure: Rc<Term>
+        input: Rc<Term>
     },
+    Promote {
+        input: Rc<Term>
+    },
+    Induct,
     Cast {
         input: Rc<Term>,
         witness: Rc<Term>,
@@ -152,7 +156,9 @@ impl Term {
             Term::Project { body, .. } => body.partial_erase(),
             Term::Intersect { first, .. } => first.partial_erase(),
             Term::Separate { .. } => Term::id(),
-            Term::Refl { erasure } => erasure.partial_erase(),
+            Term::Refl { input } => Term::id(),
+            Term::Promote { input } => input.partial_erase(),
+            Term::Induct => Term::id(),
             Term::Cast { input, .. } => input.partial_erase(),
             Term::Apply { sort, mode, fun, arg } => {
                 if *mode == Mode::Erased { fun.partial_erase() }
@@ -185,6 +191,8 @@ impl Term {
             | Term::Intersect { .. }
             | Term::Separate { .. }
             | Term::Refl { .. }
+            | Term::Promote { .. }
+            | Term::Induct 
             | Term::Cast { .. } => Sort::Term,
             Term::Apply { sort, .. }
             | Term::Bound { sort, .. }
@@ -207,6 +215,8 @@ impl Term {
             | Term::Intersect { .. } => false,
             Term::Separate { .. } => true,
             Term::Refl { .. } => false,
+            Term::Promote { .. } => false,
+            Term::Induct => false,
             Term::Cast { .. } => true,
             Term::Apply { .. } => true,
             Term::Bound { .. }
@@ -273,11 +283,18 @@ impl Term {
             }
             Term::Separate { equation } => {
                 let equation = equation.to_string_with_context(ctx);
-                format!("δ - {}", equation)
+                format!("δ {}", equation)
             }
-            Term::Refl { erasure } => {
-                let erasure = erasure.to_string_with_context(ctx);
-                format!("β{{{}}}", erasure)
+            Term::Refl { input } => {
+                let input = input.to_string_with_context(ctx);
+                format!("rfl {}", input)
+            }
+            Term::Promote { input } => {
+                let input = input.to_string_with_context(ctx);
+                format!("θ {}", input)
+            }
+            Term::Induct => {
+                format!("Eq.induct")
             }
             Term::Cast { input, witness, evidence } => {
                 let equation_str = evidence.to_string_with_context(ctx.clone());

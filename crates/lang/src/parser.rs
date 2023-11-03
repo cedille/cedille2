@@ -39,6 +39,7 @@ fn parse_command_sequence(mut input : In) -> IResult<In, Vec<Command>> {
 
     while input.len() > 0 {
         let (rest, command) = parse_command(input)?;
+        //dbg!((&rest, &command));
         result.push(command);
 
         let (rest, _) = alt((
@@ -138,7 +139,7 @@ pub fn parse_term(input : In) -> IResult<In, Term> {
         parse_term_application
     ));
     
-    inner.preceded_by(bspace0(0)).parse(input)
+    inner.preceded_by(bspace0(2)).parse(input)
 }
 
 fn parse_term_let(input : In) -> IResult<In, Term> {
@@ -204,9 +205,9 @@ fn parse_term_binder(input : In) -> IResult<In, Term> {
 fn parse_term_simple_binder(input : In) -> IResult<In, Term> {
     let (rest, (lhs, kind, rhs))
     = context("simple_binder", tuple((
-        parse_term_atom.preceded_by(bspace0(2)),
+        parse_term_spine,
         alt((tag("->"), tag("=>"), tag("∩"), tag("="))).preceded_by(bspace0(2)),
-        parse_term.preceded_by(bspace0(2))
+        parse_term
     )))(input)?;
 
     let span = (lhs.span().0, rhs.span().1);
@@ -230,7 +231,7 @@ fn parse_term_lambda(input : In) -> IResult<In, Term> {
         tag("λ").preceded_by(bspace0(2)),
         separated_list1(bspace1(2), parse_lambda_var).preceded_by(bspace0(2)),
         tag(".").preceded_by(bspace0(2)),
-        parse_term.preceded_by(bspace0(2))
+        parse_term
     )))(input)?;
 
     let span = (start.location_offset(), body.span().1);
@@ -244,7 +245,7 @@ fn parse_term_lambda(input : In) -> IResult<In, Term> {
 fn parse_term_equal(input : In) -> IResult<In, Term> {
     let (rest, (lhs, _, ann, _, rhs))
     = context("equal", tuple((
-        parse_term_atom,
+        parse_term_spine,
         tag("=[").preceded_by(bspace0(2)),
         parse_term,
         tag("]").preceded_by(bspace0(2)),
@@ -282,6 +283,39 @@ fn parse_term_application(input : In) -> IResult<In, Term> {
     Ok((rest, term))
 }
 
+fn parse_term_spine(input: In) -> IResult<In, Term> {
+    let (rest, term) = alt((
+        parse_term_variable_application,
+        parse_term_atom,
+    )).preceded_by(bspace0(2))
+        .parse(input)?;
+    Ok((rest, term))
+}
+
+fn parse_term_variable_application(input : In) -> IResult<In, Term> {
+    let (rest, (head, tail))
+    = context("variable_application",
+        tuple((
+            parse_term_variable.preceded_by(bspace0(2)),
+            opt(pair(bspace1(2),
+                separated_list1(bspace1(2), parse_term_atom)
+                    .preceded_by(bspace0(2))
+            ))
+        ))
+    )(input)?;
+
+    let start = head.span().0;
+    let term = if let Some((_, mut tail)) = tail {
+        tail.drain(..)
+            .fold(head, |acc, t| {
+                let span = (start, t.span().1);
+                Term::Apply { span, fun: acc.boxed(), arg: t.boxed() }
+            })
+    } else { head };
+
+    Ok((rest, term))
+}
+
 /*
     atom ::=
     | "[" term "," term (";" term)? "]" (".1" | ".2")?
@@ -294,6 +328,8 @@ fn parse_term_atom(input: In) -> IResult<In, Term> {
         parse_term_pair,
         parse_term_cast,
         parse_term_paren,
+        parse_term_omission,
+        parse_term_hole,
         parse_term_variable
     ));
     
@@ -315,6 +351,24 @@ fn parse_term_atom(input: In) -> IResult<In, Term> {
         }
     } else { term };
 
+    Ok((rest, term))
+}
+
+
+
+// "_"
+fn parse_term_omission(input: In) -> IResult<In, Term> {
+    let (rest, result) = tag("_")(input)?;
+    let span = (result.location_offset(), result.location_offset() + 1);
+    let term = Term::Omission { span };
+    Ok((rest, term))
+}
+
+// "_"
+fn parse_term_hole(input: In) -> IResult<In, Term> {
+    let (rest, result) = tag("?")(input)?;
+    let span = (result.location_offset(), result.location_offset() + 1);
+    let term = Term::Hole { span };
     Ok((rest, term))
 }
 
@@ -474,6 +528,10 @@ fn bspace0<'a>(margin: usize) -> impl FnMut(In<'a>) -> IResult<In<'a>, usize> {
     many0_count(alt((
         tag(" ").map(|_| ()),
         tuple((
+            opt(tuple((
+                tag("--"),
+                is_not("\n\r")
+            ))),
             line_ending,
             take_while(|c| c == ' ')
                 .verify(move |s: &In| s.len() == margin),
@@ -486,6 +544,10 @@ fn bspace1<'a>(margin: usize) -> impl FnMut(In<'a>) -> IResult<In<'a>, usize> {
     many1_count(alt((
         tag(" ").map(|_| ()),
         tuple((
+            opt(tuple((
+                tag("--"),
+                is_not("\n\r")
+            ))),
             line_ending,
             take_while(|c| c == ' ')
                 .verify(move |s: &In| s.len() == margin),
@@ -496,12 +558,12 @@ fn bspace1<'a>(margin: usize) -> impl FnMut(In<'a>) -> IResult<In<'a>, usize> {
 
 fn empty_line(input: In) -> IResult<In, ()> {
     let (rest, _) = tuple((
-        line_ending,
         many0_count(tag(" ")),
         opt(tuple((
             tag("--"),
-            many0_count(not_line_ending)
-        )))
+            is_not("\n\r")
+        ))),
+        line_ending,
     ))(input)?;
     Ok((rest, ()))
 }
@@ -511,12 +573,10 @@ mod tests {
 
     #[test]
     fn basic_test() {
-        let input = r#"
-            module nat;
-            --hmmm
+        let input = r#"--        sdfgsfdggggsdfgsdfg sdfg sdfgser
         "#;
         let input = LocatedSpan::new(input);
-        let output = parse_file(input);
+        let output = empty_line(input);
         assert!(output.is_ok());
     }
 
