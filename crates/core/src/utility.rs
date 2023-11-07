@@ -1,6 +1,7 @@
 
-use std::{ops, fmt};
-use internment::LocalIntern;
+use std::{rc, ops, fmt};
+use internment::Intern;
+use rpds::{Vector, vector};
 
 pub trait Boxable {
     fn boxed(self) -> Box<Self>;
@@ -12,11 +13,38 @@ impl<T> Boxable for T {
     }
 }
 
+pub trait ReferenceCountable {
+    fn rced(self) -> rc::Rc<Self>;
+}
+
+impl<T> ReferenceCountable for T {
+    fn rced(self: T) -> rc::Rc<T> {
+        rc::Rc::new(self)
+    }
+}
+
+pub trait VectorExt {
+    fn drop_first(&self) -> Self
+        where Self : Sized;
+}
+
+impl<T: Clone> VectorExt for Vector<T> {
+    fn drop_first(&self) -> Self
+        where Self : Sized 
+    {
+        let result = Vector::new();
+        for item in self.iter().skip(1).cloned() {
+            result.push_back(item);
+        }
+        result
+    }
+}
+
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Symbol(LocalIntern<String>);
+pub struct Symbol(Intern<String>);
 
 impl From<&str> for Symbol {
-    fn from(s: &str) -> Self { Symbol(LocalIntern::from(s)) }
+    fn from(s: &str) -> Self { Symbol(Intern::from_ref(s)) }
 }
 
 impl AsRef<String> for Symbol {
@@ -40,14 +68,14 @@ impl fmt::Display for Symbol {
 
 #[derive(Debug, Hash, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Id {
-    pub namespace: Vec<Symbol>,
+    pub namespace: Vector<Symbol>,
     pub name: Symbol,
 }
 
 impl Id {
     pub fn add_qualifier(&self, sym: Symbol) -> Id {
-        let mut namespace = vec![sym];
-        namespace.extend(self.namespace.iter());
+        let mut namespace = vector![sym];
+        namespace.extend(self.namespace.iter().copied());
         Id {
             namespace,
             name: self.name
@@ -66,7 +94,7 @@ impl fmt::Display for Id {
 }
 
 impl From<Symbol> for Id {
-    fn from(sym: Symbol) -> Self { Id { namespace: vec![], name: sym } }
+    fn from(sym: Symbol) -> Self { Id { namespace: vector![], name: sym } }
 }
 
 #[derive(Debug, Hash, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -92,6 +120,17 @@ pub enum Sort {
     Term,
     Type,
     Kind
+}
+
+impl fmt::Display for Sort {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Sort::Unknown => write!(f, "Unknown"),
+            Sort::Term => write!(f, "Term"),
+            Sort::Type => write!(f, "Type"),
+            Sort::Kind => write!(f, "Kind"),
+        }
+    }
 }
 
 impl Sort {

@@ -498,7 +498,7 @@ fn check(db: &mut Database, ctx: Context, term: &syntax::Term, ty: Rc<Value>) ->
         }
 
         (syntax::Term::Pair { span, first, second, anno },
-            Value::IntersectType { name, first:type1, second:type2 }) =>
+            Value::Intersect { name, first:type1, second:type2 }) =>
         {
             let first_elabed = check(db, ctx.clone(), first, type1.clone())?;
             let first_value = Value::eval(db, ctx.module, ctx.env(), first_elabed.clone());
@@ -813,7 +813,7 @@ fn infer(db: &mut Database, ctx: Context, term: &syntax::Term) -> Result<(Rc<ter
             let (body_elabed, body_type) = infer(db, ctx.clone(), body)?;
             let body_type_unfolded = Value::unfold_to_head(db, body_type.clone());
             match body_type_unfolded.as_ref() {
-                Value::IntersectType { name, first, second } => {
+                Value::Intersect { name, first, second } => {
                     let first_proj = Rc::new(term::Term::Project { variant:1, body: body_elabed.clone() });
                     let first_value = Value::eval(db, module, ctx.env(), first_proj.clone());
                     match variant {

@@ -2,105 +2,112 @@
 use std::rc::Rc;
 use std::fmt;
 
+use rpds::Vector;
+
+use crate::hc::*;
 use crate::utility::*;
 use crate::value::EnvBound;
 
 type Span = (usize, usize);
 
-#[derive(Debug, Hash, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Hash, Clone, PartialEq, Eq)]
 pub struct Module {
     pub imports: Vec<Import>,
     pub id: Id,
     pub decls: Vec<Decl>,
 }
 
-#[derive(Debug, Hash, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Hash, Clone, PartialEq, Eq)]
 pub struct Parameter {
     pub name: Symbol,
     pub mode: Mode,
-    pub body: Rc<Term>
+    pub body: Term
 }
 
-#[derive(Debug, Hash, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Hash, Clone, PartialEq, Eq)]
 pub struct Import {
     pub public: bool,
     pub path: Span,
     pub namespace: Id,
 }
 
-#[derive(Debug, Hash, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Hash, Clone, PartialEq, Eq)]
 pub struct Decl {
     pub name: Symbol,
-    pub ty: Rc<Term>,
-    pub body: Rc<Term>
+    pub ty: Term,
+    pub body: Term
 }
 
-#[derive(Debug, Hash, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Term {
+pub type Term = Hc<TermData>;
+
+#[derive(Debug, Hash, Clone, PartialEq, Eq)]
+pub enum TermData {
     Lambda {
         sort: Sort,
-        domain_sort: Sort,
         mode: Mode,
         name: Symbol,
-        body: Rc<Term>
+        domain: Term,
+        body: Term
     },
     Let {
         sort: Sort,
         name: Symbol,
-        let_body: Rc<Term>,
-        body: Rc<Term>
+        let_body: Term,
+        body: Term
     },
     Pi {
         sort: Sort,
         mode: Mode,
         name: Symbol,
-        domain: Rc<Term>,
-        body: Rc<Term>
+        domain: Term,
+        body: Term
     },
     Intersect {
         name: Symbol,
-        first: Rc<Term>,
-        second: Rc<Term>
+        first: Term,
+        second: Term
     },
     Equality {
-        left: Rc<Term>,
-        right: Rc<Term>
+        left: Term,
+        right: Term,
+        anno: Term
     },
     Project {
         variant: usize,
-        body: Rc<Term>
+        body: Term
     },
     Pair {
-        first: Rc<Term>,
-        second: Rc<Term>
+        first: Term,
+        second: Term,
+        anno: Term
     },
     Separate {
-        equation: Rc<Term>
+        equation: Term
     },
     Refl {
-        input: Rc<Term>
+        input: Term
     },
     Cast {
-        input: Rc<Term>,
-        witness: Rc<Term>,
-        evidence: Rc<Term>,
+        input: Term,
+        witness: Term,
+        evidence: Term,
     },
     Promote {
-        equation: Rc<Term>
+        equation: Term
     },
     J {
-        equality: Rc<Term>,
-        predicate: Rc<Term>,
-        lhs: Rc<Term>,
-        rhs: Rc<Term>,
-        equation: Rc<Term>,
-        case: Rc<Term>
+        domain: Term,
+        predicate: Term,
+        lhs: Term,
+        rhs: Term,
+        equation: Term,
+        case: Term
     },
     Apply {
         sort: Sort,
         mode: Mode,
-        fun: Rc<Term>,
-        arg: Rc<Term>
+        fun: Term,
+        arg: Term
     },
     Bound {
         sort: Sort,
@@ -129,125 +136,61 @@ impl fmt::Display for Decl {
     }
 }
 
-impl Term {
-    pub fn id() -> Term {
-        let (sort, domain_sort, mode, name) = (Sort::Term, Sort::Term, Mode::Free, Symbol::from("x"));
-        let body = Rc::new(Term::Bound { sort, index:0.into() });
-        Term::Lambda { sort, domain_sort, mode, name, body }
-    }
-
-    // This is meant for pretty-printing erased terms, we intentionally don't erase lambdas so that we don't have to
-    // fix indices, plus the extra lambda abstractions don't obfuscate output very much
-    pub fn partial_erase(&self) -> Term {
-        match self {
-            Term::Lambda { sort, domain_sort, mode, name, body } => {
-                Term::Lambda {
-                    sort:*sort,
-                    domain_sort:*domain_sort,
-                    mode:*mode,
-                    name:*name,
-                    body:Rc::new(body.partial_erase())
-                }
-            }
-            Term::Let { sort, name, let_body, body } => {
-                Term::Let {
-                    sort:*sort,
-                    name:*name,
-                    let_body:Rc::new(let_body.partial_erase()),
-                    body:Rc::new(body.partial_erase())
-                }
-            }
-            t @ Term::Pi { .. }
-            | t @ Term::Intersect { .. }
-            | t @ Term::Equality { .. } => t.clone(),
-            Term::Project { body, .. } => body.partial_erase(),
-            Term::Pair { first, .. } => first.partial_erase(),
-            Term::Separate { .. } => Term::id(),
-            Term::Refl { input } => Term::id(),
-            Term::Cast { input, .. } => input.partial_erase(),
-            Term::Promote { equation } => equation.partial_erase(),
-            Term::J { equation, case, ..} => {
-                Term::Apply {
-                    sort: Sort::Term,
-                    mode: Mode::Free,
-                    fun: Rc::new(equation.partial_erase()),
-                    arg: Rc::new(case.partial_erase())
-                }
-            }
-            Term::Apply { sort, mode, fun, arg } => {
-                if *mode == Mode::Erased { fun.partial_erase() }
-                else {
-                    Term::Apply {
-                        sort:*sort,
-                        mode:*mode,
-                        fun:Rc::new(fun.partial_erase()),
-                        arg:Rc::new(arg.partial_erase())
-                    }
-                }
-            }
-            t @ Term::Bound { .. }
-            | t @ Term::Free { .. }
-            | t @ Term::Meta { .. }
-            | t @ Term::InsertedMeta { .. }
-            | t @ Term::Star
-            | t @ Term::SuperStar => t.clone()
-        }
-    }
-
+impl TermData {
     pub fn sort(&self) -> Sort {
         match self {
-            Term::Lambda { sort, .. }
-            | Term::Let { sort, .. }
-            | Term::Pi { sort, .. } => *sort,
-            Term::Intersect { .. }
-            | Term::Equality { .. } => Sort::Type,
-            | Term::Project { .. }
-            | Term::Pair { .. }
-            | Term::Separate { .. }
-            | Term::Refl { .. }
-            | Term::Cast { .. }
-            | Term::Promote { .. }
-            | Term::J { .. } => Sort::Term,
-            Term::Apply { sort, .. }
-            | Term::Bound { sort, .. }
-            | Term::Free { sort, .. }
-            | Term::Meta { sort, .. }
-            | Term::InsertedMeta { sort, .. } => *sort,
-            Term::Star => Sort::Kind,
-            Term::SuperStar => Sort::Kind,
+            TermData::Lambda { sort, .. }
+            | TermData::Let { sort, .. }
+            | TermData::Pi { sort, .. } => *sort,
+            TermData::Intersect { .. }
+            | TermData::Equality { .. } => Sort::Type,
+            | TermData::Project { .. }
+            | TermData::Pair { .. }
+            | TermData::Separate { .. }
+            | TermData::Refl { .. }
+            | TermData::Cast { .. }
+            | TermData::Promote { .. }
+            | TermData::J { .. } => Sort::Term,
+            TermData::Apply { sort, .. }
+            | TermData::Bound { sort, .. }
+            | TermData::Free { sort, .. }
+            | TermData::Meta { sort, .. }
+            | TermData::InsertedMeta { sort, .. } => *sort,
+            TermData::Star => Sort::Kind,
+            TermData::SuperStar => Sort::Kind,
         }
     }
 
     pub fn ambiguous(&self) -> bool {
         match self {
-            Term::Lambda { .. }
-            | Term::Let { .. }
-            | Term::Pi { .. }
-            | Term::Intersect { .. } => true,
-            Term::Equality { .. } => false,
-            Term::Project { .. }
-            | Term::Pair { .. } => false,
-            Term::Separate { .. } => true,
-            Term::Refl { .. } => false,
-            Term::Promote { .. } => false,
-            Term::Cast { .. } => true,
-            Term::Promote { .. } => true,
-            Term::J { .. } => true,
-            Term::Apply { .. } => true,
-            Term::Bound { .. }
-            | Term::Free { .. }
-            | Term::Meta { .. }
-            | Term::InsertedMeta { .. }
-            | Term::Star
-            | Term::SuperStar => false,
+            TermData::Lambda { .. }
+            | TermData::Let { .. }
+            | TermData::Pi { .. }
+            | TermData::Intersect { .. } => true,
+            TermData::Equality { .. } => false,
+            TermData::Project { .. }
+            | TermData::Pair { .. } => false,
+            TermData::Separate { .. } => true,
+            TermData::Refl { .. } => false,
+            TermData::Promote { .. } => false,
+            TermData::Cast { .. } => true,
+            TermData::Promote { .. } => true,
+            TermData::J { .. } => true,
+            TermData::Apply { .. } => true,
+            TermData::Bound { .. }
+            | TermData::Free { .. }
+            | TermData::Meta { .. }
+            | TermData::InsertedMeta { .. }
+            | TermData::Star
+            | TermData::SuperStar => false,
         }
     }
 
-    pub fn is_apply(&self) -> bool { matches!(self, Term::Apply { .. }) }
+    pub fn is_apply(&self) -> bool { matches!(self, TermData::Apply { .. }) }
 
-    pub fn to_string_with_context(&self, mut ctx: im_rc::Vector<Symbol>) -> String {
+    pub fn to_string_with_context(&self, mut ctx: Vector<Symbol>) -> String {
         match self {
-            Term::Lambda { mode, name, body, .. } => {
+            TermData::Lambda { mode, name, body, .. } => {
                 let binder = match mode {
                     Mode::Erased => "Λ",
                     Mode::Free => "λ",
@@ -257,13 +200,13 @@ impl Term {
                 let body = body.to_string_with_context(ctx);
                 format!("{} {}. {}", binder, name, body)
             }
-            Term::Let { name, let_body, body, .. } => {
+            TermData::Let { name, let_body, body, .. } => {
                 let let_body = let_body.to_string_with_context(ctx.clone());
                 ctx.push_back(*name);
                 let body = body.to_string_with_context(ctx);
                 format!("let {} := {}; {}", name, let_body, body)
             }
-            Term::Pi { mode, name, domain, body, .. } => {
+            TermData::Pi { mode, name, domain, body, .. } => {
                 let binder = match mode {
                     Mode::Erased => "∀",
                     Mode::Free => "Π",
@@ -275,51 +218,53 @@ impl Term {
                 if domain.ambiguous() { format!("{} {}:({}). {}", binder, name, domain_str, body) }
                 else { format!("{} {}:{}. {}", binder, name, domain_str, body) }
             }
-            Term::Intersect { name, first, second } => {
+            TermData::Intersect { name, first, second } => {
                 let first_str = first.to_string_with_context(ctx.clone());
                 ctx.push_back(*name);
                 let second = second.to_string_with_context(ctx);
                 if first.ambiguous() { format!("ι {}:({}), {}", name, first_str, second) }
                 else { format!("ι {}:{}, {}", name, first_str, second) }
             }
-            Term::Equality { left, right } => {
+            TermData::Equality { left, right, anno } => {
                 let left = left.to_string_with_context(ctx.clone());
-                let right = right.to_string_with_context(ctx);
-                format!("{{{} ≃ {}}}", left, right)
+                let right = right.to_string_with_context(ctx.clone());
+                let anno = anno.to_string_with_context(ctx);
+                format!("{{{} =[{}] {}}}", left, anno, right)
             }
-            Term::Project { variant, body } => {
+            TermData::Project { variant, body } => {
                 let body = body.to_string_with_context(ctx);
                 format!("{}.{}", body, variant)
             }
-            Term::Pair { first, second } => {
+            TermData::Pair { first, second, anno } => {
                 let first = first.to_string_with_context(ctx.clone());
-                let second = second.to_string_with_context(ctx);
-                format!("[{}, {}]", first, second)
+                let second = second.to_string_with_context(ctx.clone());
+                let anno = anno.to_string_with_context(ctx);
+                format!("[{}, {}; {}]", first, second, anno)
             }
-            Term::Separate { equation } => {
+            TermData::Separate { equation } => {
                 let equation = equation.to_string_with_context(ctx);
                 format!("δ {}", equation)
             }
-            Term::Refl { input } => {
+            TermData::Refl { input } => {
                 let input = input.to_string_with_context(ctx);
                 format!("rfl {}", input)
             }
-            Term::Promote { equation } => {
+            TermData::Promote { equation } => {
                 let equation = equation.to_string_with_context(ctx);
                 format!("θ {}", equation)
             }
-            Term::Cast { input, witness, evidence } => {
+            TermData::Cast { input, witness, evidence } => {
                 let equation_str = evidence.to_string_with_context(ctx.clone());
                 let input = input.to_string_with_context(ctx.clone());
                 let witness = witness.to_string_with_context(ctx);
                 if evidence.ambiguous() { format!("φ ({}) - {} {{{}}}", equation_str, input, witness) }
                 else { format!("φ {} - {} {{{}}}", equation_str, input, witness) }
             }
-            Term::Promote { equation } => {
+            TermData::Promote { equation } => {
                 let equation_str = equation.to_string_with_context(ctx.clone());
                 format!("ϑ {{ {} }}", equation_str)
             }
-            Term::J { equality, predicate, lhs, rhs, equation, case } => {
+            TermData::J { domain: equality, predicate, lhs, rhs, equation, case } => {
                 let equality_str = equality.to_string_with_context(ctx.clone());
                 let predicate_str = predicate.to_string_with_context(ctx.clone());
                 let lhs_str = lhs.to_string_with_context(ctx.clone());
@@ -328,7 +273,7 @@ impl Term {
                 let case_str = case.to_string_with_context(ctx.clone());
                 format!("J {{ {}, {}, {}, {}, {}, {} }}", equality_str, predicate_str, lhs_str, rhs_str, equation_str, case_str)
             }
-            Term::Apply { mode, fun, arg, .. } => {
+            TermData::Apply { mode, fun, arg, .. } => {
                 let operator = match mode {
                     Mode::Free => "",
                     Mode::Erased => "-",
@@ -343,7 +288,7 @@ impl Term {
                     (false, false) => format!("({}) {}{}", fun_str, operator, arg_str),
                 }
             }
-            Term::Bound { index, .. } => {
+            TermData::Bound { index, .. } => {
                 let mut result = index.to_string();
                 if ctx.len() > **index {
                     let level = index.to_level(ctx.len());
@@ -353,29 +298,29 @@ impl Term {
                 }
                 result
             }
-            Term::Meta { name, .. } => name.to_string(),
-            Term::InsertedMeta { name, mask, .. } => {
+            TermData::Meta { name, .. } => name.to_string(),
+            TermData::InsertedMeta { name, mask, .. } => {
                 let mut args = String::new();
                 for i in 0..mask.len() {
                     if mask[i] == EnvBound::Bound {
                         args.push(' ');
                         let symbol = ctx.get(i)
-                            .copied()
+                            .cloned()
                             .unwrap_or_default();
                         args.push_str(symbol.as_str());
                     }
                 }
                 format!("({}{})", name, args)
             }
-            Term::Free { id, .. } => id.to_string(),
-            Term::Star => "★".to_string(),
-            Term::SuperStar => "□".to_string(),
+            TermData::Free { id, .. } => id.to_string(),
+            TermData::Star => "★".to_string(),
+            TermData::SuperStar => "□".to_string(),
         }
     }
 }
 
-impl fmt::Display for Term {
+impl fmt::Display for TermData {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.to_string_with_context(im_rc::Vector::new()))
+        write!(f, "{}", self.to_string_with_context(Vector::new()))
     }
 }

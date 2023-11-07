@@ -5,28 +5,25 @@ use std::time;
 use std::path::{Path, PathBuf};
 use std::collections::{HashSet, HashMap};
 
-use colored::Colorize;
-use thiserror::Error;
+use rpds::Vector;
 use if_chain::if_chain;
 
+use crate::hc::*;
 use crate::utility::*;
-use crate::term;
+use crate::term::*;
 use crate::metavar::MetaState;
-use crate::value::{Environment, LazyValue, Value, ValueEx, SpineEntry, Spine};
+use crate::value::*;
+//use crate::value::{Environment, LazyValue, Value, ValueEx, SpineEntry, Spine};
 
-#[derive(Debug, Error)]
+#[derive(Debug)]
 pub enum DatabaseError {
-    #[error("Non unicode path {path:?}")]
     NonUnicodePath { path: PathBuf },
-    #[error("Cycle in {module}")]
     Cycle { module: String },
-    #[error("The module {current_module} has conflicting definitions with the import {imported_module} which are: {collisions}")]
     ImportCollision {
         current_module: String,
         imported_module: String,
         collisions: String
     },
-    #[error("The name {id} already exists in the module {current_module}")]
     DeclCollision {
         current_module: String,
         id: String
@@ -35,20 +32,21 @@ pub enum DatabaseError {
 
 #[derive(Debug, Clone)]
 pub struct DeclValues {
-    pub type_value: Rc<LazyValue>,
-    pub def_value: Option<Rc<LazyValue>>
+    pub type_value: LazyValue,
+    pub def_value: Option<LazyValue>
 }
 
 impl DeclValues {
-    fn apply(self, db: &Database, args: &[(Mode, Rc<Value>)]) -> DeclValues {
-        let DeclValues { mut type_value, mut def_value } = self;
-        for (mode, arg) in args {
-            let arg = LazyValue::computed(arg.clone());
-            let entry = SpineEntry::new(*mode, arg);
-            type_value = type_value.apply(db, entry.clone());
-            def_value = def_value.map(|x| x.apply(db, entry));
-        }
-        DeclValues { type_value, def_value }
+    fn apply(self, db: &Database, args: &[(Mode, Value)]) -> DeclValues {
+        todo!()
+        // let DeclValues { mut type_value, mut def_value } = self;
+        // for (mode, arg) in args {
+        //     let arg = LazyValue::computed(arg.clone());
+        //     let entry = SpineEntry::new(*mode, arg);
+        //     type_value = type_value.apply(db, entry.clone());
+        //     def_value = def_value.map(|x| x.apply(db, entry));
+        // }
+        // DeclValues { type_value, def_value }
     }
 }
 
@@ -57,7 +55,7 @@ pub struct ImportData {
     pub public: bool,
     pub path: Symbol,
     pub namespace: Option<Symbol>,
-    pub args: Vec<(Mode, Rc<Value>)>
+    pub args: Vec<(Mode, Value)>
 }
 
 #[derive(Debug)]
@@ -71,7 +69,7 @@ pub struct ModuleData {
     // next_hole: usize,
     pub imports: Vec<ImportData>,
     pub exports: HashSet<Id>,
-    pub params: Vec<term::Parameter>,
+    pub params: Vec<Parameter>,
     pub scope: HashSet<Id>,
     pub last_modified: time::SystemTime,
     pub contains_error: bool
@@ -86,6 +84,8 @@ impl ModuleData {
 
 #[derive(Debug)]
 pub struct Database {
+    pub term_data: HcFactory<TermData>,
+    pub value_data : HcFactory<LazyValueData>,
     pub modules: HashMap<Symbol, ModuleData>,
     pub queued: Vec<Symbol>
 }
@@ -99,29 +99,39 @@ impl Default for Database {
 impl Database {
     pub fn new() -> Database {
         Database { 
+            term_data: HcFactory::with_capacity(128),
+            value_data: HcFactory::with_capacity(128),
             modules: HashMap::new(),
             queued: Vec::new()
         }
     }
 
-    pub fn insert_decl(&mut self, module: Symbol, opaque: bool, decl: term::Decl) -> Result<(), ()> {
-        self.freeze_active_metas(module);
-        if decl.name == Symbol::from("_") { return Ok(()) }
-        let module_data = self.modules.get_mut(&module).unwrap();
-        let id = Id::from(decl.name);
-        if module_data.scope.contains(&id) || module_data.exports.contains(&id) {
-            Err(())
-        } else {
-            module_data.scope.insert(id.clone());
-            module_data.exports.insert(id);
-            let type_value = Rc::new(LazyValue::new(module, Environment::new(), decl.ty.clone()));
-            let def_value = if opaque { None } 
-                else { Some(Rc::new(LazyValue::new(module, Environment::new(), decl.body.clone()))) };
-            let decl_values = DeclValues { type_value, def_value };
-            module_data.values.insert(decl.name, decl_values);
-            Ok(())
-        }
+    pub fn make_term(&mut self, t: TermData) -> Term {
+        self.term_data.make(t)
     }
+
+    pub fn make_value(&mut self, v: LazyValueData) -> LazyValue {
+        self.value_data.make(v)
+    }
+
+    // pub fn insert_decl(&mut self, module: Symbol, opaque: bool, decl: Decl) -> Result<(), ()> {
+    //     self.freeze_active_metas(module);
+    //     if decl.name == Symbol::from("_") { return Ok(()) }
+    //     let module_data = self.modules.get_mut(&module).unwrap();
+    //     let id = Id::from(decl.name);
+    //     if module_data.scope.contains(&id) || module_data.exports.contains(&id) {
+    //         Err(())
+    //     } else {
+    //         module_data.scope.insert(id.clone());
+    //         module_data.exports.insert(id);
+    //         let type_value = Rc::new(LazyValue::new(module, Environment::new(), decl.ty.clone()));
+    //         let def_value = if opaque { None } 
+    //             else { Some(Rc::new(LazyValue::new(module, Environment::new(), decl.body.clone()))) };
+    //         let decl_values = DeclValues { type_value, def_value };
+    //         module_data.values.insert(decl.name, decl_values);
+    //         Ok(())
+    //     }
+    // }
 
     pub fn loaded(&self, module: Symbol) -> bool {
         if let Some(data) = self.modules.get(&module) {
@@ -151,7 +161,7 @@ impl Database {
         })
     }
 
-    fn lookup_decl(&self, original: bool, module: Symbol, namespace: &mut Vec<Symbol>, name: Symbol) -> Option<DeclValues> {
+    fn lookup_decl(&self, original: bool, module: Symbol, namespace: Vector<Symbol>, name: Symbol) -> Option<DeclValues> {
         let mut result = None;
         // We have a namespace, so we should find the declaration in an imported module
         if_chain! {
@@ -159,7 +169,7 @@ impl Database {
             if let Some(import_data) = self.reverse_lookup_namespace(module, *component);
             if original || import_data.public;
             then {
-                namespace.remove(0);
+                let namespace = namespace.drop_first();
                 result = self.lookup_decl(false, import_data.path, namespace, name);
                 result = result.map(|x| x.apply(self, &import_data.args));
             }
@@ -178,7 +188,7 @@ impl Database {
                         .enumerate()
                         .map(|(level, p)| {
                             let sort = p.body.sort().demote();
-                            (p.mode, Value::variable(sort, level))
+                            (p.mode, Value::var(sort, level))
                         }).collect();
                     result = result.map(|x| x.apply(self, &params));
                 }
@@ -193,7 +203,7 @@ impl Database {
                 for ImportData { public, path, namespace:qual, args } in module_data.imports.iter() {
                     if (original || *public) && qual.is_none() {
                         result = result.or_else(|| {
-                            let result = self.lookup_decl(false, *path, namespace, name);
+                            let result = self.lookup_decl(false, *path, namespace.clone(), name);
                             result.map(|x| x.apply(self, args))
                         });
                     }
@@ -203,25 +213,25 @@ impl Database {
         result
     }
 
-    pub fn lookup_def(&self, module: Symbol, id: &Id) -> Option<Rc<LazyValue>> {
-        let mut namespace = id.namespace.clone();
-        let decl = self.lookup_decl(true, module, &mut namespace, id.name);
+    pub fn lookup_def(&self, module: Symbol, id: &Id) -> Option<LazyValue> {
+        let namespace = id.namespace.clone();
+        let decl = self.lookup_decl(true, module, namespace, id.name);
         decl.and_then(|decl| decl.def_value)
     }
 
-    pub fn lookup_type(&self, module: Symbol, id: &Id) -> Option<Rc<LazyValue>> {
-        let mut namespace = id.namespace.clone();
-        let decl = self.lookup_decl(true, module, &mut namespace, id.name);
+    pub fn lookup_type(&self, module: Symbol, id: &Id) -> Option<LazyValue> {
+        let namespace = id.namespace.clone();
+        let decl = self.lookup_decl(true, module, namespace, id.name);
         decl.map(|decl| decl.type_value)
     }
 
-    pub fn set_params(&mut self, module: Symbol, params: Vec<term::Parameter>) {
+    pub fn set_params(&mut self, module: Symbol, params: Vec<Parameter>) {
         if let Some(module_data) = self.modules.get_mut(&module) {
             module_data.params = params
         }
     }
 
-    pub fn lookup_params(&self, module: Symbol) -> Vec<term::Parameter> {
+    pub fn lookup_params(&self, module: Symbol) -> Vec<Parameter> {
         self.modules.get(&module)
             .map(|data| &data.params)
             .cloned()
@@ -293,7 +303,7 @@ impl Database {
                 *meta = MetaState::Solved(value.clone());
             }
         }
-        log::info!("\n{}\n{}\n{}", name, "solved to".green(), value.quote(self, 0.into()));
+        //log::info!("\n{}\n{}\n{}", name, "solved to", value.quote(self, 0.into()));
         Ok(())
     }
 
@@ -307,9 +317,76 @@ impl Database {
             let meta = module_data.metas.entry(active)
                 .or_insert(MetaState::Frozen);
             if let MetaState::Unsolved = meta {
-                log::info!("{} is {}", active, "frozen".bright_blue());
+                log::info!("{} is {}", active, "frozen");
                 *meta = MetaState::Frozen
             }
         }
     }
+}
+
+
+impl Term {
+    // pub fn id(db: &mut Database) -> Term {
+    //     let (sort, mode, name) = (Sort::Term, Mode::Free, Symbol::from("x"));
+    //     let body = db.make(TermData::Bound { sort, index:0.into() });
+    //     db.make(TermData::Lambda { sort, mode, name, body })
+    // }
+
+    // // This is meant for pretty-printing erased TermDatas, we intentionally don't erase lambdas so that we don't have to
+    // // fix indices, plus the extra lambda abstractions don't obfuscate output very much
+    // pub fn partial_erase(&self) -> TermData {
+    //     match self {
+    //         TermData::Lambda { sort, domain_sort, mode, name, body } => {
+    //             TermData::Lambda {
+    //                 sort:*sort,
+    //                 domain_sort:*domain_sort,
+    //                 mode:*mode,
+    //                 name:*name,
+    //                 body:Rc::new(body.partial_erase())
+    //             }
+    //         }
+    //         TermData::Let { sort, name, let_body, body } => {
+    //             TermData::Let {
+    //                 sort:*sort,
+    //                 name:*name,
+    //                 let_body:Rc::new(let_body.partial_erase()),
+    //                 body:Rc::new(body.partial_erase())
+    //             }
+    //         }
+    //         t @ TermData::Pi { .. }
+    //         | t @ TermData::Intersect { .. }
+    //         | t @ TermData::Equality { .. } => t.clone(),
+    //         TermData::Project { body, .. } => body.partial_erase(),
+    //         TermData::Pair { first, .. } => first.partial_erase(),
+    //         TermData::Separate { .. } => TermData::id(),
+    //         TermData::Refl { input } => TermData::id(),
+    //         TermData::Cast { input, .. } => input.partial_erase(),
+    //         TermData::Promote { equation } => equation.partial_erase(),
+    //         TermData::J { equation, case, ..} => {
+    //             TermData::Apply {
+    //                 sort: Sort::Term,
+    //                 mode: Mode::Free,
+    //                 fun: Rc::new(equation.partial_erase()),
+    //                 arg: Rc::new(case.partial_erase())
+    //             }
+    //         }
+    //         TermData::Apply { sort, mode, fun, arg } => {
+    //             if *mode == Mode::Erased { fun.partial_erase() }
+    //             else {
+    //                 TermData::Apply {
+    //                     sort:*sort,
+    //                     mode:*mode,
+    //                     fun:Rc::new(fun.partial_erase()),
+    //                     arg:Rc::new(arg.partial_erase())
+    //                 }
+    //             }
+    //         }
+    //         t @ TermData::Bound { .. }
+    //         | t @ TermData::Free { .. }
+    //         | t @ TermData::Meta { .. }
+    //         | t @ TermData::InsertedMeta { .. }
+    //         | t @ TermData::Star
+    //         | t @ TermData::SuperStar => t.clone()
+    //     }
+    // }
 }

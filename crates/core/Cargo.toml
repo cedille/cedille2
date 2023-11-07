@@ -6,11 +6,9 @@ authors = ["Andrew Marmaduke <marmaduke.andrew@gmail.com>"]
 
 [dependencies]
 
-thiserror = "=1.0"
-colored = "=2"
-internment = "=0.5.4"
-once_cell = "=1.9.0"
+internment = "=0.7.4"
+ahash = "=0.8.6"
 log ="0.4.14"
 if_chain = "=1.0.2"
 stacker = "=0.1.14"
-im-rc = "=15.0.0"
+rpds = "1.1.0"

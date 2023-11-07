@@ -581,7 +581,7 @@ fn parse_ident(input : In) -> IResult<In, (Id, Span)> {
 
     // Disallow keywords
     match name.as_str() {
-        "Set" | "module" | "import" | "def" | "let" => {
+        "Set" | "module" | "import" | "let" => {
             unimplemented!()
         }
         _ => {
