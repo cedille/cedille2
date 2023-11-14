@@ -37,13 +37,12 @@ pub struct DeclValues {
 }
 
 impl DeclValues {
-    fn apply(self, db: &Database, args: &[(Mode, Value)]) -> DeclValues {
-        todo!()
+    fn apply(self, db: &Database, args: &[(Mode, LazyValue)]) -> DeclValues {
+        self
         // let DeclValues { mut type_value, mut def_value } = self;
         // for (mode, arg) in args {
-        //     let arg = LazyValue::computed(arg.clone());
-        //     let entry = SpineEntry::new(*mode, arg);
-        //     type_value = type_value.apply(db, entry.clone());
+        //     let action = Action::Apply(*mode, arg.clone());
+        //     type_value = type_value.perform(action);
         //     def_value = def_value.map(|x| x.apply(db, entry));
         // }
         // DeclValues { type_value, def_value }
@@ -114,24 +113,24 @@ impl Database {
         self.value_data.make(v)
     }
 
-    // pub fn insert_decl(&mut self, module: Symbol, opaque: bool, decl: Decl) -> Result<(), ()> {
-    //     self.freeze_active_metas(module);
-    //     if decl.name == Symbol::from("_") { return Ok(()) }
-    //     let module_data = self.modules.get_mut(&module).unwrap();
-    //     let id = Id::from(decl.name);
-    //     if module_data.scope.contains(&id) || module_data.exports.contains(&id) {
-    //         Err(())
-    //     } else {
-    //         module_data.scope.insert(id.clone());
-    //         module_data.exports.insert(id);
-    //         let type_value = Rc::new(LazyValue::new(module, Environment::new(), decl.ty.clone()));
-    //         let def_value = if opaque { None } 
-    //             else { Some(Rc::new(LazyValue::new(module, Environment::new(), decl.body.clone()))) };
-    //         let decl_values = DeclValues { type_value, def_value };
-    //         module_data.values.insert(decl.name, decl_values);
-    //         Ok(())
-    //     }
-    // }
+    pub fn insert_decl(&mut self, module: Symbol, opaque: bool, decl: Decl) -> Result<(), ()> {
+        self.freeze_active_metas(module);
+        if decl.name == Symbol::from("_") { return Ok(()) }
+        let type_value = LazyValueData::lazy(self, module, Env::new(), decl.ty.clone());
+        let def_value = if opaque { None } 
+            else { Some(LazyValueData::lazy(self, module, Env::new(), decl.body.clone()))};
+        let module_data = self.modules.get_mut(&module).unwrap();
+        let id = Id::from(decl.name);
+        if module_data.scope.contains(&id) || module_data.exports.contains(&id) {
+            Err(())
+        } else {
+            module_data.scope.insert(id.clone());
+            module_data.exports.insert(id);
+            let decl_values = DeclValues { type_value, def_value };
+            module_data.values.insert(decl.name, decl_values);
+            Ok(())
+        }
+    }
 
     pub fn loaded(&self, module: Symbol) -> bool {
         if let Some(data) = self.modules.get(&module) {
@@ -171,7 +170,7 @@ impl Database {
             then {
                 let namespace = namespace.drop_first();
                 result = self.lookup_decl(false, import_data.path, namespace, name);
-                result = result.map(|x| x.apply(self, &import_data.args));
+                //FIXME: result = result.map(|x| x.apply(self, &import_data.args));
             }
         }
         // There is no namespace, so check the current module first
@@ -190,7 +189,7 @@ impl Database {
                             let sort = p.body.sort().demote();
                             (p.mode, Value::var(sort, level))
                         }).collect();
-                    result = result.map(|x| x.apply(self, &params));
+                    //FIXME: result = result.map(|x| x.apply(self, &params));
                 }
             }
         }
@@ -204,7 +203,8 @@ impl Database {
                     if (original || *public) && qual.is_none() {
                         result = result.or_else(|| {
                             let result = self.lookup_decl(false, *path, namespace.clone(), name);
-                            result.map(|x| x.apply(self, args))
+                            // FIXME: result.map(|x| x.apply(self, args))
+                            result
                         });
                     }
                 }
@@ -295,7 +295,7 @@ impl Database {
             .expect("Impossible, any created meta must exist.")
     }
 
-    pub fn insert_meta(&mut self, module: Symbol, name: Symbol, value: Rc<Value>) -> Result<(), ()> {
+    pub fn insert_meta(&mut self, module: Symbol, name: Symbol, value: Value) -> Result<(), ()> {
         let module_data = self.modules.get_mut(&module).unwrap();
         match module_data.metas.get_mut(&name) {
             None | Some(MetaState::Frozen) | Some(MetaState::Solved(_)) => panic!("TODO FIX"),

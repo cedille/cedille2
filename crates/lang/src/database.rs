@@ -18,7 +18,7 @@ use nom_locate::LocatedSpan;
 use cedille2_core::utility::*;
 use cedille2_core::term;
 use cedille2_core::metavar::MetaState;
-use cedille2_core::value::{Environment, LazyValue, Value, ValueEx, SpineEntry, Spine};
+use cedille2_core::value::*;
 use cedille2_core::database::{Database, ModuleData, ImportData};
 use crate::{syntax, elaborator};
 use crate::parser;
@@ -62,7 +62,7 @@ pub fn path_to_module_symbol<P: AsRef<Path>>(prefix: P, path: P) -> Result<Symbo
 
 pub trait DatabaseExt {
     fn resolve_import_symbol(&self, module: Symbol, import: (usize, usize)) -> Result<Symbol, CedilleError>;
-    fn load_import(&mut self, module: Symbol, import: &syntax::Import, args: Vec<(Mode, Rc<Value>)>) -> Result<(), CedilleError>;
+    fn load_import(&mut self, module: Symbol, import: &syntax::Import, args: Vec<(Mode, Value)>) -> Result<(), CedilleError>;
     fn load_module(&mut self, sym: Symbol) -> Result<(), CedilleError>;
     fn load_module_from_path<P: AsRef<Path>>(&mut self, path: P) -> Result<Symbol, CedilleError>;
     fn load_dir(&mut self, path: &Path) -> Result<(), CedilleError>;
@@ -77,7 +77,7 @@ impl DatabaseExt for Database {
         path_to_module_symbol(parent_path, &path)
     }
 
-    fn load_import(&mut self, module: Symbol, import: &syntax::Import, args: Vec<(Mode, Rc<Value>)>) -> Result<(), CedilleError> {
+    fn load_import(&mut self, module: Symbol, import: &syntax::Import, args: Vec<(Mode, Value)>) -> Result<(), CedilleError> {
         let path = self.resolve_import_symbol(module, import.path)?;
 
         self.load_module(path)?;
@@ -142,7 +142,6 @@ impl DatabaseExt for Database {
         let ext = path.extension().unwrap_or_default();
         if ext.to_string_lossy() != "ced" { return Ok(Symbol::from("")); }
         let sym = path_to_module_symbol(Path::new(""), path)?;
-        dbg!(sym);
         self.load_module(sym)?;
         Ok(sym)
     }

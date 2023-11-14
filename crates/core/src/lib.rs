@@ -7,4 +7,20 @@ pub mod eval;
 pub mod unify;
 pub mod metavar;
 pub mod database;
+pub mod parser;
 pub mod infer;
+
+pub mod prelude {
+    pub use crate::{
+        hc::*, 
+        utility::*, 
+        term::*, 
+        value::*, 
+        eval::*, 
+        unify::*, 
+        metavar::*,
+        database::*,
+        parser::*,
+        infer::*
+    };
+}

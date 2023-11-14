@@ -32,9 +32,9 @@ impl<T: Clone> VectorExt for Vector<T> {
     fn drop_first(&self) -> Self
         where Self : Sized 
     {
-        let result = Vector::new();
+        let mut result = Vector::new();
         for item in self.iter().skip(1).cloned() {
-            result.push_back(item);
+            result = result.push_back(item);
         }
         result
     }
@@ -47,8 +47,8 @@ impl From<&str> for Symbol {
     fn from(s: &str) -> Self { Symbol(Intern::from_ref(s)) }
 }
 
-impl AsRef<String> for Symbol {
-    fn as_ref(&self) -> &String { self.0.as_ref() }
+impl AsRef<str> for Symbol {
+    fn as_ref(&self) -> &'static str { self.0.as_ref() }
 }
 
 impl ops::Deref for Symbol {
@@ -140,6 +140,15 @@ impl Sort {
             Sort::Term => Sort::Unknown,
             Sort::Type => Sort::Term,
             Sort::Kind => Sort::Type,
+        }
+    }
+
+    pub fn promote(self) -> Sort {
+        match self {
+            Sort::Unknown => Sort::Unknown,
+            Sort::Term => Sort::Type,
+            Sort::Type => Sort::Kind,
+            Sort::Kind => Sort::Unknown,
         }
     }
 }

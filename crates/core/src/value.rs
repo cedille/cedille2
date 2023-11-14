@@ -13,25 +13,10 @@ use crate::database::Database;
 pub type Spine = List<Action>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EqInductData {
-    pub domain: LazyValue,
-    pub predicate: LazyValue,
-    pub lhs: LazyValue,
-    pub rhs: LazyValue,
-    pub case: LazyValue
-}
-
-impl EqInductData {
-    pub fn new(domain: LazyValue, predicate: LazyValue, lhs: LazyValue, rhs: LazyValue, case: LazyValue) -> Self {
-        EqInductData { domain, predicate, lhs, rhs, case }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
     Apply(Mode, LazyValue),
     Project(usize),
-    EqInduct(Rc<EqInductData>),
+    Subst(LazyValue),
     Promote,
     Separate
 }
@@ -112,13 +97,17 @@ impl LazyValueData {
         db.make_value(LazyValueData { value, object, module, env, code })
     }
 
+    pub fn sort(&self) -> Sort {
+        self.code.sort()
+    }
+
     // pub fn get(&self) -> Option<Value> {
     //     self.value.get().cloned()
     // }
 
-    // pub fn set(&self, value: Value) -> Result<(), Value> {
-    //     self.value.set(value)
-    // }
+    pub(crate) fn set(&self, value: Value) -> Result<(), Value> {
+        self.value.set(value)
+    }
 }
 
 impl std::hash::Hash for LazyValueData {
@@ -156,7 +145,7 @@ pub enum ValueData {
         anno: Value
     },
     Refl {
-        input: Value,
+        input: LazyValue,
         spine: Spine
     },
     Cast {
@@ -196,6 +185,7 @@ pub enum ValueData {
 pub trait ValueOps {
     fn var(sort: Sort, level: impl Into<Level>) -> Self;
     fn id(db: &mut Database, sort: Sort, mode: Mode) -> Self;
+    fn sort(&self) -> Sort;
     fn push_action(&self, action: Action) -> Self;
     fn get_spine(&self) -> Spine;
     fn set_spine(&self, spine: Spine) -> Value;
@@ -217,6 +207,23 @@ impl ValueOps for Value {
         let pending_erase = false;
         let closure = Closure { module, env, code, pending_erase };
         ValueData::Lambda { sort, mode, name, domain, closure }.rced()
+    }
+
+    fn sort(&self) -> Sort {
+        match self.as_ref() {
+            ValueData::Variable { sort, .. }
+            | ValueData::MetaVariable { sort, .. }
+            | ValueData::Reference { sort, .. }
+            | ValueData::Lambda { sort, .. }
+            | ValueData::Pi { sort, .. } => *sort,
+            ValueData::Refl { .. }
+            | ValueData::Pair { .. }
+            | ValueData::Cast { .. } => Sort::Term,
+            ValueData::Intersect { .. }
+            | ValueData::Equality { .. } => Sort::Type,
+            ValueData::Star => Sort::Kind,
+            ValueData::SuperStar => Sort::Unknown,
+        }
     }
 
     fn push_action(&self, action: Action) -> Value {
@@ -270,5 +277,14 @@ impl ValueOps for Value {
                 _ => None
             }
         } else { None }
+    }
+}
+
+pub fn classifier(sort: Sort) -> Result<Value, ()> {
+    match sort {
+        Sort::Unknown => Err(()),
+        Sort::Term => Err(()),
+        Sort::Type => Ok(ValueData::Star.rced()),
+        Sort::Kind => Ok(ValueData::SuperStar.rced()),
     }
 }

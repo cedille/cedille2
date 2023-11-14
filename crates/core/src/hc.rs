@@ -94,8 +94,7 @@ impl<T: hash::Hash + Eq + Clone> HcFactory<T> {
     pub fn get(&self, element: &T) -> Option<Hc<T>> {
        self.table
             .get(element)
-            .map(|w| w.upgrade())
-            .flatten()
+            .and_then(|w| w.upgrade())
     }
 
     pub fn make(&mut self, element: T) -> Hc<T> {

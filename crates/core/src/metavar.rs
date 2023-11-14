@@ -11,7 +11,7 @@ use crate::database::Database;
 pub enum MetaState {
     Unsolved,
     Frozen,
-    Solved(Rc<Value>),
+    Solved(Value),
 }
 
 struct PartialRenaming {

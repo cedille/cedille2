@@ -11,13 +11,14 @@ use nom::{
 };
 use nom_locate::LocatedSpan;
 use nom_supreme::{
-    error::ErrorTree,
+    error::{ErrorTree, BaseErrorKind, Expectation},
     tag::complete::tag,
     multi::collect_separated_terminated,
     parser_ext::ParserExt,
     final_parser::final_parser
 };
 
+use rpds::Vector;
 
 use cedille2_core::utility::*;
 use crate::syntax::*;
@@ -319,7 +320,7 @@ fn parse_term_variable_application(input : In) -> IResult<In, Term> {
 /*
     atom ::=
     | "[" term "," term (";" term)? "]" (".1" | ".2")?
-    | "J" { term "," term "," term "," term "," term "," term } (".1" | ".2")?
+    | "𝜓" { term "," term } (".1" | ".2")?
     | "φ" term "{" term "," term "}" (".1" | ".2")?
     | "ϑ" { term } (".1" | ".2")?
     | "β" { term } (".1" | ".2")?
@@ -407,20 +408,12 @@ fn parse_term_pair(input: In) -> IResult<In, Term> {
     Ok((rest, term))
 }
 
-// "J" { term "," term "," term "," term "," term "," term }
+// "𝜓" { term "," term } (".1" | ".2")?
 fn parse_term_equality_induction(input: In) -> IResult<In, Term> {
-    let (rest, (start, _, t1, _, t2, _, t3, _, t4, _, t5, _, t6, end))
+    let (rest, (start, _, t1, _, t2, end))
     = context("induct", tuple((
-        tag("J").preceded_by(bspace0(2)),
+        tag("𝜓").preceded_by(bspace0(2)),
         tag("{").preceded_by(bspace0(2)),
-        parse_term,
-        tag(",").preceded_by(bspace0(2)),
-        parse_term,
-        tag(",").preceded_by(bspace0(2)),
-        parse_term,
-        tag(",").preceded_by(bspace0(2)),
-        parse_term,
-        tag(",").preceded_by(bspace0(2)),
         parse_term,
         tag(",").preceded_by(bspace0(2)),
         parse_term,
@@ -428,14 +421,10 @@ fn parse_term_equality_induction(input: In) -> IResult<In, Term> {
     )))(input)?;
 
     let span = (start.location_offset(), end.location_offset());
-    let term = Term::J {
+    let term = Term::Subst {
         span,
-        equality: t1.boxed(),
-        predicate: t2.boxed(),
-        lhs: t3.boxed(),
-        rhs: t4.boxed(),
-        equation: t5.boxed(),
-        case: t6.boxed()
+        predicate: t1.boxed(),
+        equation: t2.boxed(),
     };
 
     Ok((rest, term))
@@ -575,14 +564,17 @@ fn parse_ident(input : In) -> IResult<In, (Id, Span)> {
     let len = names.len();
     let iter = &mut names.drain(..);
 
-    let namespace: Vec<_> = iter.take(len - 1).map(|(x, _)| x).collect();
+    let namespace: Vector<_> = iter.take(len - 1).map(|(x, _)| x).collect();
     // Safety: Parser guarantees there is at least one symbol
     let name = unsafe { iter.last().unwrap_unchecked().0 };
 
     // Disallow keywords
     match name.as_str() {
         "Set" | "module" | "import" | "let" => {
-            unimplemented!()
+            let kind = BaseErrorKind::Expected(Expectation::Something);
+            let location = LocatedSpan::new("fixme");
+            let error = ErrorTree::Base { location, kind };
+            Err(nom::Err::Error(error))
         }
         _ => {
             let id = Id { namespace, name };

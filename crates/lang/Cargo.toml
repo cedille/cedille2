@@ -32,8 +32,7 @@ nom-supreme = "0.8.0"
 # threadstack = "=0.4.1"
 
 # Data structures
-im-rc = "=15.0.0"
-slotmap = "=1.0.6"
+rpds = "1.1.0"
 
 # Helper / auxillary libraries
 derive_more = "=0.99.17"

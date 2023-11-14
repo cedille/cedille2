@@ -1,5 +1,6 @@
 
 use std::fs::{self};
+use std::io::prelude::*;
 use std::path::Path;
 use std::borrow::Cow::{self, Borrowed, Owned};
 
@@ -20,7 +21,7 @@ use rustyline::{Cmd, CompletionType, Config, Context, Editor, Helper, KeyEvent, 
 use cedille2_lang::error::CedilleError;
 use cedille2_lang::database::DatabaseExt;
 use cedille2_core::database::Database;
-use cedille2_core::value::Value;
+use cedille2_core::parser;
 
 const REPL_HISTORY_LIMIT : usize = 1000;
 
@@ -122,6 +123,11 @@ fn repl_inner<H:Helper>(db: &mut Database, rl : &mut Editor<H>) -> Result<bool, 
                 Some(path) => {
                     let path = Path::new(path);
                     if path.is_file() {
+                        // let mut file = fs::File::open(path)?;
+                        // let mut contents = String::new();
+                        // file.read_to_string(&mut contents)?;
+                        // let module = parser::parse(db, &contents);
+                        // dbg!(module);
                         let module = db.load_module_from_path(path)?;
                         // let holes = db.holes_to_errors(module);
                         // println!("{}", holes);
@@ -144,7 +150,7 @@ fn repl_inner<H:Helper>(db: &mut Database, rl : &mut Editor<H>) -> Result<bool, 
                             match state {
                                 MetaState::Unsolved => println!("{}", "unsolved".yellow()),
                                 MetaState::Frozen => println!("{}", "frozen".bright_blue()),
-                                MetaState::Solved(v) => println!("{}", Value::reify(v.clone(), db, 0.into(), false)),
+                                MetaState::Solved(v) => println!("{:?}", v),
                             }
                         }
                     }
