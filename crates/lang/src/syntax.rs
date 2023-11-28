@@ -131,10 +131,14 @@ pub enum Term {
         span: Span,
         equation: Box<Term>
     },
-    Subst {
+    EqInduct {
         span: Span,
+        domain: Box<Term>,
         predicate: Box<Term>,
+        lhs: Box<Term>,
+        rhs: Box<Term>,
         equation: Box<Term>,
+        case: Box<Term>
     },
     Apply {
         span: Span,
@@ -176,7 +180,7 @@ impl Term {
             | Term::Separate { span, .. }
             | Term::Refl { span, .. }
             | Term::Promote { span, .. }
-            | Term::Subst { span, .. }
+            | Term::EqInduct { span, .. }
             | Term::Cast { span, .. }
             | Term::Apply { span, .. }
             | Term::Variable { span, .. }

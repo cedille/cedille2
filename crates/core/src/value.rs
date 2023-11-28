@@ -3,20 +3,29 @@ use std::rc::Rc;
 use std::borrow::Borrow;
 use std::cell::OnceCell;
 
-use rpds::{Vector, List};
+use imbl::Vector;
 
 use crate::hc::*;
 use crate::utility::*;
 use crate::term::*;
 use crate::database::Database;
 
-pub type Spine = List<Action>;
+pub type Spine = Vector<Action>;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EqInductData {
+    pub domain: LazyValue,
+    pub predicate: LazyValue,
+    pub lhs: LazyValue,
+    pub rhs: LazyValue,
+    pub case: LazyValue
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
     Apply(Mode, LazyValue),
     Project(usize),
-    Subst(LazyValue),
+    EqInduct(Rc<EqInductData>),
     Promote,
     Separate
 }
@@ -85,7 +94,7 @@ impl LazyValueData {
     }
 
     pub fn var(db: &mut Database, sort: Sort, level: Level) -> LazyValue {
-        let spine = List::new();
+        let spine = Vector::new();
         let var = ValueData::Variable { sort, level, spine }.rced();
         let value = OnceCell::from(var.clone());
         let object = OnceCell::from(var);
@@ -145,8 +154,7 @@ pub enum ValueData {
         anno: Value
     },
     Refl {
-        input: LazyValue,
-        spine: Spine
+        input: LazyValue
     },
     Cast {
         input: Value,
@@ -174,8 +182,8 @@ pub enum ValueData {
         second: Closure
     },
     Equality {
-        left: Value,
-        right: Value,
+        left: LazyValue,
+        right: LazyValue,
         anno: Value
     },
     Star,
@@ -195,7 +203,7 @@ pub trait ValueOps {
 
 impl ValueOps for Value {
     fn var(sort: Sort, level: impl Into<Level>) -> Value {
-        ValueData::Variable { sort, level: level.into(), spine: List::new() }.rced()
+        ValueData::Variable { sort, level: level.into(), spine: Vector::new() }.rced()
     }
 
     fn id(db: &mut Database, sort: Sort, mode: Mode) -> Value {
@@ -227,7 +235,8 @@ impl ValueOps for Value {
     }
 
     fn push_action(&self, action: Action) -> Value {
-        let spine = self.get_spine().push_front(action);
+        let mut spine = self.get_spine();
+        spine.push_back(action);
         self.set_spine(spine)
     }
 
@@ -236,9 +245,8 @@ impl ValueOps for Value {
             ValueData::Variable { spine, .. } => spine.clone(),
             ValueData::MetaVariable { spine, .. } => spine.clone(),
             ValueData::Reference { spine, .. } => spine.clone(),
-            ValueData::Refl { spine, .. } => spine.clone(),
             ValueData::Cast { spine, .. } => spine.clone(),
-            _ => List::new()
+            _ => Vector::new()
         }
     }
 
@@ -254,9 +262,6 @@ impl ValueOps for Value {
             ValueData::Reference { sort, id, unfolded, .. } => {
                 ValueData::Reference { sort, id, spine, unfolded }.rced()
             }
-            ValueData::Refl { input, .. } => {
-                ValueData::Refl { input, spine }.rced()
-            }
             ValueData::Cast { input, witness, evidence, .. } => {
                 ValueData::Cast { input, witness, evidence, spine }.rced()
             }
@@ -266,11 +271,12 @@ impl ValueOps for Value {
 
     fn peel_first_projection(&self) -> Option<Value> {
         let spine = self.get_spine();
-        if let Some(first) = spine.first() {
+        if let Some(first) = spine.head() {
             match first {
                 Action::Project(variant) => {
                     if *variant == 1 {
-                        let spine = spine.drop_first().unwrap();
+                        let mut spine = spine.clone();
+                        spine.pop_front();
                         Some(self.set_spine(spine))
                     } else { None }
                 }

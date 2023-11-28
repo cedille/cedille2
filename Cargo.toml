@@ -27,8 +27,8 @@ cedille2-lang = { version = "*", path = "crates/lang" }
 # Error handling libraries
 anyhow = "=1.0"
 thiserror = "=1.0"
-ariadne = "=0.1.3"
-miette = { version = "=3.3.0", features = ["fancy"] }
+# ariadne = "=0.1.3"
+# miette = { version = "=3.3.0", features = ["fancy"] }
 
 # CLI and REPL libraries
 rustyline = "=9.0.0"
@@ -37,25 +37,12 @@ clap = "=2"
 colored = "=2"
 directories = "=4"
 
-# Parsing libraries
-pest = "=2.1.3"
-pest_derive = "=2.1.0"
-## Consider: https://lib.rs/crates/chumsky (not mature, grammar is combinator based)
-
-# Memory management libraries
-# internment = "=0.5.4"
-# threadstack = "=0.4.1"
-
-# Data structures
-im-rc = "=15.0.0"
-slotmap = "=1.0.6"
-
 # Helper / auxillary libraries
-derive_more = "=0.99.17"
+# derive_more = "=0.99.17"
 log ="0.4.14"
 env_logger = "=0.9.0"
-normpath = "=0.3.2"
-if_chain = "=1.0.2"
-paste = "=1.0.6"
-stacker = "=0.1.14"
-unicode-segmentation = "1.9.0"
+# normpath = "=0.3.2"
+# if_chain = "=1.0.2"
+# paste = "=1.0.6"
+# stacker = "=0.1.14"
+# unicode-segmentation = "1.9.0"

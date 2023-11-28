@@ -4,7 +4,7 @@ use std::fmt;
 use std::error::Error;
 
 use miette::{GraphicalReportHandler, GraphicalTheme};
-use rustyline::error::ReadlineError;
+//use rustyline::error::ReadlineError;
 
 use crate::parser;
 use crate::elaborator::ElabError;
@@ -63,8 +63,4 @@ impl From<io::Error> for CedilleError {
 
 impl From<std::string::FromUtf8Error> for CedilleError {
     fn from (error: std::string::FromUtf8Error) -> Self { CedilleError::External(Box::new(error)) }
-}
-
-impl From<ReadlineError> for CedilleError {
-    fn from (error: ReadlineError) -> Self { CedilleError::External(Box::new(error)) }
 }

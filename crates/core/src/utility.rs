@@ -1,7 +1,7 @@
 
 use std::{rc, ops, fmt};
 use internment::Intern;
-use rpds::{Vector, vector};
+use imbl::{Vector, vector};
 
 pub trait Boxable {
     fn boxed(self) -> Box<Self>;
@@ -20,23 +20,6 @@ pub trait ReferenceCountable {
 impl<T> ReferenceCountable for T {
     fn rced(self: T) -> rc::Rc<T> {
         rc::Rc::new(self)
-    }
-}
-
-pub trait VectorExt {
-    fn drop_first(&self) -> Self
-        where Self : Sized;
-}
-
-impl<T: Clone> VectorExt for Vector<T> {
-    fn drop_first(&self) -> Self
-        where Self : Sized 
-    {
-        let mut result = Vector::new();
-        for item in self.iter().skip(1).cloned() {
-            result = result.push_back(item);
-        }
-        result
     }
 }
 
@@ -74,8 +57,8 @@ pub struct Id {
 
 impl Id {
     pub fn add_qualifier(&self, sym: Symbol) -> Id {
-        let mut namespace = vector![sym];
-        namespace.extend(self.namespace.iter().copied());
+        let mut namespace = self.namespace.clone();
+        namespace.push_front(sym); 
         Id {
             namespace,
             name: self.name

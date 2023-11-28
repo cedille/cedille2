@@ -5,7 +5,7 @@ use std::time;
 use std::path::{Path, PathBuf};
 use std::collections::{HashSet, HashMap};
 
-use rpds::Vector;
+use imbl::Vector;
 use if_chain::if_chain;
 
 use crate::hc::*;
@@ -168,7 +168,8 @@ impl Database {
             if let Some(import_data) = self.reverse_lookup_namespace(module, *component);
             if original || import_data.public;
             then {
-                let namespace = namespace.drop_first();
+                let mut namespace = namespace.clone();
+                namespace.pop_front();
                 result = self.lookup_decl(false, import_data.path, namespace, name);
                 //FIXME: result = result.map(|x| x.apply(self, &import_data.args));
             }

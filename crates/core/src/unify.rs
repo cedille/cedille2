@@ -42,10 +42,17 @@ fn unify_spine(db: &mut Database, level: Level, lhs: Spine, rhs: Spine) -> bool 
                 m1 == m2 && unify(db, level, v1, v2)
             }
             (Action::Project(v1), Action::Project(v2)) => v1 == v2,
-            (Action::Subst(p1), Action::Subst(p2)) => {
-                let p1 = p1.force(db);
-                let p2 = p2.force(db);
+            (Action::EqInduct(d1), Action::EqInduct(d2)) => {
+                let (p1, p2) = (d1.predicate.force(db), d2.predicate.force(db));
+                let (l1, l2) = (d1.lhs.force(db), d2.lhs.force(db));
+                let (r1, r2) = (d1.rhs.force(db), d2.rhs.force(db));
+                let (c1, c2) = (d1.case.force(db), d2.case.force(db));
+                let (d1, d2) = (d1.domain.force(db), d2.domain.force(db));
                 unify(db, level, p1, p2)
+                && unify(db, level, l1, l2)
+                && unify(db, level, r1, r2)
+                && unify(db, level, c1, c2)
+                && unify(db, level, d1, d2)
             }
             (Action::Promote, Action::Promote) => true,
             (Action::Separate, Action::Separate) => true,
@@ -84,6 +91,8 @@ pub fn unify(db: &mut Database, level: Level, lhs: Value, rhs: Value) -> bool {
         (ValueData::Equality { left:l1, right:r1, anno:a1 }
         , ValueData::Equality { left:l2, right:r2, anno:a2 })
         => {
+            let (l1, l2) = (l1.force(db), l2.force(db));
+            let (r1, r2) = (r1.force(db), r2.force(db));
             unify(db, level, l1, l2)
             && unify(db, level, r1 ,r2)
             && unify(db, level, a1, a2)
@@ -126,11 +135,7 @@ pub fn unify(db: &mut Database, level: Level, lhs: Value, rhs: Value) -> bool {
         => {
             unify(db, level, f1, f2)
         }
-        (ValueData::Refl { spine:s1, .. }
-        , ValueData::Refl { spine:s2, .. })
-        => {
-            unify_spine(db, level, s1, s2)
-        }
+        (ValueData::Refl { .. }, ValueData::Refl { .. }) => true,
         (ValueData::Cast { input:i1, spine:s1, .. }
         , ValueData::Cast { input:i2, spine:s2, .. })
         => {

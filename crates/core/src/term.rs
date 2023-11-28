@@ -1,7 +1,7 @@
 
 use std::fmt;
 
-use rpds::Vector;
+use imbl::Vector;
 
 use crate::hc::*;
 use crate::utility::*;
@@ -94,9 +94,13 @@ pub enum TermData {
     Promote {
         equation: Term
     },
-    Subst {
+    EqInduct {
+        domain: Term,
         predicate: Term,
-        equation: Term
+        lhs: Term,
+        rhs: Term,
+        equation: Term,
+        case: Term
     },
     Apply {
         sort: Sort,
@@ -145,7 +149,7 @@ impl TermData {
             | TermData::Refl { .. }
             | TermData::Cast { .. }
             | TermData::Promote { .. }
-            | TermData::Subst { .. } => Sort::Term,
+            | TermData::EqInduct { .. } => Sort::Term,
             TermData::Apply { sort, .. }
             | TermData::Bound { sort, .. }
             | TermData::Free { sort, .. }
@@ -169,7 +173,7 @@ impl TermData {
             TermData::Refl { .. } => false,
             TermData::Promote { .. } => false,
             TermData::Cast { .. } => true,
-            TermData::Subst { .. } => false,
+            TermData::EqInduct { .. } => false,
             TermData::Apply { .. } => true,
             TermData::Bound { .. }
             | TermData::Free { .. }
@@ -182,21 +186,21 @@ impl TermData {
 
     pub fn is_apply(&self) -> bool { matches!(self, TermData::Apply { .. }) }
 
-    pub fn to_string_with_context(&self, ctx: Vector<Symbol>) -> String {
+    pub fn to_string_with_context(&self, mut ctx: Vector<Symbol>) -> String {
         match self {
             TermData::Lambda { mode, name, body, .. } => {
                 let binder = match mode {
                     Mode::Erased => "Λ",
                     Mode::Free => "λ",
-                    Mode::TypeLevel => "λ"
+                    Mode::TypeLevel => "λₜ"
                 };
-                let ctx = ctx.push_back(*name);
+                ctx.push_back(*name);
                 let body = body.to_string_with_context(ctx);
                 format!("{} {}. {}", binder, name, body)
             }
             TermData::Let { name, let_body, body, .. } => {
                 let let_body = let_body.to_string_with_context(ctx.clone());
-                let ctx = ctx.push_back(*name);
+                ctx.push_back(*name);
                 let body = body.to_string_with_context(ctx);
                 format!("let {} := {}; {}", name, let_body, body)
             }
@@ -204,17 +208,17 @@ impl TermData {
                 let binder = match mode {
                     Mode::Erased => "∀",
                     Mode::Free => "Π",
-                    Mode::TypeLevel => "Π"
+                    Mode::TypeLevel => "Πₜ"
                 };
                 let domain_str = domain.to_string_with_context(ctx.clone());
-                let ctx = ctx.push_back(*name);
+                ctx.push_back(*name);
                 let body = body.to_string_with_context(ctx);
                 if domain.ambiguous() { format!("{} {}:({}). {}", binder, name, domain_str, body) }
                 else { format!("{} {}:{}. {}", binder, name, domain_str, body) }
             }
             TermData::Intersect { name, first, second } => {
                 let first_str = first.to_string_with_context(ctx.clone());
-                let ctx = ctx.push_back(*name);
+                ctx.push_back(*name);
                 let second = second.to_string_with_context(ctx);
                 if first.ambiguous() { format!("ι {}:({}), {}", name, first_str, second) }
                 else { format!("ι {}:{}, {}", name, first_str, second) }
@@ -223,7 +227,7 @@ impl TermData {
                 let left = left.to_string_with_context(ctx.clone());
                 let right = right.to_string_with_context(ctx.clone());
                 let anno = anno.to_string_with_context(ctx);
-                format!("{{{} =[{}] {}}}", left, anno, right)
+                format!("{} =[{}] {}", left, anno, right)
             }
             TermData::Project { variant, body } => {
                 let body = body.to_string_with_context(ctx);
@@ -244,8 +248,8 @@ impl TermData {
                 format!("rfl {}", input)
             }
             TermData::Promote { equation } => {
-                let equation = equation.to_string_with_context(ctx);
-                format!("θ {}", equation)
+                let equation_str = equation.to_string_with_context(ctx.clone());
+                format!("ϑ {{ {} }}", equation_str)
             }
             TermData::Cast { input, witness, evidence } => {
                 let equation_str = evidence.to_string_with_context(ctx.clone());
@@ -254,18 +258,20 @@ impl TermData {
                 if evidence.ambiguous() { format!("φ ({}) - {} {{{}}}", equation_str, input, witness) }
                 else { format!("φ {} - {} {{{}}}", equation_str, input, witness) }
             }
-            TermData::Promote { equation } => {
+            TermData::EqInduct { domain, predicate, lhs, rhs, equation, case } => {
+                let domain_str = domain.to_string_with_context(ctx.clone());
+                let predicate_str = predicate.to_string_with_context(ctx.clone());
+                let lhs_str = lhs.to_string_with_context(ctx.clone());
+                let rhs_str = rhs.to_string_with_context(ctx.clone());
                 let equation_str = equation.to_string_with_context(ctx.clone());
-                format!("ϑ {{ {} }}", equation_str)
-            }
-            TermData::Subst { predicate, equation } => {
-                todo!()
+                let case_str = case.to_string_with_context(ctx);
+                format!("J {{ {}, {}, {}, {}, {}, {} }}", domain_str, predicate_str, lhs_str, rhs_str, equation_str, case_str)
             }
             TermData::Apply { mode, fun, arg, .. } => {
                 let operator = match mode {
                     Mode::Free => "",
                     Mode::Erased => "-",
-                    Mode::TypeLevel => ""
+                    Mode::TypeLevel => "∙"
                 };
                 let fun_str = fun.to_string_with_context(ctx.clone());
                 let arg_str = arg.to_string_with_context(ctx);

@@ -1,5 +1,5 @@
 
-use rpds::Vector;
+use imbl::Vector;
 
 use crate::term::*;
 use crate::utility::*;
@@ -90,7 +90,7 @@ fn to_module(db: &mut Database, xs: Vec<Sexp>) -> Option<Module> {
     Some(Module { imports, id, decls })
 }
 
-fn to_term(db: &mut Database, ctx: Vector<Symbol>, sort: Sort, s: Sexp) -> Option<Term> {
+fn to_term(db: &mut Database, mut ctx: Vector<Symbol>, sort: Sort, s: Sexp) -> Option<Term> {
     match s {
         Sexp::Atom(x) => {
             match x.as_ref() {
@@ -122,7 +122,7 @@ fn to_term(db: &mut Database, ctx: Vector<Symbol>, sort: Sort, s: Sexp) -> Optio
                     let name = xs.get(2)?.sym()?;
                     let domain = xs.get(3)?.clone();
                     let domain = to_term(db, ctx.clone(), sort.promote(), domain)?;
-                    let ctx = ctx.push_back(name);
+                    ctx.push_back(name);
                     let body = xs.get(4)?.clone();
                     let body = to_term(db, ctx, sort, body)?;
                     let term = db.make_term(TermData::Lambda { sort, mode, name, domain, body });
@@ -143,7 +143,7 @@ fn to_term(db: &mut Database, ctx: Vector<Symbol>, sort: Sort, s: Sexp) -> Optio
                     let name = xs.get(2)?.sym()?;
                     let domain = xs.get(3)?.clone();
                     let domain = to_term(db, ctx.clone(), sort.promote(), domain)?;
-                    let ctx = ctx.push_back(name);
+                    ctx.push_back(name);
                     let body = xs.get(4)?.clone();
                     let body = to_term(db, ctx, sort, body)?;
                     let term = db.make_term(TermData::Pi { sort, mode, name, domain, body });

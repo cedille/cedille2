@@ -10,6 +10,8 @@ pub mod database;
 pub mod parser;
 pub mod infer;
 
+
+
 pub mod prelude {
     pub use crate::{
         hc::*, 
@@ -20,7 +22,7 @@ pub mod prelude {
         unify::*, 
         metavar::*,
         database::*,
-        parser::*,
-        infer::*
+        parser,
+        infer
     };
 }

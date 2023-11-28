@@ -18,7 +18,7 @@ use nom_supreme::{
     final_parser::final_parser
 };
 
-use rpds::Vector;
+use imbl::Vector;
 
 use cedille2_core::utility::*;
 use crate::syntax::*;
@@ -204,11 +204,19 @@ fn parse_term_binder(input : In) -> IResult<In, Term> {
 }
 
 fn parse_term_simple_binder(input : In) -> IResult<In, Term> {
-    let (rest, (lhs, kind, rhs))
+    let (rest, (lhs, (kind, rhs)))
     = context("simple_binder", tuple((
         parse_term_spine,
-        alt((tag("->"), tag("=>"), tag("∩"), tag("="))).preceded_by(bspace0(2)),
-        parse_term
+        alt((
+            pair(tag("∩").preceded_by(bspace0(2)),
+                parse_term_spine),
+            pair(tag("=").preceded_by(bspace0(2)),
+                parse_term_spine),
+            pair(tag("->").preceded_by(bspace0(2)),
+                parse_term),
+            pair(tag("=>").preceded_by(bspace0(2)),
+                parse_term),
+        )).preceded_by(bspace0(2))
     )))(input)?;
 
     let span = (lhs.span().0, rhs.span().1);
@@ -246,11 +254,11 @@ fn parse_term_lambda(input : In) -> IResult<In, Term> {
 fn parse_term_equal(input : In) -> IResult<In, Term> {
     let (rest, (lhs, _, ann, _, rhs))
     = context("equal", tuple((
-        parse_term_spine,
+        parse_term_application,
         tag("=[").preceded_by(bspace0(2)),
         parse_term,
         tag("]").preceded_by(bspace0(2)),
-        parse_term
+        parse_term_application
     )))(input)?;
 
     let span = (lhs.span().0, rhs.span().1);
@@ -320,11 +328,13 @@ fn parse_term_variable_application(input : In) -> IResult<In, Term> {
 /*
     atom ::=
     | "[" term "," term (";" term)? "]" (".1" | ".2")?
-    | "𝜓" { term "," term } (".1" | ".2")?
+    | "J" { term "," term "," term "," term "," term "," term } (".1" | ".2")?
     | "φ" term "{" term "," term "}" (".1" | ".2")?
     | "ϑ" { term } (".1" | ".2")?
     | "β" { term } (".1" | ".2")?
     | "(" term ")" (".1" | ".2")?
+    | "_"
+    | "?"
     | ident (".1" | ".2")?
     | "Set" (".1" | ".2")?
 */
@@ -363,8 +373,6 @@ fn parse_term_atom(input: In) -> IResult<In, Term> {
     Ok((rest, term))
 }
 
-
-
 // "_"
 fn parse_term_omission(input: In) -> IResult<In, Term> {
     let (rest, result) = tag("_")(input)?;
@@ -373,7 +381,7 @@ fn parse_term_omission(input: In) -> IResult<In, Term> {
     Ok((rest, term))
 }
 
-// "_"
+// "?"
 fn parse_term_hole(input: In) -> IResult<In, Term> {
     let (rest, result) = tag("?")(input)?;
     let span = (result.location_offset(), result.location_offset() + 1);
@@ -410,10 +418,18 @@ fn parse_term_pair(input: In) -> IResult<In, Term> {
 
 // "𝜓" { term "," term } (".1" | ".2")?
 fn parse_term_equality_induction(input: In) -> IResult<In, Term> {
-    let (rest, (start, _, t1, _, t2, end))
+    let (rest, (start, _, t1, _, t2, _, t3, _, t4, _, t5, _, t6, end))
     = context("induct", tuple((
-        tag("𝜓").preceded_by(bspace0(2)),
+        tag("J").preceded_by(bspace0(2)),
         tag("{").preceded_by(bspace0(2)),
+        parse_term,
+        tag(",").preceded_by(bspace0(2)),
+        parse_term,
+        tag(",").preceded_by(bspace0(2)),
+        parse_term,
+        tag(",").preceded_by(bspace0(2)),
+        parse_term,
+        tag(",").preceded_by(bspace0(2)),
         parse_term,
         tag(",").preceded_by(bspace0(2)),
         parse_term,
@@ -421,10 +437,14 @@ fn parse_term_equality_induction(input: In) -> IResult<In, Term> {
     )))(input)?;
 
     let span = (start.location_offset(), end.location_offset());
-    let term = Term::Subst {
+    let term = Term::EqInduct {
         span,
-        predicate: t1.boxed(),
-        equation: t2.boxed(),
+        domain: t1.boxed(),
+        predicate: t2.boxed(),
+        lhs: t3.boxed(),
+        rhs: t4.boxed(),
+        equation: t5.boxed(),
+        case: t6.boxed()
     };
 
     Ok((rest, term))

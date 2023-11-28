@@ -108,7 +108,8 @@ fn print_help_text() {
 }
 
 fn repl_inner<H:Helper>(db: &mut Database, rl : &mut Editor<H>) -> Result<bool, CedilleError> {
-    let line = rl.readline("> ")?;
+    let line = rl.readline("> ")
+        .map_err(|e| CedilleError::External(Box::new(e)))?;
     rl.add_history_entry(line.as_str());
     let mut words = line.split_ascii_whitespace();
 
