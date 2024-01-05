@@ -1,6 +1,8 @@
 
 use std::borrow::Borrow;
 
+use imbl::Vector;
+
 use crate::utility::*;
 use crate::database::*;
 use crate::term::*;
@@ -11,7 +13,8 @@ use crate::unify::*;
 #[derive(Debug, Clone)]
 pub struct Context {
     pub module: Symbol,
-    pub env: Env
+    pub env: Env,
+    pub types: Vector<Value>
 }
 
 pub fn infer(db: &mut Database, ctx: Context, t: Term) -> Result<Value, Term> {
@@ -22,12 +25,28 @@ pub fn infer(db: &mut Database, ctx: Context, t: Term) -> Result<Value, Term> {
         TermData::Pi { sort, mode, name, domain, body } => todo!(),
         TermData::Intersect { name, first, second } => todo!(),
         TermData::Equality { left, right, anno } => todo!(),
-        TermData::Project { variant, body } => todo!(),
+        TermData::Project { variant, body } => {
+            let ty = infer(db, ctx.clone(), body)?;
+            let ty_unfolded = unfold_to_head(db, ty);
+            match ty_unfolded.as_ref() {
+                ValueData::Intersect { name, first, second, .. } => {
+                    if variant == 1 {
+                        Ok(first.clone())
+                    } else {
+                        let first_quote = quote(db, first.clone(), ctx.env.len().into());
+                        let lazy = LazyValueData::lazy(db, ctx.env, first_quote);
+                        let arg = EnvEntry::new(*name, Mode::TypeLevel, lazy);
+                        Ok(second.eval(db, arg))
+                    }
+                }
+                _ => todo!()
+            }
+        }
         TermData::Pair { first, second, anno } => todo!(),
         TermData::Separate { equation } => todo!(),
         TermData::Refl { input } => {
             let anno = infer(db, ctx.clone(), input.clone())?;
-            let left = LazyValueData::lazy(db, ctx.module, ctx.env, input);
+            let left = LazyValueData::lazy(db, ctx.env, input);
             let right = left.clone();
             Ok(ValueData::Equality { left, right, anno }.rced())
         }
@@ -39,10 +58,10 @@ pub fn infer(db: &mut Database, ctx: Context, t: Term) -> Result<Value, Term> {
                 ValueData::Equality { left, right, anno } => {
                     let level: Level = ctx.clone().env.len().into();
                     let left_value = left.force(db);
-                    let left_value = left_value.peel_first_projection()
+                    let left_value = left_value.peel_proj()
                         .ok_or_else(|| quote(db, left_value, level))?;
                     let right_value = right.force(db);
-                    let right_value = right_value.peel_first_projection()
+                    let right_value = right_value.peel_proj()
                         .ok_or_else(|| quote(db, right_value, level))?;
                     let left = quote(db, left_value, level);
                     let right = quote(db, right_value, level);
@@ -54,8 +73,8 @@ pub fn infer(db: &mut Database, ctx: Context, t: Term) -> Result<Value, Term> {
                             let anno_term = quote(db, anno.clone(), level);
                             try_unify(db, level, anno.clone(), first.clone(), anno_term)?;
                             let anno = ValueData::Intersect { name, first, second }.rced();
-                            let left = LazyValueData::lazy(db, ctx.module, ctx.env.clone(), left);
-                            let right = LazyValueData::lazy(db, ctx.module, ctx.env, right);
+                            let left = LazyValueData::lazy(db, ctx.env.clone(), left);
+                            let right = LazyValueData::lazy(db, ctx.env, right);
                             let ty = ValueData::Equality { left, right, anno }.rced();
                             Ok(ty)
                         }
@@ -73,7 +92,7 @@ pub fn infer(db: &mut Database, ctx: Context, t: Term) -> Result<Value, Term> {
                 ValueData::Pi { sort, mode:m2, name, domain, closure } => {
                     let mode = check_mode(m1, m2, arg.clone())?;
                     check(db, ctx.clone(), arg.clone(), domain)?;
-                    let lazy_arg = LazyValueData::lazy(db, ctx.module, ctx.env, arg);
+                    let lazy_arg = LazyValueData::lazy(db, ctx.env, arg);
                     let ty = closure.eval(db, EnvEntry::new(name, mode, lazy_arg));
                     Ok(ty)
                 }
@@ -82,13 +101,12 @@ pub fn infer(db: &mut Database, ctx: Context, t: Term) -> Result<Value, Term> {
         }
         TermData::Bound { sort, index } => {
             let level = index.to_level(ctx.env.len());
-            if let Some(entry) = ctx.env.get(*level) {
-                let ty = entry.value.force(db);
-                Ok(ty)
+            if let Some(ty) = ctx.types.get(*level) {
+                Ok(ty.clone())
             } else { Err(t) }
         }
         TermData::Free { sort, id } => {
-            if let Some(result) = db.lookup_def(ctx.module, &id) {
+            if let Some(result) = db.lookup_type(&id) {
                 Ok(result.force(db))
             } else { Err(t) }
         },
@@ -145,12 +163,38 @@ pub fn church_bool_type_value(db: &mut Database) -> Value {
         domain,
         body,
     });
-    let closure = Closure::new(module, env, code);
+    let closure = Closure::new(env, code);
     ValueData::Pi {
         sort: Sort::Type,
         mode: Mode::Erased,
         name: Symbol::from("X"),
         domain: ValueData::Star.rced(),
         closure
+    }.rced()
+}
+
+pub fn cast_evidence_ty(db: &mut Database, level: Level, domain: Value, witness: Value) -> Value {
+    let domain_term = quote(db, domain.clone(), level);
+    let witness_term = quote(db, witness, level);
+    let input = db.make_term(TermData::Bound { sort: Sort::Term, index: 0.into() });
+    let eq_rhs_app = db.make_term(TermData::Apply {
+        sort: Sort::Term,
+        mode: Mode::Free,
+        fun: witness_term.clone(),
+        arg: input.clone()
+    });
+    let eq_rhs = db.make_term(TermData::Project { variant: 1, body: eq_rhs_app });
+    let eq_ty = db.make_term(TermData::Equality {
+        left: input,
+        right: eq_rhs,
+        anno: domain_term
+    });
+    let closure = Closure::new(Env::new(), eq_ty);
+    ValueData::Pi {
+        sort: Sort::Type,
+        mode: Mode::Free,
+        name: Symbol::default(),
+        domain,
+        closure,
     }.rced()
 }

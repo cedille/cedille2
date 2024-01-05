@@ -186,7 +186,7 @@ fn load_module_inner(db : &mut Database, sym: Symbol) -> Result<(), CedilleError
     });
 
     let input = LocatedSpan::new(db.text_ref(sym));
-    let tree = parser::parse_file(input);
+    let tree = parser::parse_file(sym, input);
     match tree {
         Ok(commands) => {
             elaborator::elaborate(db, sym, commands)?;

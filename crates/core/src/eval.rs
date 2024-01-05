@@ -53,10 +53,10 @@ impl PerformAction for Value {
                 match self.as_ref() {
                     ValueData::Refl { input } => {
                         let value = input.force(db);
-                        if let Some(inner) = value.peel_first_projection() {
+                        if let Some(inner) = value.peel_proj() {
                             let env = input.env.clone();
                             let code = quote(db, inner.clone(), env.len().into());
-                            let lazy = LazyValueData::lazy(db, input.module, env, code);
+                            let lazy = LazyValueData::lazy(db, env, code);
                             lazy.set(inner).ok(); // It is possible we've already forced this lazy value
                             return ValueData::Refl { input: lazy }.rced();
                         }
@@ -90,7 +90,7 @@ impl ForceValue for LazyValue {
             Some(v) => v,
             None => {
                 let (env, code) = (self.env.clone(), self.code.clone());
-                let new_value = eval(db, self.module, env, code);
+                let new_value = eval(db, env, code);
                 self.value.set(new_value.clone()).ok();
                 new_value
             }
@@ -103,7 +103,7 @@ impl ForceValue for LazyValue {
             Some(o) => o,
             None => {
                 let (env, code) = (self.env.clone(), self.code.clone());
-                let new_object = eval(db, self.module, env.clone(), code);
+                let new_object = eval(db, env.clone(), code);
                 let new_object = erase(db, env.len().into(), new_object);
                 self.object.set(new_object.clone()).ok();
                 new_object
@@ -114,86 +114,86 @@ impl ForceValue for LazyValue {
 
 impl Closure {
     pub fn eval(&self, db: &mut Database, arg: EnvEntry) -> Value {
-        let Closure { module, env, code, pending_erase } = self;
+        let Closure { env, code, pending_erase } = self;
         let mut env = env.clone();
         env.push_back(arg);
-        let value = eval(db, *module, env.clone(), code.clone());
+        let value = eval(db, env.clone(), code.clone());
         if *pending_erase { erase(db, env.len().into(), value) }
         else { value }
     }
 }
 
-pub fn eval(db: &mut Database, module: Symbol, env: Env, term: Term) -> Value {
+pub fn eval(db: &mut Database, env: Env, term: Term) -> Value {
     let result = match term.cloned() {
         TermData::Lambda { sort, mode, name, domain, body } => {
-            let domain = eval(db, module, env.clone(), domain);
-            let closure = Closure::new(module, env, body);
+            let domain = eval(db, env.clone(), domain);
+            let closure = Closure::new(env, body);
             ValueData::Lambda { sort, mode, name, domain, closure }.rced()
         }
         TermData::Let { name, let_body, body, .. } => {
-            let def = LazyValueData::lazy(db, module, env.clone(), let_body);
+            let def = LazyValueData::lazy(db, env.clone(), let_body);
             let mut env = env.clone();
             env.push_back(EnvEntry::new(name, Mode::Free, def));
-            eval(db, module, env, body)
+            eval(db, env, body)
         }
         TermData::Pi { sort, mode, name, domain, body } => {
-            let domain = eval(db, module, env.clone(), domain);
-            let closure = Closure::new(module, env, body);
+            let domain = eval(db, env.clone(), domain);
+            let closure = Closure::new(env, body);
             ValueData::Pi { sort, mode, name, domain, closure }.rced()
         }
         TermData::Intersect { name, first, second } => {
-            let first = eval(db, module, env.clone(), first);
-            let second = Closure::new(module, env, second);
+            let first = eval(db, env.clone(), first);
+            let second = Closure::new(env, second);
             ValueData::Intersect { name, first, second }.rced()
         }
         TermData::Equality { left, right, anno } => {
-            let left = LazyValueData::lazy(db, module, env.clone(), left);
-            let right = LazyValueData::lazy(db, module, env.clone(), right);
-            let anno = eval(db, module, env, anno);
+            let left = LazyValueData::lazy(db, env.clone(), left);
+            let right = LazyValueData::lazy(db, env.clone(), right);
+            let anno = eval(db, env, anno);
             ValueData::Equality { left, right, anno }.rced()
         }
         TermData::Project { variant, body } => {
-            let body = eval(db, module, env, body);
+            let body = eval(db, env, body);
             body.perform(db, Action::Project(variant))
         }
         TermData::Pair { first, second, anno } => {
-            let first = eval(db, module, env.clone(), first);
-            let second = eval(db, module, env.clone(), second);
-            let anno = eval(db, module, env, anno);
+            let first = eval(db, env.clone(), first);
+            let second = eval(db, env.clone(), second);
+            let anno = eval(db, env, anno);
             ValueData::Pair { first, second, anno }.rced()
         }
         TermData::Separate { equation } => {
-            let equation = eval(db, module, env, equation);
+            let equation = eval(db, env, equation);
             equation.perform(db, Action::Separate)
         }
         TermData::Refl { input } => {
-            let input = LazyValueData::lazy(db, module, env.clone(), input);
+            let input = LazyValueData::lazy(db, env.clone(), input);
             ValueData::Refl { input }.rced()
         }
         TermData::Cast { input, witness, evidence } => {
-            let input = eval(db, module, env.clone(), input);
-            let witness = eval(db, module, env.clone(), witness);
-            let evidence = eval(db, module, env, evidence);
+            let input = eval(db, env.clone(), input);
+            let witness = eval(db, env.clone(), witness);
+            let evidence = eval(db, env, evidence);
             let spine = Vector::new();
             ValueData::Cast { input, witness, evidence, spine }.rced()
         }
         TermData::Promote { equation } => {
-            let equation = eval(db, module, env, equation);
+            let equation = eval(db, env, equation);
             equation.perform(db, Action::Promote)
         }
         TermData::EqInduct { domain, predicate, lhs, rhs, equation, case } => {
-            let domain = LazyValueData::lazy(db, module, env.clone(), domain);
-            let predicate = LazyValueData::lazy(db, module, env.clone(), predicate);
-            let lhs = LazyValueData::lazy(db, module, env.clone(), lhs);
-            let rhs = LazyValueData::lazy(db, module, env.clone(), rhs);
-            let equation = eval(db, module, env.clone(), equation);
-            let case = LazyValueData::lazy(db, module, env.clone(), case);
+            let domain = LazyValueData::lazy(db, env.clone(), domain);
+            let predicate = LazyValueData::lazy(db, env.clone(), predicate);
+            let lhs = LazyValueData::lazy(db, env.clone(), lhs);
+            let rhs = LazyValueData::lazy(db, env.clone(), rhs);
+            let equation = eval(db, env.clone(), equation);
+            let case = LazyValueData::lazy(db, env.clone(), case);
             let data = EqInductData { domain, predicate, lhs, rhs, case }.rced();
             equation.perform(db, Action::EqInduct(data))
         }
         TermData::Apply { mode, fun, arg, .. } => {
-            let fun = eval(db, module, env.clone(), fun);
-            let arg = LazyValueData::lazy(db, module, env, arg);
+            let fun = eval(db, env.clone(), fun);
+            let arg = LazyValueData::lazy(db, env, arg);
             fun.perform(db, Action::Apply(mode, arg))
         }
         TermData::Bound { index, .. } => {
@@ -203,7 +203,7 @@ pub fn eval(db: &mut Database, module: Symbol, env: Env, term: Term) -> Value {
         }
         TermData::Free { sort, id } => {
             let spine = Vector::new();
-            let unfolded = db.lookup_def(module, &id);
+            let unfolded = db.lookup_def(&id);
             ValueData::Reference { sort, id, spine, unfolded }.rced()
         }
         TermData::Meta { sort, name } => unimplemented!(),

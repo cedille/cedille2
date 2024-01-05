@@ -160,6 +160,49 @@ impl TermData {
         }
     }
 
+    pub fn fv_empty_index(&self, index: Index) -> bool {
+        match self {
+            TermData::Lambda { domain, body, .. } => {
+                domain.fv_empty_index(index) && body.fv_empty_index(index + 1)
+            }
+            TermData::Let { let_body, body, .. } => {
+                let_body.fv_empty_index(index) && body.fv_empty_index(index + 1)
+            }
+            TermData::Pi { domain, body, .. } => {
+                domain.fv_empty_index(index) && body.fv_empty_index(index + 1)
+            }
+            TermData::Intersect { first, second, .. } => {
+                first.fv_empty_index(index) && second.fv_empty_index(index + 1)
+            }
+            TermData::Equality { left, right, anno } => {
+                left.fv_empty_index(index) && right.fv_empty_index(index) && anno.fv_empty_index(index)
+            }
+            TermData::Project { body, .. } => body.fv_empty_index(index),
+            TermData::Pair { first, second, anno } => {
+                first.fv_empty_index(index) && second.fv_empty_index(index) && anno.fv_empty_index(index)
+            }
+            TermData::Separate { equation } => equation.fv_empty_index(index),
+            TermData::Refl { input } => input.fv_empty_index(index),
+            TermData::Cast { input, witness, evidence } => {
+                input.fv_empty_index(index) && witness.fv_empty_index(index) && evidence.fv_empty_index(index)
+            }
+            TermData::Promote { equation } => equation.fv_empty_index(index),
+            TermData::EqInduct { domain, predicate, lhs, rhs, equation, case } => {
+                domain.fv_empty_index(index) && predicate.fv_empty_index(index) && lhs.fv_empty_index(index)
+                && rhs.fv_empty_index(index) && equation.fv_empty_index(index) && case.fv_empty_index(index)
+            }
+            TermData::Apply { fun, arg, .. } => {
+                fun.fv_empty_index(index) && arg.fv_empty_index(index)
+            }
+            TermData::Bound { index:var, .. } => **var < *index,
+            TermData::Free { .. } => true,
+            TermData::Meta { .. } => true,
+            TermData::InsertedMeta { .. } => true,
+            TermData::Star => true,
+            TermData::SuperStar => true,
+        }
+    }
+
     pub fn ambiguous(&self) -> bool {
         match self {
             TermData::Lambda { .. }

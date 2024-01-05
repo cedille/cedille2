@@ -116,11 +116,11 @@ impl Database {
     pub fn insert_decl(&mut self, module: Symbol, opaque: bool, decl: Decl) -> Result<(), ()> {
         self.freeze_active_metas(module);
         if decl.name == Symbol::from("_") { return Ok(()) }
-        let type_value = LazyValueData::lazy(self, module, Env::new(), decl.ty.clone());
+        let type_value = LazyValueData::lazy(self, Env::new(), decl.ty.clone());
         let def_value = if opaque { None } 
-            else { Some(LazyValueData::lazy(self, module, Env::new(), decl.body.clone()))};
+            else { Some(LazyValueData::lazy(self, Env::new(), decl.body.clone()))};
         let module_data = self.modules.get_mut(&module).unwrap();
-        let id = Id::from(decl.name);
+        let id = Id::new(module, decl.name);
         if module_data.scope.contains(&id) || module_data.exports.contains(&id) {
             Err(())
         } else {
@@ -214,15 +214,15 @@ impl Database {
         result
     }
 
-    pub fn lookup_def(&self, module: Symbol, id: &Id) -> Option<LazyValue> {
+    pub fn lookup_def(&self, id: &Id) -> Option<LazyValue> {
         let namespace = id.namespace.clone();
-        let decl = self.lookup_decl(true, module, namespace, id.name);
+        let decl = self.lookup_decl(true, id.module, namespace, id.name);
         decl.and_then(|decl| decl.def_value)
     }
 
-    pub fn lookup_type(&self, module: Symbol, id: &Id) -> Option<LazyValue> {
+    pub fn lookup_type(&self, id: &Id) -> Option<LazyValue> {
         let namespace = id.namespace.clone();
-        let decl = self.lookup_decl(true, module, namespace, id.name);
+        let decl = self.lookup_decl(true, id.module, namespace, id.name);
         decl.map(|decl| decl.type_value)
     }
 

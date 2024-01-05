@@ -53,21 +53,20 @@ pub enum EnvBound {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Closure {
-    pub module: Symbol,
     pub env: Env,
     pub code: Term,
     pub pending_erase: bool
 }
 
 impl Closure {
-    pub fn new(module: Symbol, env: Env, code: Term) -> Closure {
-        Closure { module, env, code, pending_erase: false }
+    pub fn new(env: Env, code: Term) -> Closure {
+        Closure { env, code, pending_erase: false }
     }
 
     pub fn erase(self) -> Closure {
-        let Closure { module, env, code, .. } = self;
+        let Closure { env, code, .. } = self;
         let pending_erase = true;
-        Closure { module, env, code, pending_erase }
+        Closure { env, code, pending_erase }
     }
 }
 
@@ -77,17 +76,15 @@ pub type LazyValue = Hc<LazyValueData>;
 pub struct LazyValueData {
     pub(crate) value: OnceCell<Value>,
     pub(crate) object: OnceCell<Value>,
-    pub module: Symbol,
     pub env: Env,
     pub code: Term
 }
 
 impl LazyValueData {
-    pub fn lazy(db: &mut Database, module: Symbol, env: Env, code: Term) -> LazyValue {
+    pub fn lazy(db: &mut Database, env: Env, code: Term) -> LazyValue {
         db.make_value(LazyValueData {
             value: OnceCell::new(),
             object: OnceCell::new(),
-            module,
             env,
             code
         })
@@ -101,9 +98,9 @@ impl LazyValueData {
         let module = Symbol::from("gen/lazy_value");
         let env = Vector::new();
         let name = format!("gen/{}/{}", sort, *level);
-        let id = Id::from(Symbol::from(name.as_str()));
+        let id = Id::new(module, Symbol::from(name.as_str()));
         let code = db.make_term(TermData::Free { sort, id });
-        db.make_value(LazyValueData { value, object, module, env, code })
+        db.make_value(LazyValueData { value, object, env, code })
     }
 
     pub fn sort(&self) -> Sort {
@@ -121,7 +118,6 @@ impl LazyValueData {
 
 impl std::hash::Hash for LazyValueData {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.module.hash(state);
         self.env.hash(state);
         self.code.hash(state);
     }
@@ -197,7 +193,7 @@ pub trait ValueOps {
     fn push_action(&self, action: Action) -> Self;
     fn get_spine(&self) -> Spine;
     fn set_spine(&self, spine: Spine) -> Value;
-    fn peel_first_projection(&self) -> Option<Self>
+    fn peel_proj(&self) -> Option<Self>
         where Self : Sized;
 }
 
@@ -209,11 +205,10 @@ impl ValueOps for Value {
     fn id(db: &mut Database, sort: Sort, mode: Mode) -> Value {
         let name = Symbol::from("x");
         let domain = ValueData::SuperStar.rced();
-        let module = Symbol::from("gen/value");
         let env = Vector::new();
         let code = db.make_term(TermData::Bound { sort, index: 0.into() });
         let pending_erase = false;
-        let closure = Closure { module, env, code, pending_erase };
+        let closure = Closure { env, code, pending_erase };
         ValueData::Lambda { sort, mode, name, domain, closure }.rced()
     }
 
@@ -269,16 +264,14 @@ impl ValueOps for Value {
         }
     }
 
-    fn peel_first_projection(&self) -> Option<Value> {
+    fn peel_proj(&self) -> Option<Value> {
         let spine = self.get_spine();
-        if let Some(first) = spine.head() {
+        if let Some(first) = spine.last() {
             match first {
-                Action::Project(variant) => {
-                    if *variant == 1 {
-                        let mut spine = spine.clone();
-                        spine.pop_front();
-                        Some(self.set_spine(spine))
-                    } else { None }
+                Action::Project(_) => {
+                    let mut spine = spine.clone();
+                    spine.pop_back();
+                    Some(self.set_spine(spine))
                 }
                 _ => None
             }

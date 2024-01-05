@@ -1,4 +1,6 @@
 
+use std::sync::OnceLock;
+
 use nom::{
     Parser,
     branch::alt,
@@ -27,7 +29,10 @@ type In<'a> = LocatedSpan<&'a str>;
 type Span = (usize, usize);
 type IResult<I, O> = Result<(I, O), nom::Err<ErrorTree<I>>>;
 
-pub fn parse_file(input: In) -> Result<Vec<Command>, ErrorTree<In>> {
+static MODULE: OnceLock<Symbol> = OnceLock::new();
+
+pub fn parse_file(module: Symbol, input: In) -> Result<Vec<Command>, ErrorTree<In>> {
+    MODULE.set(module);
     let mut result = final_parser(parse_command_sequence);
     result(input)
 }
@@ -597,7 +602,8 @@ fn parse_ident(input : In) -> IResult<In, (Id, Span)> {
             Err(nom::Err::Error(error))
         }
         _ => {
-            let id = Id { namespace, name };
+            let module = *MODULE.get().unwrap();
+            let id = Id { namespace, module, name };
             let result = (id, span);
         
             Ok((rest, result))

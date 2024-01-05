@@ -124,9 +124,9 @@ pub enum ElabError {
     OpaqueMissingAnnotation,
     #[error("Sort Classifier Failed")]
     SortClassifier,
-    #[error("Unknown error!")]
+    #[error("Unknown error! {0}")]
     #[diagnostic()]
-    Unknown
+    Unknown(usize)
 }
 
 #[derive(Debug, Clone)]
@@ -216,6 +216,15 @@ impl Context {
         result
     }
 
+    pub fn core_ctx(&self) -> core::Context {
+        let env = self.env();
+        core::Context {
+            module: self.module,
+            types: self.types.clone(),
+            env
+        }
+    }
+
     pub fn env(&self) -> Env { self.env.clone() }
 
     pub fn env_mask(&self) -> Vec<EnvBound> { self.env_mask.clone() }
@@ -290,7 +299,7 @@ fn elaborate_module_params(db: &mut Database, ctx: Context, params: &[syntax::Pa
     let mut param_results = vec![];
     for param in params.iter() {
         let (body_elabed, _) = infer(db, ctx.clone(), &param.body)?;
-        let body_value = eval(db, ctx.module, ctx.env(), body_elabed.clone());
+        let body_value = eval(db, ctx.env(), body_elabed.clone());
         param_results.push(Parameter { name: param.name, mode: param.mode, body: body_elabed });
         ctx = ctx.bind(db, param.name, param.mode, body_value);
     }
@@ -352,7 +361,7 @@ fn elaborate_import_args(db: &mut Database
     let mut result = vec![];
     for i in 0..args.len() {
         if let Some(Parameter { name, mode, body }) = params.get(i) {
-            let ty = eval(db, ctx.module, ctx.env(), body.clone());
+            let ty = eval(db, ctx.env(), body.clone());
             let (arg_mode, arg) = &args[i];
             let arg_elabed = check(db, ctx.clone(), arg, ty.clone())?;
 
@@ -364,14 +373,14 @@ fn elaborate_import_args(db: &mut Database
                     provided: *arg_mode
                 })
             }
-            let arg_value = LazyValueData::lazy(db, ctx.module, ctx.env(), arg_elabed);
+            let arg_value = LazyValueData::lazy(db, ctx.env(), arg_elabed);
             let value = arg_value.force(db);
             let arg_mode = if ty.sort() == Sort::Type { *arg_mode } else { Mode::Erased }; 
             result.push((arg_mode, value));
             ctx = ctx.define(db, *name, *mode, arg_value, ty);
         } else {
             // TODO: add a reasonable error
-            return Err(ElabError::Unknown)
+            return Err(ElabError::Unknown(2))
         }
     }
     Ok(result)
@@ -411,7 +420,7 @@ fn elaborate_define_term(db: &mut Database, ctx: Context, def: &syntax::DefineTe
         let anno_ctx_mode = if anno_sort == Sort::Kind { Mode::TypeLevel } else { Mode::Free };
         let anno_ctx = ctx.clone().phase_shift(anno_ctx_mode, anno_sort);
         let anno_elabed = check(db, anno_ctx, anno, anno_classifier)?;
-        let anno_value = eval(db, ctx.module, ctx.env(), anno_elabed.clone());
+        let anno_value = eval(db, ctx.env(), anno_elabed.clone());
         let ctx = ctx.phase_shift(Mode::Free, anno_sort.demote());
         let body = check(db, ctx, &def.body, anno_value)?;
         (def.name, anno_elabed, body)
@@ -456,7 +465,7 @@ fn check(db: &mut Database, ctx: Context, term: &syntax::Term, ty: Value) -> Res
                         let anno_ctx_mode = if anno_sort == Sort::Kind { Mode::TypeLevel } else { Mode::Free };
                         let anno_ctx = ctx.clone().phase_shift(anno_ctx_mode, anno_sort);
                         let anno_elabed = check(db, anno_ctx, anno, anno_classifier)?;
-                        let anno_value = eval(db, ctx.module, ctx.env(), anno_elabed.clone());
+                        let anno_value = eval(db, ctx.env(), anno_elabed.clone());
                         try_unify(db, ctx.clone(), span, anno_value, domain.clone())?;
                         anno_elabed
                     } else {
@@ -491,11 +500,11 @@ fn check(db: &mut Database, ctx: Context, term: &syntax::Term, ty: Value) -> Res
             let (_, anno_value) = if let Some(anno) = &def.anno {
                 let anno_ctx = ctx.clone().phase_shift(Mode::Free, Sort::Type);
                 let anno_elabed = check(db, anno_ctx, anno, ValueData::Star.rced())?;
-                let anno_value = eval(db, ctx.module, ctx.env(), anno_elabed.clone());
+                let anno_value = eval(db, ctx.env(), anno_elabed.clone());
                 (anno_elabed, anno_value)
             } else { infer(db, ctx.clone(), &def.body)? };
             let def_body_elabed = check(db, ctx.clone(), &def.body, anno_value.clone())?;
-            let def_body_value = LazyValueData::lazy(db, ctx.module, ctx.env(), def_body_elabed.clone());
+            let def_body_value = LazyValueData::lazy(db, ctx.env(), def_body_elabed.clone());
             let ctx = ctx.define(db, def.name, *mode, def_body_value, anno_value);
             let body_elabed = check(db, ctx, body, ty)?;
             let result = db.make_term(TermData::Let {
@@ -511,11 +520,11 @@ fn check(db: &mut Database, ctx: Context, term: &syntax::Term, ty: Value) -> Res
             ValueData::Intersect { name, first:type1, second:type2 }) =>
         {
             let first_elabed = check(db, ctx.clone(), first, type1.clone())?;
-            let first_value = LazyValueData::lazy(db, ctx.module, ctx.env(), first_elabed.clone());
+            let first_value = LazyValueData::lazy(db, ctx.env(), first_elabed.clone());
             let closure_arg = EnvEntry::new(*name, Mode::Free, first_value.clone());
             let type2_value = type2.eval(db, closure_arg.clone());
             let second_elabed = check(db, ctx.clone(), second, type2_value.clone())?;
-            let second_value = eval(db, ctx.module, ctx.env(), second_elabed.clone());
+            let second_value = eval(db, ctx.env(), second_elabed.clone());
             let first_value = first_value.force(db);
             let anno_elabed = if let Some(anno) = anno {
                 let (anno_elabed, anno_value) = infer(db, ctx.clone(), anno)?;
@@ -526,7 +535,7 @@ fn check(db: &mut Database, ctx: Context, term: &syntax::Term, ty: Value) -> Res
                         try_unify(db, ctx.clone(), anno.span(), closure.clone(), type2_value.clone())?;
                         anno_elabed
                     },
-                    _ => return Err(ElabError::Unknown)
+                    _ => return Err(ElabError::Unknown(1))
                 }
             } else {
                 let (sort, mode, name) = (Sort::Type, Mode::TypeLevel, *name);
@@ -660,7 +669,7 @@ fn check(db: &mut Database, ctx: Context, term: &syntax::Term, ty: Value) -> Res
                     {
                         let sort = domain.sort().demote();
                         let meta = fresh_meta(db, ctx.clone(), sort);
-                        let meta_value = LazyValueData::lazy(db, ctx.module, ctx.env(), meta.clone());
+                        let meta_value = LazyValueData::lazy(db, ctx.env(), meta.clone());
 
                         result = db.make_term(TermData::Apply {
                             sort,
@@ -702,7 +711,7 @@ fn infer(db: &mut Database, ctx: Context, term: &syntax::Term) -> Result<(Term, 
             let mode = if sort == Sort::Kind && *mode != Mode::Erased { Mode::TypeLevel } else { *mode };
             let domain_classifier = classifier(domain_sort).map_err(|_| dbg!(ElabError::SortClassifier))?;
             let domain_elabed = check(db, ctx.clone(), domain, domain_classifier)?;
-            let domain_value = eval(db, module, ctx.env(), domain_elabed.clone());
+            let domain_value = eval(db, ctx.env(), domain_elabed.clone());
             let ctx = ctx.bind(db, name, mode, domain_value);
             let body_classifier = classifier(sort).map_err(|_| dbg!(ElabError::SortClassifier))?;
             let body_elabed = check(db, ctx, body, body_classifier.clone())?;
@@ -718,7 +727,7 @@ fn infer(db: &mut Database, ctx: Context, term: &syntax::Term) -> Result<(Term, 
 
         syntax::Term::Intersect { var, first, second, .. } => {
             let first_elabed = check(db, ctx.clone(), first, ValueData::Star.rced())?;
-            let first_value = eval(db, module, ctx.env(), first_elabed.clone());
+            let first_value = eval(db, ctx.env(), first_elabed.clone());
             let name = var.unwrap_or_default();
             let ctx = ctx.bind(db, name, Mode::Free, first_value);
             let second_elabed = check(db, ctx, second, ValueData::Star.rced())?;
@@ -733,7 +742,7 @@ fn infer(db: &mut Database, ctx: Context, term: &syntax::Term) -> Result<(Term, 
         syntax::Term::Equality { left, right, domain, .. } => {
             if let Some(domain) = domain {
                 let domain_elab = check(db, ctx.clone(), domain, ValueData::Star.rced())?;
-                let domain_value = eval(db, ctx.module, ctx.env(), domain_elab.clone());
+                let domain_value = eval(db, ctx.env(), domain_elab.clone());
                 let left_elab = check(db, ctx.clone(), left, domain_value.clone())?;
                 let right_elab = check(db, ctx, right, domain_value)?;
                 let result = db.make_term(TermData::Equality {
@@ -759,11 +768,11 @@ fn infer(db: &mut Database, ctx: Context, term: &syntax::Term) -> Result<(Term, 
             let (anno_elabed, anno_value) = if let Some(anno) = &def.anno {
                 let anno_ctx = ctx.clone().phase_shift(Mode::Free, Sort::Type);
                 let anno_elabed = check(db, anno_ctx, anno, ValueData::Star.rced())?;
-                let anno_value = eval(db, module, ctx.env(), anno_elabed.clone());
+                let anno_value = eval(db, ctx.env(), anno_elabed.clone());
                 (anno_elabed, anno_value)
             } else { infer(db, ctx.clone(), &def.body)? };
             let def_body_elabed = check(db, ctx.clone(), &def.body, anno_value.clone())?;
-            let def_body_value = LazyValueData::lazy(db, module, ctx.env(), def_body_elabed.clone());
+            let def_body_value = LazyValueData::lazy(db, ctx.env(), def_body_elabed.clone());
             let ctx = ctx.define(db, def.name, *mode, def_body_value, anno_value);
             let (body_elabed, type_value) = infer(db, ctx, body)?;
             let result = db.make_term(TermData::Let {
@@ -836,10 +845,10 @@ fn infer(db: &mut Database, ctx: Context, term: &syntax::Term) -> Result<(Term, 
                     let name = Symbol::from("x");
                     let sort = Sort::Unknown;
                     let domain = fresh_meta(db, ctx.clone(), sort);
-                    let domain = eval(db, ctx.module, ctx.env(), domain.clone());
+                    let domain = eval(db, ctx.env(), domain.clone());
                     let meta_ctx = ctx.bind(db, name, Mode::Free, domain.clone());
                     let meta = fresh_meta(db, meta_ctx, sort);
-                    let closure = Closure::new(ctx.module, ctx.env(), meta.clone());
+                    let closure = Closure::new(ctx.env(), meta.clone());
                     let candidate_type = ValueData::Pi {
                         sort,
                         mode: Mode::Free,
@@ -854,8 +863,8 @@ fn infer(db: &mut Database, ctx: Context, term: &syntax::Term) -> Result<(Term, 
 
             let ctx = ctx.clone().phase_shift(mode, ctx.sort);
             let arg_elabed = check(db, ctx.clone(), arg, domain)?;
-            let arg_value = LazyValueData::lazy(db, module, ctx.env(), arg_elabed.clone());
-            let arg_value_forced = arg_value.force(db);
+            let arg_value = LazyValueData::lazy(db, ctx.env(), arg_elabed.clone());
+            //let arg_value_forced = arg_value.force(db);
             let closure_arg = EnvEntry::new(name, mode, arg_value);
             let result_type = closure.eval(db, closure_arg);
             let result = db.make_term(TermData::Apply {
@@ -873,7 +882,7 @@ fn infer(db: &mut Database, ctx: Context, term: &syntax::Term) -> Result<(Term, 
             match body_type_unfolded.as_ref() {
                 ValueData::Intersect { name, first, second } => {
                     let first_proj = db.make_term(TermData::Project { variant:1, body: body_elabed.clone() });
-                    let first_value = LazyValueData::lazy(db, ctx.module, ctx.env(), first_proj.clone());
+                    let first_value = LazyValueData::lazy(db, ctx.env(), first_proj.clone());
                     match variant {
                         1 => Ok((first_proj, first.clone())),
                         2 => {
@@ -896,7 +905,7 @@ fn infer(db: &mut Database, ctx: Context, term: &syntax::Term) -> Result<(Term, 
         syntax::Term::Refl { span, input, .. } => {
             let input_ctx = ctx.clone().phase_shift(Mode::Erased, Sort::Term);
             let (input_elab, anno) = infer(db, input_ctx, input)?;
-            let input_value = LazyValueData::lazy(db, ctx.module, ctx.env(), input_elab.clone());
+            let input_value = LazyValueData::lazy(db, ctx.env(), input_elab.clone());
             let result = db.make_term(TermData::Refl { input: input_elab });
             let result_type = ValueData::Equality {
                 left: input_value.clone(),
@@ -910,19 +919,42 @@ fn infer(db: &mut Database, ctx: Context, term: &syntax::Term) -> Result<(Term, 
             let (equation_elabed, eq_type) = infer(db, ctx.clone(), equation)?;
             let eq_type_unfolded = unfold_to_head(db, eq_type);
             match eq_type_unfolded.as_ref() {
-                ValueData::Equality { left, right, anno } => {
+                ValueData::Equality { left, right, .. } => {
+                    // let left_forced = left.force(db);
+                    // println!("{:#?}", left_forced);
                     let left_value = left.force(db)
-                        .peel_first_projection()
-                        .ok_or(ElabError::Unknown)?;
+                        .peel_proj()
+                        .ok_or(ElabError::Unknown(3))?;
                     let right_value = right.force(db)
-                        .peel_first_projection()
-                        .ok_or(ElabError::Unknown)?;
+                        .peel_proj()
+                        .ok_or(ElabError::Unknown(4))?;
                     let left = quote(db, left_value, ctx.env_lvl());
                     let right = quote(db, right_value, ctx.env_lvl());
-                    
-
-                    todo!()
-
+                    let left_ty = core::infer(db, ctx.core_ctx(), left.clone())
+                        .map_err(|_| ElabError::Unknown(5))?;
+                    let left_ty = unfold_to_head(db, left_ty);
+                    match left_ty.as_ref() {
+                        ValueData::Intersect { .. } => {
+                            core::check(db, ctx.core_ctx(), right.clone(), left_ty.clone())
+                                .map_err(|_| ElabError::Unknown(6))?;
+                            let result = db.make_term(TermData::Promote {
+                                equation: equation_elabed
+                            });
+                            let left = LazyValueData::lazy(db, ctx.env(), left);
+                            let right = LazyValueData::lazy(db, ctx.env(), right);
+                            let result_ty = ValueData::Equality {
+                                left,
+                                right,
+                                anno: left_ty
+                            }.rced();
+                            Ok((result, result_ty))
+                        }
+                        _ => Err(ElabError::ExpectedIntersectionType {
+                            src: db.text(ctx.module),
+                            span: source_span(db, ctx.module, *span),
+                            inferred_type: quote(db, left_ty, ctx.env_lvl()).to_string()
+                        })
+                    }
                 }
                 _ => Err(ElabError::ExpectedEqualityType)
             }
@@ -931,7 +963,7 @@ fn infer(db: &mut Database, ctx: Context, term: &syntax::Term) -> Result<(Term, 
         syntax::Term::EqInduct { span, domain, predicate, lhs, rhs, equation, case } => {
             let domain_ctx = ctx.clone().phase_shift(Mode::TypeLevel, Sort::Type);
             let domain_elab = check(db, domain_ctx, domain, ValueData::Star.rced())?;
-            let domain_value = eval(db, ctx.module, ctx.env(), domain_elab.clone());
+            let domain_value = eval(db, ctx.env(), domain_elab.clone());
             
             let domain_elab1 = shift(db, domain_elab.clone(), 1, 0);
             let domain_elab2 = shift(db, domain_elab.clone(), 2, 0);
@@ -964,7 +996,7 @@ fn infer(db: &mut Database, ctx: Context, term: &syntax::Term) -> Result<(Term, 
                 domain: domain_elab.clone(),
                 body: predicate_ty_layer1,
             });
-            let predicate_ty_value = eval(db, ctx.module, ctx.env(), predicate_ty);
+            let predicate_ty_value = eval(db, ctx.env(), predicate_ty);
             let predicate_ctx = ctx.clone().phase_shift(Mode::TypeLevel, Sort::Type);
             let predicate_elab = check(db, predicate_ctx, predicate, predicate_ty_value)?;
 
@@ -977,7 +1009,7 @@ fn infer(db: &mut Database, ctx: Context, term: &syntax::Term) -> Result<(Term, 
                 right: rhs_elab.clone(),
                 anno: domain_elab.clone()
             });
-            let equation_ty_value = eval(db, ctx.module, ctx.env(), equation_ty);
+            let equation_ty_value = eval(db, ctx.env(), equation_ty);
             let equation_ctx = ctx.clone().phase_shift(Mode::Free, Sort::Term);
             let equation_elab = check(db, equation_ctx, equation, equation_ty_value)?;
 
@@ -1017,7 +1049,7 @@ fn infer(db: &mut Database, ctx: Context, term: &syntax::Term) -> Result<(Term, 
                 domain: domain_elab.clone(),
                 body: case_ty_body,
             });
-            let case_ty_value = eval(db, ctx.module, ctx.env(), case_ty);
+            let case_ty_value = eval(db, ctx.env(), case_ty);
             let case_ctx = ctx.clone().phase_shift(Mode::Free, Sort::Term);
             let case_elab = check(db, case_ctx, case, case_ty_value)?;
 
@@ -1026,7 +1058,7 @@ fn infer(db: &mut Database, ctx: Context, term: &syntax::Term) -> Result<(Term, 
                 lhs_elab.clone(),
                 rhs_elab.clone(),
                 equation_elab.clone());
-            let result_ty_value = eval(db, ctx.module, ctx.env(), result_ty);
+            let result_ty_value = eval(db, ctx.env(), result_ty);
 
             let result = db.make_term(TermData::EqInduct {
                 domain: domain_elab,
@@ -1041,27 +1073,40 @@ fn infer(db: &mut Database, ctx: Context, term: &syntax::Term) -> Result<(Term, 
         }
 
         syntax::Term::Cast { input, witness, evidence, .. } => {
-            // let input_ctx = ctx.clone().phase_shift(Mode::Erased, Sort::Term);
-            // let (input_elabed, result_type) = infer(db, input_ctx, input)?;
-            // let input_value = eval(db, module, ctx.env(), input_elabed.clone());
-            // let witness_elabed = erase(db, ctx.clone(), witness)?;
-            // let witness_value = eval(db, module, ctx.env(), witness_elabed.clone());
-            // let equality_type = Value::equality(input_value, witness_value);
-            // let evidence_ctx = ctx.clone().phase_shift(Mode::Erased, Sort::Term);
-            // let evidence_elabed = check(db, evidence_ctx, evidence, equality_type)?;
-            // let result = Rc::new(term::Term::Cast { 
-            //     evidence: evidence_elabed,
-            //     input: input_elabed,
-            //     witness: witness_elabed
-            // });
-            // Ok((result, result_type))
-            unimplemented!()
+            let (witness_elabed, witness_ty) = infer(db, ctx.clone(), witness)?;
+            let witness_ty_unfolded = unfold_to_head(db, witness_ty);
+            match witness_ty_unfolded.as_ref() {
+                ValueData::Pi { mode:Mode::Free, domain, closure, .. } => {
+                    let var = LazyValueData::var(db, sort, ctx.env_lvl());
+                    let entry = EnvEntry::new(Symbol::default(), Mode::Free, var);
+                    let closure_ty = closure.eval(db, entry);
+                    let closure_ty_unfolded = unfold_to_head(db, closure_ty);
+                    match closure_ty_unfolded.as_ref() {
+                        ValueData::Intersect { first, .. } => {
+                            try_unify(db, ctx.clone(), witness.span(), domain.clone(), first.clone())?;
+                            let witness_value = eval(db, ctx.env(), witness_elabed.clone());
+                            let evidence_ty = core::cast_evidence_ty(db, ctx.env_lvl(), first.clone(), witness_value);
+                            let evidence_elabed = check(db, ctx.clone(), evidence, evidence_ty)?;
+                            let input_elabed = check(db, ctx.clone(), input, first.clone())?;
+                            if !evidence_elabed.fv_empty_index(0.into()) { todo!() }
+                            let result = db.make_term(TermData::Cast {
+                                input: input_elabed,
+                                witness: witness_elabed,
+                                evidence: evidence_elabed
+                            });
+                            Ok((result, closure_ty_unfolded))
+                        }
+                        _ => Err(ElabError::Unknown(7))
+                    }
+                }
+                _ => Err(ElabError::ExpectedFunctionType)
+            }
         }
 
         syntax::Term::Omission { .. } => {
             let sort = Sort::Unknown;
             let ty_meta = fresh_meta(db, ctx.clone(), sort);
-            let ty = eval(db, module, ctx.env(), ty_meta);
+            let ty = eval(db, ctx.env(), ty_meta);
             let term = fresh_meta(db, ctx.clone(), sort);
             Ok((term, ty))
         }
@@ -1240,7 +1285,7 @@ fn fresh_meta(db: &mut Database, ctx: Context, sort: Sort) -> Term {
 
 fn lookup_type(db: &mut Database, ctx: &Context, span: Span, id: &Id) -> Result<(Value, Option<Level>, Mode), ElabError> {
     let has_namespace = if id.namespace.is_empty() { Some(()) } else { None };
-    let toplevel_type = db.lookup_type(ctx.module, id);
+    let toplevel_type = db.lookup_type(id);
     let context_type = has_namespace
         .and(ctx.names.iter().zip(ctx.types.iter()).zip(ctx.modes.iter()).enumerate().rev().find(|(_, ((x, _), _))| **x == id.name))
         .map(|(level, ((_, ty), mode))| (ty.clone(), Some(level.into()), mode));
@@ -1255,7 +1300,7 @@ fn lookup_type(db: &mut Database, ctx: &Context, span: Span, id: &Id) -> Result<
 
 fn lookup_sort(db: &Database, ctx: &Context, span: Span, id: &Id) -> Result<Sort, ElabError> {
     let has_namespace = if id.namespace.is_empty() { Some(()) } else { None };
-    let toplevel_sort = db.lookup_type(ctx.module, id)
+    let toplevel_sort = db.lookup_type(id)
         .map(|x| x.sort().demote());
     let context_sort = has_namespace
         .and(ctx.names.iter().zip(ctx.sorts.iter()).rev().find(|(x, _)| **x == id.name))

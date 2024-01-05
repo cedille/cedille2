@@ -52,15 +52,25 @@ impl fmt::Display for Symbol {
 #[derive(Debug, Hash, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Id {
     pub namespace: Vector<Symbol>,
+    pub module: Symbol,
     pub name: Symbol,
 }
 
 impl Id {
+    pub fn new(module: Symbol, name: Symbol) -> Id {
+        Id {
+            namespace: vector![],
+            module,
+            name
+        }
+    }
+
     pub fn add_qualifier(&self, sym: Symbol) -> Id {
         let mut namespace = self.namespace.clone();
         namespace.push_front(sym); 
         Id {
             namespace,
+            module: self.module,
             name: self.name
         }
     }
@@ -74,10 +84,6 @@ impl fmt::Display for Id {
         }
         result.and_then(|_| write!(f, "{}", self.name))
     }
-}
-
-impl From<Symbol> for Id {
-    fn from(sym: Symbol) -> Self { Id { namespace: vector![], name: sym } }
 }
 
 #[derive(Debug, Hash, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]

@@ -161,7 +161,7 @@ pub enum Term {
 }
 
 impl DefineTerm {
-    pub fn as_str<'a, 'b>(&'a self, text: &'b str) -> &'b str {
+    pub fn as_str<'b>(&self, text: &'b str) -> &'b str {
         let (start, end) = self.span;
         &text[start..end]
     }
@@ -191,7 +191,7 @@ impl Term {
         }
     }
 
-    pub fn as_str<'a, 'b>(&'a self, text: &'b str) -> &'b str {
+    pub fn as_str<'b>(&self, text: &'b str) -> &'b str {
         let (start, end) = self.span();
         &text[start..end]
     }

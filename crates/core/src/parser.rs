@@ -86,7 +86,7 @@ fn to_module(db: &mut Database, xs: Vec<Sexp>) -> Option<Module> {
         }
     }
     let imports = vec![];
-    let id = Id { namespace: Vector::new(), name: Symbol::from("FIXME") };
+    let id = Id { namespace: Vector::new(), module: Symbol::from("FIXME"), name: Symbol::from("FIXME") };
     Some(Module { imports, id, decls })
 }
 
@@ -107,7 +107,7 @@ fn to_term(db: &mut Database, mut ctx: Vector<Symbol>, sort: Sort, s: Sexp) -> O
                         let index: Index = index.into();
                         db.make_term(TermData::Bound { sort, index })
                     } else {
-                        let id = Id { namespace: Vector::new(), name: x };
+                        let id = Id { namespace: Vector::new(), module: Symbol::from("FIXME"), name: x };
                         db.make_term(TermData::Free { sort, id })
                     };
                     Some(term)
