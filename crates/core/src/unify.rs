@@ -63,6 +63,7 @@ fn unify_spine(db: &mut Database, level: Level, lhs: Spine, rhs: Spine) -> bool 
     result
 }
 
+// Unification is _proof-unification_, lhs and rhs should be erased to get object unification
 pub fn unify(db: &mut Database, level: Level, lhs: Value, rhs: Value) -> bool {
     let lhs_borrow: &ValueData = lhs.borrow();
     let rhs_borrow: &ValueData = rhs.borrow();
@@ -97,56 +98,40 @@ pub fn unify(db: &mut Database, level: Level, lhs: Value, rhs: Value) -> bool {
             && unify(db, level, r1 ,r2)
             && unify(db, level, a1, a2)
         }
-        (ValueData::Lambda { sort, mode:Mode::Erased, name, closure, .. }, _) => {
-            let mode = Mode::Erased;
-            let input = LazyValueData::var(db, sort, level);
-            let closure = closure.eval(db, EnvEntry::new(name, mode, input.clone()));
-            let rhs = rhs.perform(db, Action::Apply(mode, input));
-            unify(db, level + 1, closure, rhs)
-        }
-        (_, ValueData::Lambda { sort, mode:Mode::Erased, name, closure, .. }) => {
-            let mode = Mode::Erased;
-            let input = LazyValueData::var(db, sort, level);
-            let closure = closure.eval(db, EnvEntry::new(name, mode, input.clone()));
-            let lhs = lhs.perform(db, Action::Apply(mode, input));
-            unify(db, level + 1, lhs, closure)
-        }
-        (ValueData::Lambda { sort, mode:Mode::Free, name:n1, closure:c1, .. }
-        , ValueData::Lambda { mode:Mode::Free, name:n2, closure:c2, .. })
+        (ValueData::Lambda { sort:s1, mode:m1, name:n1, domain:d1, closure:c1 }
+        , ValueData::Lambda { sort:s2, mode:m2, name:n2, domain:d2, closure:c2, .. })
         => {
-            let mode = Mode::Free;
-            let input = LazyValueData::var(db, sort, level);
-            let c1 = c1.eval(db, EnvEntry::new(n1, mode, input.clone()));
-            let c2 = c2.eval(db, EnvEntry::new(n2, mode, input));
-            unify(db, level + 1, c1, c2)
-        }
-        (ValueData::Lambda { sort, mode:Mode::TypeLevel, name:n1, domain:d1, closure:c1 }
-        , ValueData::Lambda { mode:Mode::TypeLevel, name:n2, domain:d2, closure:c2, .. })
-        => {
-            let mode = Mode::TypeLevel;
-            let input = LazyValueData::var(db, sort, level);
-            let c1 = c1.eval(db, EnvEntry::new(n1, mode, input.clone()));
-            let c2 = c2.eval(db, EnvEntry::new(n2, mode, input));
-            unify(db, level, d1, d2)
+            let input = LazyValueData::var(db, s1, level);
+            let c1 = c1.eval(db, EnvEntry::new(n1, m1, input.clone()));
+            let c2 = c2.eval(db, EnvEntry::new(n2, m2, input));
+            s1 == s2 && m1 == m2
+            && unify(db, level, d1, d2)
             && unify(db, level + 1, c1, c2)
         }
-        (ValueData::Pair { first:f1, .. }
-        , ValueData::Pair { first:f2, .. })
+        (ValueData::Pair { first:f1, second:s1, anno:a1 }
+        , ValueData::Pair { first:f2, second:s2, anno:a2 })
         => {
             unify(db, level, f1, f2)
+            && unify(db, level, s1, s2)
+            && unify(db, level, a1, a2)
         }
-        (ValueData::Refl { .. }, ValueData::Refl { .. }) => true,
-        (ValueData::Cast { input:i1, spine:s1, .. }
-        , ValueData::Cast { input:i2, spine:s2, .. })
+        (ValueData::Refl { input:i1 }, ValueData::Refl { input:i2 }) => {
+            let i1 = i1.force(db);
+            let i2 = i2.force(db);
+            unify(db, level, i1, i2)
+        }
+        (ValueData::Cast { input:i1, witness:w1, evidence:e1, spine:s1 }
+        , ValueData::Cast { input:i2, witness:w2, evidence:e2, spine:s2 })
         => {
             unify(db, level, i1, i2)
+            && unify(db, level, w1, w2)
+            && unify(db, level, e1, e2)
             && unify_spine(db, level, s1, s2)
         }
         (ValueData::Variable { level:l1, spine:p1, .. }
         , ValueData::Variable { level:l2, spine:p2, .. })
         => {
-            l1 == l2
-            && unify_spine(db, level, p1, p2)
+            l1 == l2 && unify_spine(db, level, p1, p2)
         }
         (ValueData::Reference { id:i1, spine:p1, unfolded:u1, .. }
         , ValueData::Reference { id:i2, spine:p2, unfolded:u2, .. })

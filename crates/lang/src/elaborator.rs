@@ -266,7 +266,7 @@ pub fn elaborate(db: &mut Database, module: Symbol, mut commands: Vec<syntax::Co
                 match elaborate_define_term(db, ctx.clone(), &def) {
                     Ok(decl) => {
                         log::info!("\n{}\n{}\n{}", def.as_str(db.text_ref(module)), "elaborated to".green(), decl);
-                        db.insert_decl(module, def.opaque, decl);
+                        db.insert_decl(module, def.opaque, decl.clone()).ok().unwrap();
                     }
                     Err(e) => errors.push(e.into())
                 }
