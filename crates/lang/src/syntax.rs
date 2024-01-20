@@ -114,7 +114,6 @@ pub enum Term {
     },
     Separate {
         span: Span,
-        anno: Option<Box<Term>>,
         equation: Box<Term>
     },
     Refl {
@@ -123,7 +122,6 @@ pub enum Term {
     },
     Cast {
         span: Span,
-        input: Box<Term>,
         witness: Box<Term>,
         evidence: Box<Term>
     },

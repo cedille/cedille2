@@ -12,7 +12,7 @@ pub fn unfold_to_head(db: &mut Database, value: Value) -> Value {
         match result.as_ref() {
             ValueData::Reference { unfolded, spine, .. } => {
                 if let Some(unfolded) = unfolded {
-                    let mut term = unfolded.force(db);
+                    let mut term = unfolded.clone();
                     term = term.perform_spine(db, spine.clone());
                     result = term;
                 } else { break }
@@ -31,8 +31,6 @@ pub fn unfold_to_head(db: &mut Database, value: Value) -> Value {
 }
 
 fn unify_spine(db: &mut Database, level: Level, lhs: Spine, rhs: Spine) -> bool {
-    let lhs = erase_spine(lhs);
-    let rhs = erase_spine(rhs);
     let mut result = true;
     for (a1, a2) in lhs.iter().cloned().zip(rhs.iter().cloned()) {
         let update = match (a1, a2) {
@@ -65,6 +63,9 @@ fn unify_spine(db: &mut Database, level: Level, lhs: Spine, rhs: Spine) -> bool 
 
 // Unification is _proof-unification_, lhs and rhs should be erased to get object unification
 pub fn unify(db: &mut Database, level: Level, lhs: Value, rhs: Value) -> bool {
+    // eprintln!("UNIFY:");
+    // eprintln!("  {}", quote(db, lhs.clone(), level));
+    // eprintln!("  {}", quote(db, rhs.clone(), level));
     let lhs_borrow: &ValueData = lhs.borrow();
     let rhs_borrow: &ValueData = rhs.borrow();
     match (lhs_borrow.clone(), rhs_borrow.clone()) {
@@ -120,11 +121,10 @@ pub fn unify(db: &mut Database, level: Level, lhs: Value, rhs: Value) -> bool {
             let i2 = i2.force(db);
             unify(db, level, i1, i2)
         }
-        (ValueData::Cast { input:i1, witness:w1, evidence:e1, spine:s1 }
-        , ValueData::Cast { input:i2, witness:w2, evidence:e2, spine:s2 })
+        (ValueData::Cast { witness:w1, evidence:e1, spine:s1 }
+        , ValueData::Cast { witness:w2, evidence:e2, spine:s2 })
         => {
-            unify(db, level, i1, i2)
-            && unify(db, level, w1, w2)
+            unify(db, level, w1, w2)
             && unify(db, level, e1, e2)
             && unify_spine(db, level, s1, s2)
         }
@@ -141,7 +141,6 @@ pub fn unify(db: &mut Database, level: Level, lhs: Value, rhs: Value) -> bool {
                 let mut result = false;
                 if let Some(u1) = u1 {
                     if let Some(u2) = u2 {
-                        let (u1, u2) = (u1.force(db), u2.force(db));
                         let u1 = u1.perform_spine(db, p1);
                         let u2 = u2.perform_spine(db, p2);
                         result = unify(db, level, u1, u2);
@@ -154,16 +153,14 @@ pub fn unify(db: &mut Database, level: Level, lhs: Value, rhs: Value) -> bool {
         (ValueData::Reference { unfolded, spine, .. }, _) => {
             unfolded.as_ref()
                 .map_or(false, |u| {
-                    let u = u.force(db);
-                    let u = u.perform_spine(db, spine);
+                    let u = u.clone().perform_spine(db, spine);
                     unify(db, level, u, rhs)
                 })
         }
         (_, ValueData::Reference { unfolded, spine, .. }) => {
             unfolded.as_ref()
                 .map_or(false, |u| {
-                    let u = u.force(db);
-                    let u = u.perform_spine(db, spine);
+                    let u = u.clone().perform_spine(db, spine);
                     unify(db, level, lhs, u)
                 })
         }

@@ -62,7 +62,7 @@ pub fn path_to_module_symbol<P: AsRef<Path>>(prefix: P, path: P) -> Result<Symbo
 
 pub trait DatabaseExt {
     fn resolve_import_symbol(&self, module: Symbol, import: (usize, usize)) -> Result<Symbol, CedilleError>;
-    fn load_import(&mut self, module: Symbol, import: &syntax::Import, args: Vec<(Mode, Value)>) -> Result<(), CedilleError>;
+    fn load_import(&mut self, module: Symbol, import: &syntax::Import, args: Vec<(Mode, LazyValue)>) -> Result<(), CedilleError>;
     fn load_module(&mut self, sym: Symbol) -> Result<(), CedilleError>;
     fn load_module_from_path<P: AsRef<Path>>(&mut self, path: P) -> Result<Symbol, CedilleError>;
     fn load_dir(&mut self, path: &Path) -> Result<(), CedilleError>;
@@ -77,7 +77,7 @@ impl DatabaseExt for Database {
         path_to_module_symbol(parent_path, &path)
     }
 
-    fn load_import(&mut self, module: Symbol, import: &syntax::Import, args: Vec<(Mode, Value)>) -> Result<(), CedilleError> {
+    fn load_import(&mut self, module: Symbol, import: &syntax::Import, args: Vec<(Mode, LazyValue)>) -> Result<(), CedilleError> {
         let path = self.resolve_import_symbol(module, import.path)?;
 
         self.load_module(path)?;
@@ -173,7 +173,7 @@ fn load_module_inner(db : &mut Database, sym: Symbol) -> Result<(), CedilleError
 
     db.modules.insert(sym, ModuleData { 
         text: Arc::new(text),
-        values: HashMap::new(),
+        decls: HashMap::new(),
         metas: HashMap::new(),
         active_metas: HashSet::new(),
         next_meta: 0,

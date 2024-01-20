@@ -1,4 +1,5 @@
 
+use std::cell::OnceCell;
 use std::borrow::Borrow;
 
 use imbl::Vector;
@@ -9,12 +10,12 @@ use crate::term::*;
 use crate::value::*;
 
 pub trait PerformAction {
-    fn perform(self, db: &mut Database, action: Action) -> Self;
-    fn perform_spine(self, db: &mut Database, actions: Spine) -> Self;
+    fn perform(self, db: &Database, action: Action) -> Self;
+    fn perform_spine(self, db: &Database, actions: Spine) -> Self;
 }
 
 impl PerformAction for Value {
-    fn perform(self, db: &mut Database, action: Action) -> Self {
+    fn perform(self, db: &Database, action: Action) -> Self {
         match action.clone() {
             Action::Apply(arg_mode, arg) => {
                 match self.as_ref() {
@@ -30,11 +31,6 @@ impl PerformAction for Value {
                     ValueData::Pair { first, second, .. } => {
                         if variant == 1 { first.clone() }
                         else { second.clone() }
-                    },
-                    ValueData::Cast { input, spine, .. } => {
-                        let len = spine.len();
-                        if variant == 1 && len == 0 { input.clone() }
-                        else { self.push_action(action) }
                     }
                     _ => self.push_action(action)
                 }
@@ -69,7 +65,7 @@ impl PerformAction for Value {
         }
     }
 
-    fn perform_spine(self, db: &mut Database, actions: Spine) -> Self {
+    fn perform_spine(self, db: &Database, actions: Spine) -> Self {
         let mut result = self;
         for action in actions.iter().cloned() {
             result = result.perform(db, action);
@@ -79,51 +75,59 @@ impl PerformAction for Value {
 }
 
 pub trait ForceValue {
-    fn force(&self, db: &mut Database) -> Value;
-    fn erase(&self, db: &mut Database) -> Value;
+    fn force(&self, db: &Database) -> Value;
+    fn erase(&self, db: &Database) -> LazyValue;
 }
 
 impl ForceValue for LazyValue {
-    fn force(&self, db: &mut Database) -> Value {
-        let v = self.value.get().cloned();
+    fn force(&self, db: &Database) -> Value {
+        let v =
+            if self.erased { self.object.get().cloned() }
+            else { self.value.get().cloned() };
         match v {
             Some(v) => v,
             None => {
                 let (env, code) = (self.env.clone(), self.code.clone());
+                let level: Level = env.len().into();
                 let new_value = eval(db, env, code);
-                self.value.set(new_value.clone()).ok();
-                new_value
+                if self.erased {
+                    let new_object = erase(db, level, new_value);
+                    self.object.set(new_object.clone()).ok();
+                    new_object
+                } else {
+                    self.value.set(new_value.clone()).ok();
+                    new_value
+                }
             }
         }
     }
 
-    fn erase(&self, db: &mut Database) -> Value {
-        let o = self.object.get().cloned();
-        match o {
-            Some(o) => o,
-            None => {
-                let (env, code) = (self.env.clone(), self.code.clone());
-                let new_object = eval(db, env.clone(), code);
-                let new_object = erase(db, env.len().into(), new_object);
-                self.object.set(new_object.clone()).ok();
-                new_object
-            }
-        }
+    fn erase(&self, db: &Database) -> LazyValue {
+        let erased = true;
+        let result = LazyValueData {
+            value: self.value.clone(),
+            object: self.object.clone(),
+            erased,
+            env: self.env.clone(),
+            code: self.code.clone(),
+        };
+        db.make_value(result)
     }
 }
 
 impl Closure {
-    pub fn eval(&self, db: &mut Database, arg: EnvEntry) -> Value {
-        let Closure { env, code, pending_erase } = self;
+    pub fn eval(&self, db: &Database, arg: EnvEntry) -> Value {
+        let Closure { env, code, erased } = self;
         let mut env = env.clone();
         env.push_back(arg);
         let value = eval(db, env.clone(), code.clone());
-        if *pending_erase { erase(db, env.len().into(), value) }
+        if *erased { erase(db, env.len().into(), value) }
         else { value }
     }
 }
 
-pub fn eval(db: &mut Database, env: Env, term: Term) -> Value {
+pub fn eval(db: &Database, env: Env, term: Term) -> Value {
+    //println!("env_len: {}, term: {}", env.len(), term.clone());
     let result = match term.cloned() {
         TermData::Lambda { sort, mode, name, domain, body } => {
             let domain = eval(db, env.clone(), domain);
@@ -170,12 +174,11 @@ pub fn eval(db: &mut Database, env: Env, term: Term) -> Value {
             let input = LazyValueData::lazy(db, env.clone(), input);
             ValueData::Refl { input }.rced()
         }
-        TermData::Cast { input, witness, evidence } => {
-            let input = eval(db, env.clone(), input);
+        TermData::Cast { witness, evidence } => {
             let witness = eval(db, env.clone(), witness);
             let evidence = eval(db, env, evidence);
             let spine = Vector::new();
-            ValueData::Cast { input, witness, evidence, spine }.rced()
+            ValueData::Cast { witness, evidence, spine }.rced()
         }
         TermData::Promote { equation } => {
             let equation = eval(db, env, equation);
@@ -237,7 +240,7 @@ pub fn eval(db: &mut Database, env: Env, term: Term) -> Value {
     //     }
 }
 
-fn quote_spine(db: &mut Database, head: Term, spine: Spine, level: Level) -> Term {
+fn quote_spine(db: &Database, head: Term, spine: Spine, level: Level) -> Term {
     spine.iter().cloned().fold(head, |acc, action| {
         let sort = acc.sort();
         match action {
@@ -249,14 +252,27 @@ fn quote_spine(db: &mut Database, head: Term, spine: Spine, level: Level) -> Ter
             Action::Project(variant) => {
                 db.make_term(TermData::Project { variant, body: acc })
             }
-            Action::EqInduct(_) => todo!(),
+            Action::EqInduct(data) => {
+                let domain = data.domain.force(db);
+                let domain = quote(db, domain, level);
+                let predicate = data.predicate.force(db);
+                let predicate = quote(db, predicate, level);
+                let lhs = data.lhs.force(db);
+                let lhs = quote(db, lhs, level);
+                let rhs = data.rhs.force(db);
+                let rhs = quote(db, rhs, level);
+                let equation = acc;
+                let case = data.case.force(db);
+                let case = quote(db, case, level);
+                db.make_term(TermData::EqInduct { domain, predicate, lhs, rhs, equation, case })
+            }
             Action::Promote => db.make_term(TermData::Promote { equation: acc }),
             Action::Separate => db.make_term(TermData::Separate { equation: acc })
         }
     })
 }
 
-pub fn quote(db: &mut Database, value: Value, level: Level) -> Term {
+pub fn quote(db: &Database, value: Value, level: Level) -> Term {
     let borrow: &ValueData = value.borrow();
     match borrow.clone() {
         ValueData::Variable { sort, level:vlvl, spine } => {
@@ -280,11 +296,10 @@ pub fn quote(db: &mut Database, value: Value, level: Level) -> Term {
             let input = quote(db, input, level);
             db.make_term(TermData::Refl { input })
         }
-        ValueData::Cast { input, witness, evidence, spine } => {
-            let input = quote(db, input, level);
+        ValueData::Cast { witness, evidence, spine } => {
             let witness = quote(db, witness, level);
             let evidence = quote(db, evidence, level);
-            let head = db.make_term(TermData::Cast { input, witness, evidence });
+            let head = db.make_term(TermData::Cast { witness, evidence });
             quote_spine(db, head, spine, level)
         }
         ValueData::Lambda { sort, mode, name, domain, closure } => {
@@ -320,12 +335,15 @@ pub fn quote(db: &mut Database, value: Value, level: Level) -> Term {
     }
 }
 
-pub(crate) fn erase_spine(spine: Spine) -> Spine {
+pub(crate) fn erase_spine(db: &Database, spine: Spine) -> Spine {
     let mut result = Spine::new();
     for action in spine.iter().cloned() {
         match action {
             Action::Apply(Mode::Erased, _) => { },
-            a @ Action::Apply(_, _) => { result.push_back(a); }
+            Action::Apply(m, v) => {
+                let v = v.erase(db);
+                result.push_back(Action::Apply(m, v));
+            }
             Action::Project(_) => { },
             Action::EqInduct(_) => { },
             Action::Promote => { },
@@ -335,24 +353,25 @@ pub(crate) fn erase_spine(spine: Spine) -> Spine {
     result
 }
 
-pub fn erase(db: &mut Database, level: Level, value: Value) -> Value {
+pub fn erase(db: &Database, level: Level, value: Value) -> Value {
     let borrow: &ValueData = value.borrow();
     match borrow.clone() {
         ValueData::Variable { sort, level, spine } => {
-            let spine = erase_spine(spine);
+            let spine = erase_spine(db, spine);
             ValueData::Variable { sort, level, spine }.rced()
         }
         ValueData::MetaVariable { sort, name, module, spine } => todo!(),
         ValueData::Reference { sort, id, spine, unfolded } => {
-            let spine = erase_spine(spine);
+            let spine = erase_spine(db, spine);
+            let unfolded = unfolded.map(|v| erase(db, 0.into(), v));
             ValueData::Reference { sort, id, spine, unfolded }.rced()
         }
-        ValueData::Pair { first, .. } => first,
+        ValueData::Pair { first, .. } => erase(db, level, first),
         ValueData::Refl { .. } => Value::id(db, Sort::Term, Mode::Free),
-        ValueData::Cast { input, spine, .. } => {
-            let input = erase(db, level, input);
-            let spine = erase_spine(spine);
-            input.perform_spine(db, spine)
+        ValueData::Cast { spine, .. } => {
+            let result = Value::id(db, Sort::Term, Mode::Free);
+            let spine = erase_spine(db, spine);
+            result.perform_spine(db, spine)
         }
         ValueData::Lambda { sort, mode, name, domain, closure } => {
             match mode {
@@ -384,8 +403,8 @@ pub fn erase(db: &mut Database, level: Level, value: Value) -> Value {
             ValueData::Intersect { name, first, second }.rced()
         }
         ValueData::Equality { left, right, anno } => {
-            left.erase(db);
-            right.erase(db);
+            let left = left.erase(db);
+            let right = right.erase(db);
             let anno = erase(db, level, anno);
             ValueData::Equality { left, right, anno }.rced()
         }

@@ -189,13 +189,11 @@ fn to_term(db: &mut Database, mut ctx: Vector<Symbol>, sort: Sort, s: Sexp) -> O
                     Some(term)
                 }
                 "cast" | "phi" => {
-                    let input = xs.get(1)?.clone();
-                    let input = to_term(db, ctx.clone(), sort, input)?;
                     let witness = xs.get(2)?.clone();
                     let witness = to_term(db, ctx.clone(), sort, witness)?;
                     let evidence = xs.get(3)?.clone();
                     let evidence = to_term(db, ctx, sort, evidence)?;
-                    let term = db.make_term(TermData::Cast { input, witness, evidence });
+                    let term = db.make_term(TermData::Cast { witness, evidence });
                     Some(term)
                 }
                 "promote" | "pr" | "theta" => {

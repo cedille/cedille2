@@ -1,5 +1,5 @@
 
-use std::rc::Rc;
+use std::cell::RefCell;
 use std::sync::Arc;
 use std::time;
 use std::path::{Path, PathBuf};
@@ -13,6 +13,7 @@ use crate::utility::*;
 use crate::term::*;
 use crate::metavar::MetaState;
 use crate::value::*;
+use crate::eval::*;
 //use crate::value::{Environment, LazyValue, Value, ValueEx, SpineEntry, Spine};
 
 #[derive(Debug)]
@@ -31,13 +32,14 @@ pub enum DatabaseError {
 }
 
 #[derive(Debug, Clone)]
-pub struct DeclValues {
-    pub type_value: LazyValue,
-    pub def_value: Option<LazyValue>
+pub struct DeclData {
+    pub ann: Term,
+    pub inner_ann: Term,
+    pub body: Option<Term>
 }
 
-impl DeclValues {
-    fn apply(self, db: &Database, args: &[(Mode, LazyValue)]) -> DeclValues {
+impl DeclData {
+    fn apply(self, db: &Database, args: &[(Mode, LazyValue)]) -> DeclData {
         self
         // let DeclValues { mut type_value, mut def_value } = self;
         // for (mode, arg) in args {
@@ -54,13 +56,13 @@ pub struct ImportData {
     pub public: bool,
     pub path: Symbol,
     pub namespace: Option<Symbol>,
-    pub args: Vec<(Mode, Value)>
+    pub args: Vec<(Mode, LazyValue)>
 }
 
 #[derive(Debug)]
 pub struct ModuleData {
     pub text: Arc<String>,
-    pub values: HashMap<Symbol, DeclValues>,
+    pub decls: HashMap<Symbol, DeclData>,
     pub metas: HashMap<Symbol, MetaState>,
     pub active_metas: HashSet<Symbol>,
     pub next_meta: usize,
@@ -83,8 +85,8 @@ impl ModuleData {
 
 #[derive(Debug)]
 pub struct Database {
-    pub term_data: HcFactory<TermData>,
-    pub value_data : HcFactory<LazyValueData>,
+    pub term_data: RefCell<HcFactory<TermData>>,
+    pub value_data : RefCell<HcFactory<LazyValueData>>,
     pub modules: HashMap<Symbol, ModuleData>,
     pub queued: Vec<Symbol>
 }
@@ -98,27 +100,28 @@ impl Default for Database {
 impl Database {
     pub fn new() -> Database {
         Database { 
-            term_data: HcFactory::with_capacity(128),
-            value_data: HcFactory::with_capacity(128),
+            term_data: RefCell::new(HcFactory::with_capacity(128)),
+            value_data: RefCell::new(HcFactory::with_capacity(128)),
             modules: HashMap::new(),
             queued: Vec::new()
         }
     }
 
-    pub fn make_term(&mut self, t: TermData) -> Term {
-        self.term_data.make(t)
+    pub fn make_term(&self, t: TermData) -> Term {
+        let mut factory = self.term_data.borrow_mut();
+        factory.make(t)
     }
 
-    pub fn make_value(&mut self, v: LazyValueData) -> LazyValue {
-        self.value_data.make(v)
+    pub fn make_value(&self, v: LazyValueData) -> LazyValue {
+        let mut factory = self.value_data.borrow_mut();
+        factory.make(v)
     }
 
-    pub fn insert_decl(&mut self, module: Symbol, opaque: bool, decl: Decl) -> Result<(), ()> {
+    pub fn insert_decl(&mut self, module: Symbol, opaque: bool, decl: Decl, inner_ann: Term) -> Result<(), ()> {
         self.freeze_active_metas(module);
         if decl.name == Symbol::from("_") { return Ok(()) }
-        let type_value = LazyValueData::lazy(self, Env::new(), decl.ty.clone());
-        let def_value = if opaque { None } 
-            else { Some(LazyValueData::lazy(self, Env::new(), decl.body.clone()))};
+        let type_value = decl.ty.clone();
+        let def_value = if opaque { None } else { Some(decl.body.clone()) };
         let module_data = self.modules.get_mut(&module).unwrap();
         let id = Id::new(module, decl.name);
         if module_data.scope.contains(&id) || module_data.exports.contains(&id) {
@@ -126,8 +129,12 @@ impl Database {
         } else {
             module_data.scope.insert(id.clone());
             module_data.exports.insert(id);
-            let decl_values = DeclValues { type_value, def_value };
-            module_data.values.insert(decl.name, decl_values);
+            let decl_values = DeclData {
+                ann: type_value,
+                inner_ann,
+                body: def_value
+            };
+            module_data.decls.insert(decl.name, decl_values);
             Ok(())
         }
     }
@@ -160,7 +167,8 @@ impl Database {
         })
     }
 
-    fn lookup_decl(&self, original: bool, module: Symbol, namespace: Vector<Symbol>, name: Symbol) -> Option<DeclValues> {
+    fn lookup_decl(&self, original: bool, module: Symbol, namespace: Vector<Symbol>, name: Symbol) -> (Vec<(Mode, LazyValue)>, Option<DeclData>) {
+        let mut params = vec![];
         let mut result = None;
         // We have a namespace, so we should find the declaration in an imported module
         if_chain! {
@@ -170,8 +178,8 @@ impl Database {
             then {
                 let mut namespace = namespace.clone();
                 namespace.pop_front();
-                result = self.lookup_decl(false, import_data.path, namespace, name);
-                //FIXME: result = result.map(|x| x.apply(self, &import_data.args));
+                (_, result) = self.lookup_decl(false, import_data.path, namespace, name);
+                params = import_data.args.clone();
             }
         }
         // There is no namespace, so check the current module first
@@ -180,17 +188,16 @@ impl Database {
             if namespace.is_empty();
             if let Some(module_data) = self.modules.get(&module);
             then {
-                result = module_data.values.get(&name).cloned();
+                result = module_data.decls.get(&name).cloned();
                 // If we are pulling the definition from the same module, then we know that parameters are in context,
                 // so we should apply variables with levels corresponding to the implied context
                 if original {
-                    let params: Vec<_> = module_data.params.iter()
+                    params = module_data.params.iter()
                         .enumerate()
                         .map(|(level, p)| {
                             let sort = p.body.sort().demote();
-                            (p.mode, Value::var(sort, level))
+                            (p.mode, LazyValueData::var(self, sort, level.into()))
                         }).collect();
-                    //FIXME: result = result.map(|x| x.apply(self, &params));
                 }
             }
         }
@@ -201,29 +208,36 @@ impl Database {
             if let Some(module_data) = self.modules.get(&module);
             then {
                 for ImportData { public, path, namespace:qual, args } in module_data.imports.iter() {
-                    if (original || *public) && qual.is_none() {
-                        result = result.or_else(|| {
-                            let result = self.lookup_decl(false, *path, namespace.clone(), name);
-                            // FIXME: result.map(|x| x.apply(self, args))
-                            result
-                        });
+                    if (original || *public) && qual.is_none() && result.is_none() {
+                        (_, result) = self.lookup_decl(false, *path, namespace.clone(), name);
+                        params = args.clone()
                     }
                 }
             }
         }
-        result
+        (params, result)
     }
 
-    pub fn lookup_def(&self, id: &Id) -> Option<LazyValue> {
+    pub fn lookup_def(&self, id: &Id) -> Option<Value> {
         let namespace = id.namespace.clone();
-        let decl = self.lookup_decl(true, id.module, namespace, id.name);
-        decl.and_then(|decl| decl.def_value)
+        let (mut params, decl) = self.lookup_decl(true, id.module, namespace, id.name);
+        decl.and_then(|decl| decl.body).map(|body| {
+            let body = eval(self, Env::new(), body);
+            let spine = params.drain(..)
+                .map(|(m, v)| Action::Apply(m, v))
+                .collect::<Spine>();
+            body.perform_spine(self, spine)
+        })
     }
 
-    pub fn lookup_type(&self, id: &Id) -> Option<LazyValue> {
+    pub fn lookup_type(&self, id: &Id) -> Option<Value> {
         let namespace = id.namespace.clone();
-        let decl = self.lookup_decl(true, id.module, namespace, id.name);
-        decl.map(|decl| decl.type_value)
+        let (params, decl) = self.lookup_decl(true, id.module, namespace, id.name);
+        decl.map(|decl| {
+            let ann = if params.is_empty() { decl.ann }
+                else { decl.inner_ann };
+            eval(self, Env::new(), ann)
+        })
     }
 
     pub fn set_params(&mut self, module: Symbol, params: Vec<Parameter>) {

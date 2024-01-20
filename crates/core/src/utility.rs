@@ -3,6 +3,37 @@ use std::{rc, ops, fmt};
 use internment::Intern;
 use imbl::{Vector, vector};
 
+pub struct Verbose<'a, T : ?Sized> {
+    level: usize,
+    data: &'a T
+}
+
+pub trait VerboseDebug {
+    fn vvv(&self, level: usize) -> Verbose<'_, Self>;
+}
+
+impl<T> VerboseDebug for T {
+    fn vvv(&self, level: usize) -> Verbose<'_, Self> {
+        Verbose { level, data: self }
+    }
+}
+
+impl<'a, T> fmt::Debug for Verbose<'a, Vector<T>>
+where Verbose<'a, T> : fmt::Debug
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "[")?;
+        for i in 0..self.data.len() {
+            let v = self.data[i].vvv(self.level);
+            v.fmt(f)?;
+            if i < self.data.len() - 1 {
+                write!(f, ",")?;
+            }
+        }
+        write!(f, "]")
+    }
+}
+
 pub trait Boxable {
     fn boxed(self) -> Box<Self>;
 }
@@ -49,6 +80,23 @@ impl fmt::Display for Symbol {
     }
 }
 
+impl<'a> fmt::Debug for Verbose<'a, Symbol> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.level {
+            0 => {
+                if self.data.len() <= 4 {
+                    <str as fmt::Display>::fmt(self.data.as_str(), f)
+                } else {
+                    <str as fmt::Display>::fmt(&self.data.as_str()[0..2], f)?;
+                    <str as fmt::Display>::fmt("..", f)
+                }
+            },
+            1 => <Symbol as fmt::Display>::fmt(self.data, f),
+            _ => <Symbol as fmt::Debug>::fmt(self.data, f)
+        }
+    }
+}
+
 #[derive(Debug, Hash, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Id {
     pub namespace: Vector<Symbol>,
@@ -83,6 +131,18 @@ impl fmt::Display for Id {
             result = result.and_then(|_| write!(f, "{}.", component));
         }
         result.and_then(|_| write!(f, "{}", self.name))
+    }
+}
+
+impl<'a> fmt::Debug for Verbose<'a, Id> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.level {
+            level if level <= 2 => {
+                self.data.namespace.vvv(self.level).fmt(f)?;
+                self.data.name.vvv(level).fmt(f)
+            }
+            _ => <Id as fmt::Debug>::fmt(self.data, f)
+        }
     }
 }
 

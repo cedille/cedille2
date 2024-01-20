@@ -7,7 +7,7 @@ use nom::{
     error::context,
     combinator::{opt, recognize, peek, not, eof},
     sequence::{tuple, pair},
-    multi::{separated_list1, separated_list0, many0_count, many1_count},
+    multi::{separated_list1, separated_list0, many0_count, many0, many1_count},
     character::complete::{multispace0, alpha1, alphanumeric1, alphanumeric0, line_ending},
     bytes::complete::{is_not, take_while}
 };
@@ -62,23 +62,36 @@ pub fn parse_command(input : In) -> IResult<In, Command> {
     let (_, keyword) = peek(alt((
         tag("module").preceded_by(bspace0(0)),
         tag("import").preceded_by(bspace0(0)),
+        tag("#erase").preceded_by(bspace0(0)),
         tag("").preceded_by(bspace0(0))
     )))(input)?;
 
     match *keyword {
         "module" => parse_module(input),
         "import" => parse_import(input),
+        "#erase" => parse_erase_command(input),
         _ => parse_def(input)
     }
 }
 
-fn parse_module(input: In) -> IResult<In, Command> {
-    let (rest, (_, path)) = context("module", tuple((
-        tag("module").preceded_by(bspace0(0)),
-        parse_path.preceded_by(bspace0(2))
+fn parse_erase_command(input: In) -> IResult<In, Command> {
+    let (rest, (_, term)) = context("erase_command", tuple((
+        tag("#erase").preceded_by(bspace0(0)),
+        parse_term(2)
     )))(input)?;
 
-    let module = Command::Module(path, vec![]);
+    let command = Command::Erase(term);
+    Ok((rest, command))
+}
+
+fn parse_module(input: In) -> IResult<In, Command> {
+    let (rest, (_, path, params)) = context("module", tuple((
+        tag("module").preceded_by(bspace0(0)),
+        parse_path.preceded_by(bspace0(2)),
+        separated_list0(bspace1(2), parse_parameter(2)).preceded_by(bspace0(2)),
+    )))(input)?;
+
+    let module = Command::Module(path, params);
     Ok((rest, module))
 }
 
@@ -349,16 +362,17 @@ fn parse_term_variable_application(margin: usize) -> impl FnMut(In) -> IResult<I
 
 /*
     atom ::=
-    | "[" term "," term (";" term)? "]" (".1" | ".2")?
-    | "J" { term "," term "," term "," term "," term "," term } (".1" | ".2")?
-    | "φ" term "{" term "," term "}" (".1" | ".2")?
-    | "ϑ" { term } (".1" | ".2")?
-    | "β" { term } (".1" | ".2")?
-    | "(" term ")" (".1" | ".2")?
+    | "[" term "," term (";" term)? "]" (".1" | ".2")*
+    | "J" { term "," term "," term "," term "," term "," term } (".1" | ".2")*
+    | "φ" term "{" term "," term "}" (".1" | ".2")*
+    | "ϑ" { term } (".1" | ".2")*
+    | "β" { term } (".1" | ".2")*
+    | "δ" { term } (".1" | ".2")*
+    | "(" term ")" (".1" | ".2")*
     | "_"
     | "?"
-    | ident (".1" | ".2")?
-    | "Set" (".1" | ".2")?
+    | ident (".1" | ".2")*
+    | "Set" (".1" | ".2")*
 */
 fn parse_term_atom(margin: usize) -> impl FnMut(In) -> IResult<In, Term> {
     move |input| {
@@ -375,23 +389,23 @@ fn parse_term_atom(margin: usize) -> impl FnMut(In) -> IResult<In, Term> {
             parse_set_keyword
         ));
         
-        let (rest, (term, proj))
+        let (rest, (mut term, projs))
         = context("projection", tuple((
             inner.preceded_by(bspace0(margin)),
-            opt(alt((
+            many0(alt((
                 tag(".1"),
                 tag(".2")
             ))),
         )))(input)?;
 
-        let term = if let Some(proj) = proj {
+        for proj in projs.iter() {
             let span = (term.span().0, proj.location_offset() + 1);
-            match *proj.fragment() {
+            term = match *proj.fragment() {
                 ".1" => Term::Project { span, variant:1, body:term.boxed() },
                 ".2" => Term::Project { span, variant:2, body:term.boxed() },
                 _ => unreachable!()
             }
-        } else { term };
+        }
 
         Ok((rest, term))
     }
@@ -478,13 +492,12 @@ fn parse_term_equality_induction(margin: usize) -> impl FnMut(In) -> IResult<In,
     }
 }
 
-// "φ" term "{" term "," term "}"
+// "φ" "{" term "," term "}"
 fn parse_term_cast(margin: usize) -> impl FnMut(In) -> IResult<In, Term> {
     move |input| {
-        let (rest, (start, input, _, witness, _, evidence, end))
+        let (rest, (start, _, witness, _, evidence, end))
         = context("cast", tuple((
             tag("φ").preceded_by(bspace0(margin)),
-            parse_term(margin),
             tag("{").preceded_by(bspace0(margin)),
             parse_term(margin),
             tag(",").preceded_by(bspace0(margin)),
@@ -495,7 +508,6 @@ fn parse_term_cast(margin: usize) -> impl FnMut(In) -> IResult<In, Term> {
         let span = (start.location_offset(), end.location_offset());
         let term = Term::Cast {
             span,
-            input: input.boxed(),
             witness: witness.boxed(),
             evidence: evidence.boxed()
         };
@@ -546,6 +558,27 @@ fn parse_term_refl(margin: usize) -> impl FnMut(In) -> IResult<In, Term> {
     }
 }
 
+// "δ" { term }
+fn parse_term_separate(margin: usize) -> impl FnMut(In) -> IResult<In, Term> {
+    move |input| {
+        let (rest, (start, _, term, end))
+        = context("separate", tuple((
+            tag("δ").preceded_by(bspace0(margin)),
+            tag("{").preceded_by(bspace0(margin)),
+            parse_term(margin),
+            tag("}").preceded_by(bspace0(margin))
+        )))(input)?;
+
+        let span = (start.location_offset(), end.location_offset());
+        let term = Term::Separate {
+            span,
+            equation: term.boxed()
+        };
+
+        Ok((rest, term))
+    }
+}
+
 // "(" term ")"
 fn parse_term_paren(margin: usize) -> impl FnMut(In) -> IResult<In, Term> {
     move |input| {
@@ -571,6 +604,30 @@ fn parse_set_keyword(input: In) -> IResult<In, Term> {
     let span = (keyword.location_offset(), keyword.location_offset() + keyword.len());
     let term = Term::Set { span };
     Ok((rest, term))
+}
+
+fn parse_parameter(margin: usize) -> impl FnMut(In) -> IResult<In, Parameter> {
+    move |input| {
+        let (rest, (mode, opn, (name, _), _, body, end)) = tuple((
+            opt(tag("-")).preceded_by(bspace0(margin)),
+            tag("(").preceded_by(bspace0(margin)),
+            parse_symbol.preceded_by(bspace0(margin)),
+            tag(":").preceded_by(bspace0(margin)),
+            parse_term(margin),
+            tag(")").preceded_by(bspace0(margin))
+        ))(input)?;
+
+        let start = mode.unwrap_or(opn).location_offset();
+        let span = (start, end.location_offset() + 1);
+        let mode = if mode.is_some() { Mode::Erased } else { Mode::Free };
+        let parameter = Parameter {
+            span,
+            mode,
+            name,
+            body,
+        };
+        Ok((rest, parameter))
+    }
 }
 
 fn parse_lambda_var(margin: usize) -> impl FnMut(In) -> IResult<In, LambdaVar> {

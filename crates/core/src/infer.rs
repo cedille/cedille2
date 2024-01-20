@@ -50,7 +50,7 @@ pub fn infer(db: &mut Database, ctx: Context, t: Term) -> Result<Value, Term> {
             let right = left.clone();
             Ok(ValueData::Equality { left, right, anno }.rced())
         }
-        TermData::Cast { input, witness, evidence } => todo!(),
+        TermData::Cast { witness, evidence } => todo!(),
         TermData::Promote { equation } => {
             let equation_ty = infer(db, ctx.clone(), equation.clone())?;
             let equation_ty_borrow: &ValueData = equation_ty.borrow();
@@ -107,7 +107,7 @@ pub fn infer(db: &mut Database, ctx: Context, t: Term) -> Result<Value, Term> {
         }
         TermData::Free { sort, id } => {
             if let Some(result) = db.lookup_type(&id) {
-                Ok(result.force(db))
+                Ok(result)
             } else { Err(t) }
         },
         TermData::Meta { sort, name } => unimplemented!(),
@@ -173,28 +173,30 @@ pub fn church_bool_type_value(db: &mut Database) -> Value {
     }.rced()
 }
 
-pub fn cast_evidence_ty(db: &mut Database, level: Level, domain: Value, witness: Value) -> Value {
-    let domain_term = quote(db, domain.clone(), level);
-    let witness_term = quote(db, witness, level);
-    let input = db.make_term(TermData::Bound { sort: Sort::Term, index: 0.into() });
-    let eq_rhs_app = db.make_term(TermData::Apply {
-        sort: Sort::Term,
-        mode: Mode::Free,
-        fun: witness_term.clone(),
-        arg: input.clone()
-    });
-    let eq_rhs = db.make_term(TermData::Project { variant: 1, body: eq_rhs_app });
-    let eq_ty = db.make_term(TermData::Equality {
-        left: input,
-        right: eq_rhs,
-        anno: domain_term
-    });
-    let closure = Closure::new(Env::new(), eq_ty);
-    ValueData::Pi {
+pub fn cast_evidence_ty(db: &Database, domain: Term, witness: Term) -> Term {
+    db.make_term(TermData::Pi {
         sort: Sort::Type,
         mode: Mode::Free,
-        name: Symbol::default(),
-        domain,
-        closure,
-    }.rced()
+        name: Symbol::from("x"),
+        domain: domain.clone(),
+        body: db.make_term(TermData::Equality {
+            left: db.make_term(TermData::Bound {
+                sort: Sort::Term,
+                index: 0.into()
+            }),
+            right: db.make_term(TermData::Project {
+                variant: 1,
+                body: db.make_term(TermData::Apply {
+                    sort: Sort::Term,
+                    mode: Mode::Free,
+                    fun: witness.shift(db, 1, 0),
+                    arg: db.make_term(TermData::Bound {
+                        sort: Sort::Term,
+                        index: 0.into()
+                    }),
+                }),
+            }),
+            anno: domain.shift(db, 1, 0),
+        }),
+    })
 }

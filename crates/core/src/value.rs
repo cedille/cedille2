@@ -1,4 +1,5 @@
 
+use std::fmt;
 use std::rc::Rc;
 use std::borrow::Borrow;
 use std::cell::OnceCell;
@@ -21,6 +22,17 @@ pub struct EqInductData {
     pub case: LazyValue
 }
 
+impl fmt::Display for EqInductData {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "J({}, {}, {}, {}, {})",
+            self.domain,
+            self.predicate,
+            self.lhs,
+            self.rhs,
+            self.case)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
     Apply(Mode, LazyValue),
@@ -28,6 +40,18 @@ pub enum Action {
     EqInduct(Rc<EqInductData>),
     Promote,
     Separate
+}
+
+impl fmt::Display for Action {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Action::Apply(m, v) => write!(f, "@{} {}", m, v),
+            Action::Project(p) => write!(f, ".{}", p),
+            a @ Action::EqInduct(_) => a.fmt(f),
+            Action::Promote => write!(f, "ϑ"),
+            Action::Separate => write!(f, "δ"),
+        }
+    }
 }
 
 pub type Env = Vector<EnvEntry>;
@@ -55,18 +79,24 @@ pub enum EnvBound {
 pub struct Closure {
     pub env: Env,
     pub code: Term,
-    pub pending_erase: bool
+    pub erased: bool
+}
+
+impl fmt::Display for Closure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.code.fmt(f)
+    }
 }
 
 impl Closure {
     pub fn new(env: Env, code: Term) -> Closure {
-        Closure { env, code, pending_erase: false }
+        Closure { env, code, erased: false }
     }
 
     pub fn erase(self) -> Closure {
         let Closure { env, code, .. } = self;
-        let pending_erase = true;
-        Closure { env, code, pending_erase }
+        let erased = true;
+        Closure { env, code, erased }
     }
 }
 
@@ -76,21 +106,30 @@ pub type LazyValue = Hc<LazyValueData>;
 pub struct LazyValueData {
     pub(crate) value: OnceCell<Value>,
     pub(crate) object: OnceCell<Value>,
+    pub erased: bool,
     pub env: Env,
     pub code: Term
 }
 
+impl fmt::Display for LazyValue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.code.fmt(f)
+    }
+}
+
 impl LazyValueData {
-    pub fn lazy(db: &mut Database, env: Env, code: Term) -> LazyValue {
+    pub fn lazy(db: &Database, env: Env, code: Term) -> LazyValue {
         db.make_value(LazyValueData {
             value: OnceCell::new(),
             object: OnceCell::new(),
+            erased: false,
             env,
             code
         })
     }
 
-    pub fn var(db: &mut Database, sort: Sort, level: Level) -> LazyValue {
+    pub fn var(db: &Database, sort: Sort, level: Level) -> LazyValue {
+        let erased = false;
         let spine = Vector::new();
         let var = ValueData::Variable { sort, level, spine }.rced();
         let value = OnceCell::from(var.clone());
@@ -100,7 +139,7 @@ impl LazyValueData {
         let name = format!("gen/{}/{}", sort, *level);
         let id = Id::new(module, Symbol::from(name.as_str()));
         let code = db.make_term(TermData::Free { sort, id });
-        db.make_value(LazyValueData { value, object, env, code })
+        db.make_value(LazyValueData { value, object, erased, env, code })
     }
 
     pub fn sort(&self) -> Sort {
@@ -118,6 +157,7 @@ impl LazyValueData {
 
 impl std::hash::Hash for LazyValueData {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.erased.hash(state);
         self.env.hash(state);
         self.code.hash(state);
     }
@@ -142,7 +182,7 @@ pub enum ValueData {
         sort: Sort,
         id: Id,
         spine: Spine,
-        unfolded: Option<LazyValue>
+        unfolded: Option<Value>
     },
     Pair {
         first: Value,
@@ -153,7 +193,6 @@ pub enum ValueData {
         input: LazyValue
     },
     Cast {
-        input: Value,
         witness: Value,
         evidence: Value,
         spine: Spine
@@ -186,9 +225,50 @@ pub enum ValueData {
     SuperStar,
 }
 
+impl fmt::Display for ValueData {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ValueData::Variable { sort, level, spine } => {
+                level.fmt(f)?;
+                for action in spine.iter() { action.fmt(f)?; }
+                Ok(())
+            }
+            ValueData::MetaVariable { sort, name, module, spine } => todo!(),
+            ValueData::Reference { sort, id, spine, unfolded } => {
+                id.fmt(f)?;
+                for action in spine.iter() { action.fmt(f)?; }
+                Ok(())
+            }
+            ValueData::Pair { first, second, anno } => {
+                write!(f, "[{}, {}; {}]", first, second, anno)
+            }
+            ValueData::Refl { input } => write!(f, "β({})", input),
+            ValueData::Cast { witness, evidence, spine } => {
+                write!(f, "φ({}, {})", witness, evidence)?;
+                for action in spine.iter() { action.fmt(f)?; }
+                Ok(())
+            }
+            ValueData::Lambda { sort, mode, name, domain, closure } => {
+                write!(f, "λ{} {}:{}. {}", mode, name, domain, closure)
+            }
+            ValueData::Pi { sort, mode, name, domain, closure } => {
+                write!(f, "({} : {}) -{}> {}", name, domain, mode, closure)
+            }
+            ValueData::Intersect { name, first, second } => {
+                write!(f, "({} : {}) ∩ {}", name, first, second)
+            }
+            ValueData::Equality { left, right, anno } => {
+                write!(f, "({} =[{}] {})", left, anno, right)
+            }
+            ValueData::Star => write!(f, "Set"),
+            ValueData::SuperStar => write!(f, "□"),
+        }
+    }
+}
+
 pub trait ValueOps {
     fn var(sort: Sort, level: impl Into<Level>) -> Self;
-    fn id(db: &mut Database, sort: Sort, mode: Mode) -> Self;
+    fn id(db: &Database, sort: Sort, mode: Mode) -> Self;
     fn sort(&self) -> Sort;
     fn push_action(&self, action: Action) -> Self;
     fn get_spine(&self) -> Spine;
@@ -202,13 +282,13 @@ impl ValueOps for Value {
         ValueData::Variable { sort, level: level.into(), spine: Vector::new() }.rced()
     }
 
-    fn id(db: &mut Database, sort: Sort, mode: Mode) -> Value {
+    fn id(db: &Database, sort: Sort, mode: Mode) -> Value {
         let name = Symbol::from("x");
         let domain = ValueData::SuperStar.rced();
         let env = Vector::new();
         let code = db.make_term(TermData::Bound { sort, index: 0.into() });
-        let pending_erase = false;
-        let closure = Closure { env, code, pending_erase };
+        let erased = false;
+        let closure = Closure { env, code, erased };
         ValueData::Lambda { sort, mode, name, domain, closure }.rced()
     }
 
@@ -257,8 +337,8 @@ impl ValueOps for Value {
             ValueData::Reference { sort, id, unfolded, .. } => {
                 ValueData::Reference { sort, id, spine, unfolded }.rced()
             }
-            ValueData::Cast { input, witness, evidence, .. } => {
-                ValueData::Cast { input, witness, evidence, spine }.rced()
+            ValueData::Cast { witness, evidence, .. } => {
+                ValueData::Cast { witness, evidence, spine }.rced()
             }
             v => v.rced()
         }

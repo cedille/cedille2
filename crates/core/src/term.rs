@@ -6,6 +6,7 @@ use imbl::Vector;
 use crate::hc::*;
 use crate::utility::*;
 use crate::value::EnvBound;
+use crate::database::Database;
 
 type Span = (usize, usize);
 
@@ -87,7 +88,6 @@ pub enum TermData {
         input: Term
     },
     Cast {
-        input: Term,
         witness: Term,
         evidence: Term,
     },
@@ -183,8 +183,8 @@ impl TermData {
             }
             TermData::Separate { equation } => equation.fv_empty_index(index),
             TermData::Refl { input } => input.fv_empty_index(index),
-            TermData::Cast { input, witness, evidence } => {
-                input.fv_empty_index(index) && witness.fv_empty_index(index) && evidence.fv_empty_index(index)
+            TermData::Cast { witness, evidence } => {
+                witness.fv_empty_index(index) && evidence.fv_empty_index(index)
             }
             TermData::Promote { equation } => equation.fv_empty_index(index),
             TermData::EqInduct { domain, predicate, lhs, rhs, equation, case } => {
@@ -294,12 +294,10 @@ impl TermData {
                 let equation_str = equation.to_string_with_context(ctx.clone());
                 format!("ϑ {{ {} }}", equation_str)
             }
-            TermData::Cast { input, witness, evidence } => {
+            TermData::Cast { witness, evidence } => {
                 let equation_str = evidence.to_string_with_context(ctx.clone());
-                let input = input.to_string_with_context(ctx.clone());
                 let witness = witness.to_string_with_context(ctx);
-                if evidence.ambiguous() { format!("φ ({}) - {} {{{}}}", equation_str, input, witness) }
-                else { format!("φ {} - {} {{{}}}", equation_str, input, witness) }
+                format!("φ {{{}, {}}}", witness, equation_str)
             }
             TermData::EqInduct { domain, predicate, lhs, rhs, equation, case } => {
                 let domain_str = domain.to_string_with_context(ctx.clone());
@@ -359,5 +357,92 @@ impl TermData {
 impl fmt::Display for TermData {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.to_string_with_context(Vector::new()))
+    }
+}
+
+pub trait TermExt {
+    fn shift(&self, db: &Database, amount: usize, cutoff: usize) -> Self;
+}
+
+impl TermExt for Term {
+    fn shift(&self, db: &Database, amount: usize, cutoff: usize) -> Self {
+        match self.cloned() {
+            TermData::Lambda { sort, mode, name, domain, body } => {
+                let domain = domain.shift(db, amount, cutoff);
+                let body = body.shift(db, amount, cutoff + 1);
+                db.make_term(TermData::Lambda { sort, mode, name, domain, body })
+            }
+            TermData::Let { sort, name, let_body, body } => {
+                let let_body = let_body.shift(db, amount, cutoff);
+                let body = body.shift(db, amount, cutoff + 1);
+                db.make_term(TermData::Let { sort, name, let_body, body })
+            }
+            TermData::Pi { sort, mode, name, domain, body } => {
+                let domain = domain.shift(db, amount, cutoff);
+                let body = body.shift(db, amount, cutoff + 1);
+                db.make_term(TermData::Pi { sort, mode, name, domain, body })
+            }
+            TermData::Intersect { name, first, second } => {
+                let first = first.shift(db, amount, cutoff);
+                let second = second.shift(db, amount, cutoff + 1);
+                db.make_term(TermData::Intersect { name, first, second })
+            }
+            TermData::Equality { left, right, anno } => {
+                let left = left.shift(db, amount, cutoff);
+                let right = right.shift(db, amount, cutoff);
+                let anno = anno.shift(db, amount, cutoff);
+                db.make_term(TermData::Equality { left, right, anno })
+            }
+            TermData::Project { variant, body } => {
+                let body = body.shift(db, amount, cutoff);
+                db.make_term(TermData::Project { variant, body })
+            }
+            TermData::Pair { first, second, anno } => {
+                let first = first.shift(db, amount, cutoff);
+                let second = second.shift(db, amount, cutoff);
+                let anno = anno.shift(db, amount, cutoff);
+                db.make_term(TermData::Pair { first, second, anno })
+            }
+            TermData::Separate { equation } => {
+                let equation = equation.shift(db, amount, cutoff);
+                db.make_term(TermData::Separate { equation })
+            }
+            TermData::Refl { input } => {
+                let input = input.shift(db, amount, cutoff);
+                db.make_term(TermData::Refl { input })
+            }
+            TermData::Cast { witness, evidence } => {
+                let witness = witness.shift(db, amount, cutoff);
+                let evidence = evidence.shift(db, amount, cutoff);
+                db.make_term(TermData::Cast { witness, evidence })
+            }
+            TermData::Promote { equation } => {
+                let equation = equation.shift(db, amount, cutoff);
+                db.make_term(TermData::Promote { equation })
+            }
+            TermData::EqInduct { domain, predicate, lhs, rhs, equation, case } => {
+                let domain = domain.shift(db, amount, cutoff);
+                let predicate = predicate.shift(db, amount, cutoff);
+                let lhs = lhs.shift(db, amount, cutoff);
+                let rhs = rhs.shift(db, amount, cutoff);
+                let equation = equation.shift(db, amount, cutoff);
+                let case = case.shift(db, amount, cutoff);
+                db.make_term(TermData::EqInduct { domain, predicate, lhs, rhs, equation, case })
+            }
+            TermData::Apply { sort, mode, fun, arg } => {
+                let fun = fun.shift(db, amount, cutoff);
+                let arg = arg.shift(db, amount, cutoff);
+                db.make_term(TermData::Apply { sort, mode, fun, arg })
+            }
+            TermData::Bound { sort, index } => {
+                let index = if *index < cutoff { index } else { index + amount };
+                db.make_term(TermData::Bound { sort, index })
+            }
+            TermData::Free { .. } => self.clone(),
+            TermData::Meta { .. } => self.clone(),
+            TermData::InsertedMeta { .. } => self.clone(),
+            TermData::Star => self.clone(),
+            TermData::SuperStar => self.clone(),
+        }
     }
 }
