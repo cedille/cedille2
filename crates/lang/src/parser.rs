@@ -459,18 +459,10 @@ fn parse_term_pair(margin: usize) -> impl FnMut(In) -> IResult<In, Term> {
 // "𝜓" { term "," term } (".1" | ".2")?
 fn parse_term_equality_induction(margin: usize) -> impl FnMut(In) -> IResult<In, Term> {
     move |input| {
-        let (rest, (start, _, t1, _, t2, _, t3, _, t4, _, t5, _, t6, end))
+        let (rest, (start, _, t1, _, t2, end))
         = context("induct", tuple((
-            tag("J").preceded_by(bspace0(margin)),
+            tag("𝜓").preceded_by(bspace0(margin)),
             tag("{").preceded_by(bspace0(margin)),
-            parse_term(margin),
-            tag(",").preceded_by(bspace0(margin)),
-            parse_term(margin),
-            tag(",").preceded_by(bspace0(margin)),
-            parse_term(margin),
-            tag(",").preceded_by(bspace0(margin)),
-            parse_term(margin),
-            tag(",").preceded_by(bspace0(margin)),
             parse_term(margin),
             tag(",").preceded_by(bspace0(margin)),
             parse_term(margin),
@@ -478,14 +470,10 @@ fn parse_term_equality_induction(margin: usize) -> impl FnMut(In) -> IResult<In,
         )))(input)?;
 
         let span = (start.location_offset(), end.location_offset());
-        let term = Term::EqInduct {
+        let term = Term::Subst {
             span,
-            domain: t1.boxed(),
             predicate: t2.boxed(),
-            lhs: t3.boxed(),
-            rhs: t4.boxed(),
-            equation: t5.boxed(),
-            case: t6.boxed()
+            equation: t1.boxed(),
         };
 
         Ok((rest, term))
@@ -516,21 +504,30 @@ fn parse_term_cast(margin: usize) -> impl FnMut(In) -> IResult<In, Term> {
     }
 }
 
-// "ϑ" "{" term "}"
+// "ϑ" (1 | 2) "{" term "," term "," term "}"
 fn parse_term_promote(margin: usize) -> impl FnMut(In) -> IResult<In, Term> {
     move |input| {
-        let (rest, (start, _, term, end))
+        let (rest, (start, variant, _, t1, _, t2, _, t3, end))
         = context("promote", tuple((
-            tag("ϑ").preceded_by(bspace0(margin)),
+            tag("ϑ"),
+            alt((tag("1"), tag("2"))).preceded_by(bspace0(margin)),
             tag("{").preceded_by(bspace0(margin)),
+            parse_term(margin),
+            tag(",").preceded_by(bspace0(margin)),
+            parse_term(margin),
+            tag(",").preceded_by(bspace0(margin)),
             parse_term(margin),
             tag("}").preceded_by(bspace0(margin))
         )))(input)?;
 
+        let variant = if *variant == "1" { 1usize } else { 2 };
         let span = (start.location_offset(), end.location_offset());
         let term = Term::Promote {
             span,
-            equation: term.boxed()
+            variant,
+            equation: t1.boxed(),
+            lhs: t2.boxed(),
+            rhs: t3.boxed()
         };
 
         Ok((rest, term))

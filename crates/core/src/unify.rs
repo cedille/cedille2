@@ -35,24 +35,16 @@ fn unify_spine(db: &mut Database, level: Level, lhs: Spine, rhs: Spine) -> bool 
     for (a1, a2) in lhs.iter().cloned().zip(rhs.iter().cloned()) {
         let update = match (a1, a2) {
             (Action::Apply(m1, v1), Action::Apply(m2, v2)) => {
-                let v1 = v1.force(db);
-                let v2 = v2.force(db);
-                m1 == m2 && unify(db, level, v1, v2)
+                m1 == m2 && unify(db, level, v1.force(db), v2.force(db))
             }
             (Action::Project(v1), Action::Project(v2)) => v1 == v2,
-            (Action::EqInduct(d1), Action::EqInduct(d2)) => {
-                let (p1, p2) = (d1.predicate.force(db), d2.predicate.force(db));
-                let (l1, l2) = (d1.lhs.force(db), d2.lhs.force(db));
-                let (r1, r2) = (d1.rhs.force(db), d2.rhs.force(db));
-                let (c1, c2) = (d1.case.force(db), d2.case.force(db));
-                let (d1, d2) = (d1.domain.force(db), d2.domain.force(db));
+            (Action::Subst(p1), Action::Subst(p2)) => {
                 unify(db, level, p1, p2)
-                && unify(db, level, l1, l2)
-                && unify(db, level, r1, r2)
-                && unify(db, level, c1, c2)
-                && unify(db, level, d1, d2)
             }
-            (Action::Promote, Action::Promote) => true,
+            (Action::Promote(v1, a1, b1), Action::Promote(v2, a2, b2)) => {
+                v1 == v2 && unify(db, level, a1.force(db), a2.force(db))
+                && unify(db, level, b1.force(db), b2.force(db))
+            }
             (Action::Separate, Action::Separate) => true,
             _ => false
         };

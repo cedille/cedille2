@@ -92,15 +92,14 @@ pub enum TermData {
         evidence: Term,
     },
     Promote {
-        equation: Term
-    },
-    EqInduct {
-        domain: Term,
-        predicate: Term,
-        lhs: Term,
-        rhs: Term,
+        variant: usize,
         equation: Term,
-        case: Term
+        lhs: Term,
+        rhs: Term
+    },
+    Subst {
+        predicate: Term,
+        equation: Term,
     },
     Apply {
         sort: Sort,
@@ -149,7 +148,7 @@ impl TermData {
             | TermData::Refl { .. }
             | TermData::Cast { .. }
             | TermData::Promote { .. }
-            | TermData::EqInduct { .. } => Sort::Term,
+            | TermData::Subst { .. } => Sort::Term,
             TermData::Apply { sort, .. }
             | TermData::Bound { sort, .. }
             | TermData::Free { sort, .. }
@@ -186,10 +185,11 @@ impl TermData {
             TermData::Cast { witness, evidence } => {
                 witness.fv_empty_index(index) && evidence.fv_empty_index(index)
             }
-            TermData::Promote { equation } => equation.fv_empty_index(index),
-            TermData::EqInduct { domain, predicate, lhs, rhs, equation, case } => {
-                domain.fv_empty_index(index) && predicate.fv_empty_index(index) && lhs.fv_empty_index(index)
-                && rhs.fv_empty_index(index) && equation.fv_empty_index(index) && case.fv_empty_index(index)
+            TermData::Promote { equation, lhs, rhs, .. } => {
+                equation.fv_empty_index(index) && lhs.fv_empty_index(index) && rhs.fv_empty_index(index)
+            }
+            TermData::Subst { equation, predicate } => {
+                equation.fv_empty_index(index) && predicate.fv_empty_index(index)
             }
             TermData::Apply { fun, arg, .. } => {
                 fun.fv_empty_index(index) && arg.fv_empty_index(index)
@@ -216,7 +216,7 @@ impl TermData {
             TermData::Refl { .. } => false,
             TermData::Promote { .. } => false,
             TermData::Cast { .. } => true,
-            TermData::EqInduct { .. } => false,
+            TermData::Subst { .. } => false,
             TermData::Apply { .. } => true,
             TermData::Bound { .. }
             | TermData::Free { .. }
@@ -290,23 +290,21 @@ impl TermData {
                 let input = input.to_string_with_context(ctx);
                 format!("rfl {}", input)
             }
-            TermData::Promote { equation } => {
+            TermData::Promote { variant, equation, lhs, rhs } => {
                 let equation_str = equation.to_string_with_context(ctx.clone());
-                format!("ϑ {{ {} }}", equation_str)
+                let lhs_str = lhs.to_string_with_context(ctx.clone());
+                let rhs_str = rhs.to_string_with_context(ctx);
+                format!("ϑ{} {{ {}, {}, {} }}", *variant, equation_str, lhs_str, rhs_str)
             }
             TermData::Cast { witness, evidence } => {
                 let equation_str = evidence.to_string_with_context(ctx.clone());
                 let witness = witness.to_string_with_context(ctx);
                 format!("φ {{{}, {}}}", witness, equation_str)
             }
-            TermData::EqInduct { domain, predicate, lhs, rhs, equation, case } => {
-                let domain_str = domain.to_string_with_context(ctx.clone());
-                let predicate_str = predicate.to_string_with_context(ctx.clone());
-                let lhs_str = lhs.to_string_with_context(ctx.clone());
-                let rhs_str = rhs.to_string_with_context(ctx.clone());
+            TermData::Subst { equation, predicate } => {
                 let equation_str = equation.to_string_with_context(ctx.clone());
-                let case_str = case.to_string_with_context(ctx);
-                format!("J {{ {}, {}, {}, {}, {}, {} }}", domain_str, predicate_str, lhs_str, rhs_str, equation_str, case_str)
+                let predicate_str = predicate.to_string_with_context(ctx.clone());
+                format!("𝜓 {{ {}, {} }}", equation_str, predicate_str)
             }
             TermData::Apply { mode, fun, arg, .. } => {
                 let operator = match mode {
@@ -416,18 +414,16 @@ impl TermExt for Term {
                 let evidence = evidence.shift(db, amount, cutoff);
                 db.make_term(TermData::Cast { witness, evidence })
             }
-            TermData::Promote { equation } => {
+            TermData::Promote { variant, equation, lhs, rhs } => {
                 let equation = equation.shift(db, amount, cutoff);
-                db.make_term(TermData::Promote { equation })
-            }
-            TermData::EqInduct { domain, predicate, lhs, rhs, equation, case } => {
-                let domain = domain.shift(db, amount, cutoff);
-                let predicate = predicate.shift(db, amount, cutoff);
                 let lhs = lhs.shift(db, amount, cutoff);
                 let rhs = rhs.shift(db, amount, cutoff);
+                db.make_term(TermData::Promote { variant, equation, lhs, rhs })
+            }
+            TermData::Subst { predicate, equation } => {
+                let predicate = predicate.shift(db, amount, cutoff);
                 let equation = equation.shift(db, amount, cutoff);
-                let case = case.shift(db, amount, cutoff);
-                db.make_term(TermData::EqInduct { domain, predicate, lhs, rhs, equation, case })
+                db.make_term(TermData::Subst { predicate, equation })
             }
             TermData::Apply { sort, mode, fun, arg } => {
                 let fun = fun.shift(db, amount, cutoff);

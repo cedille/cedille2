@@ -189,17 +189,23 @@ fn to_term(db: &mut Database, mut ctx: Vector<Symbol>, sort: Sort, s: Sexp) -> O
                     Some(term)
                 }
                 "cast" | "phi" => {
-                    let witness = xs.get(2)?.clone();
+                    let witness = xs.get(1)?.clone();
                     let witness = to_term(db, ctx.clone(), sort, witness)?;
-                    let evidence = xs.get(3)?.clone();
+                    let evidence = xs.get(2)?.clone();
                     let evidence = to_term(db, ctx, sort, evidence)?;
                     let term = db.make_term(TermData::Cast { witness, evidence });
                     Some(term)
                 }
                 "promote" | "pr" | "theta" => {
-                    let equation = xs.get(1)?.clone();
-                    let equation = to_term(db, ctx, sort, equation)?;
-                    let term = db.make_term(TermData::Promote { equation });
+                    let variant = xs.get(1)?.sym()?;
+                    let variant = to_variant(variant)?;
+                    let equation = xs.get(2)?.clone();
+                    let equation = to_term(db, ctx.clone(), sort, equation)?;
+                    let lhs = xs.get(3)?.clone();
+                    let lhs = to_term(db, ctx.clone(), sort, lhs)?;
+                    let rhs = xs.get(4)?.clone();
+                    let rhs = to_term(db, ctx, sort, rhs)?;
+                    let term = db.make_term(TermData::Promote { variant, equation, lhs, rhs });
                     Some(term)
                 }
                 "subst" | "psi" => {

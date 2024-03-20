@@ -1,5 +1,4 @@
 
-use std::cell::OnceCell;
 use std::borrow::Borrow;
 
 use imbl::Vector;
@@ -18,48 +17,26 @@ impl PerformAction for Value {
     fn perform(self, db: &Database, action: Action) -> Self {
         match action.clone() {
             Action::Apply(arg_mode, arg) => {
-                match self.as_ref() {
-                    ValueData::Lambda { mode, name, closure, .. } => {
-                        let entry = EnvEntry::new(*name, *mode, arg);
-                        closure.eval(db, entry)
-                    }
-                    _ => self.push_action(action)
-                }
+                let ValueData::Lambda { mode, name, closure, .. } = self.as_ref()
+                    else { return self.push_action(action) };
+                let entry = EnvEntry::new(*name, *mode, arg);
+                closure.eval(db, entry)
             }
             Action::Project(variant) => {
-                match self.as_ref() {
-                    ValueData::Pair { first, second, .. } => {
-                        if variant == 1 { first.clone() }
-                        else { second.clone() }
-                    }
-                    _ => self.push_action(action)
-                }
+                let ValueData::Pair { first, second, .. } = self.as_ref()
+                    else { return self.push_action(action) };
+                if variant == 1 { first.clone() } else { second.clone() }
             }
-            Action::EqInduct(data) => {
-                match self.as_ref() {
-                    ValueData::Refl { input } => {
-                        let case = data.case.force(db);
-                        let action = Action::Apply(Mode::Erased, input.clone());
-                        case.perform(db, action)
-                    }
-                    _ => self.push_action(action)
-                }
+            Action::Subst(predicate) => {
+                let ValueData::Refl { input } = self.as_ref()
+                    else { return self.push_action(action) };
+                let predicate = predicate.perform(db, Action::Apply(Mode::TypeLevel, input.clone()));
+                Value::id(db, Sort::Term, Mode::Free, predicate)
             }
-            Action::Promote => {
-                match self.as_ref() {
-                    ValueData::Refl { input } => {
-                        let value = input.force(db);
-                        if let Some(inner) = value.peel_proj() {
-                            let env = input.env.clone();
-                            let code = quote(db, inner.clone(), env.len().into());
-                            let lazy = LazyValueData::lazy(db, env, code);
-                            lazy.set(inner).ok(); // It is possible we've already forced this lazy value
-                            return ValueData::Refl { input: lazy }.rced();
-                        }
-                        self.push_action(action)
-                    }
-                    _ => self.push_action(action)
-                }
+            Action::Promote(variant, lhs, rhs) => {
+                let ValueData::Refl { input } = self.as_ref()
+                    else { return self.push_action(action) };
+                ValueData::Refl { input: lhs }.rced()
             }
             Action::Separate => self.push_action(action),
         }
@@ -180,19 +157,16 @@ pub fn eval(db: &Database, env: Env, term: Term) -> Value {
             let spine = Vector::new();
             ValueData::Cast { witness, evidence, spine }.rced()
         }
-        TermData::Promote { equation } => {
-            let equation = eval(db, env, equation);
-            equation.perform(db, Action::Promote)
-        }
-        TermData::EqInduct { domain, predicate, lhs, rhs, equation, case } => {
-            let domain = LazyValueData::lazy(db, env.clone(), domain);
-            let predicate = LazyValueData::lazy(db, env.clone(), predicate);
+        TermData::Promote { variant, equation, lhs, rhs } => {
             let lhs = LazyValueData::lazy(db, env.clone(), lhs);
             let rhs = LazyValueData::lazy(db, env.clone(), rhs);
+            let equation = eval(db, env, equation);
+            equation.perform(db, Action::Promote(variant, lhs, rhs))
+        }
+        TermData::Subst { predicate, equation } => {
+            let predicate = eval(db, env.clone(), predicate);
             let equation = eval(db, env.clone(), equation);
-            let case = LazyValueData::lazy(db, env.clone(), case);
-            let data = EqInductData { domain, predicate, lhs, rhs, case }.rced();
-            equation.perform(db, Action::EqInduct(data))
+            equation.perform(db, Action::Subst(predicate))
         }
         TermData::Apply { mode, fun, arg, .. } => {
             let fun = eval(db, env.clone(), fun);
@@ -252,21 +226,15 @@ fn quote_spine(db: &Database, head: Term, spine: Spine, level: Level) -> Term {
             Action::Project(variant) => {
                 db.make_term(TermData::Project { variant, body: acc })
             }
-            Action::EqInduct(data) => {
-                let domain = data.domain.force(db);
-                let domain = quote(db, domain, level);
-                let predicate = data.predicate.force(db);
+            Action::Subst(predicate) => {
                 let predicate = quote(db, predicate, level);
-                let lhs = data.lhs.force(db);
-                let lhs = quote(db, lhs, level);
-                let rhs = data.rhs.force(db);
-                let rhs = quote(db, rhs, level);
-                let equation = acc;
-                let case = data.case.force(db);
-                let case = quote(db, case, level);
-                db.make_term(TermData::EqInduct { domain, predicate, lhs, rhs, equation, case })
+                db.make_term(TermData::Subst { predicate, equation: acc })
             }
-            Action::Promote => db.make_term(TermData::Promote { equation: acc }),
+            Action::Promote(variant, lhs, rhs) => {
+                let lhs = quote(db, lhs.force(db), level);
+                let rhs = quote(db, rhs.force(db), level);
+                db.make_term(TermData::Promote { variant, lhs, rhs, equation: acc })
+            }
             Action::Separate => db.make_term(TermData::Separate { equation: acc })
         }
     })
@@ -345,8 +313,8 @@ pub(crate) fn erase_spine(db: &Database, spine: Spine) -> Spine {
                 result.push_back(Action::Apply(m, v));
             }
             Action::Project(_) => { },
-            Action::EqInduct(_) => { },
-            Action::Promote => { },
+            Action::Subst(_) => { },
+            Action::Promote(_, _, _) => { },
             Action::Separate => { },
         }
     }
@@ -367,9 +335,9 @@ pub fn erase(db: &Database, level: Level, value: Value) -> Value {
             ValueData::Reference { sort, id, spine, unfolded }.rced()
         }
         ValueData::Pair { first, .. } => erase(db, level, first),
-        ValueData::Refl { .. } => Value::id(db, Sort::Term, Mode::Free),
+        ValueData::Refl { .. } => Value::id(db, Sort::Term, Mode::Free, ValueData::SuperStar.rced()),
         ValueData::Cast { spine, .. } => {
-            let result = Value::id(db, Sort::Term, Mode::Free);
+            let result = Value::id(db, Sort::Term, Mode::Free, ValueData::SuperStar.rced());
             let spine = erase_spine(db, spine);
             result.perform_spine(db, spine)
         }

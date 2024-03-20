@@ -51,40 +51,41 @@ pub fn infer(db: &mut Database, ctx: Context, t: Term) -> Result<Value, Term> {
             Ok(ValueData::Equality { left, right, anno }.rced())
         }
         TermData::Cast { witness, evidence } => todo!(),
-        TermData::Promote { equation } => {
-            let equation_ty = infer(db, ctx.clone(), equation.clone())?;
-            let equation_ty_borrow: &ValueData = equation_ty.borrow();
-            match equation_ty_borrow.clone() {
-                ValueData::Equality { left, right, anno } => {
-                    let level: Level = ctx.clone().env.len().into();
-                    let left_value = left.force(db);
-                    let left_value = left_value.peel_proj()
-                        .ok_or_else(|| quote(db, left_value, level))?;
-                    let right_value = right.force(db);
-                    let right_value = right_value.peel_proj()
-                        .ok_or_else(|| quote(db, right_value, level))?;
-                    let left = quote(db, left_value, level);
-                    let right = quote(db, right_value, level);
-                    let left_ty = infer(db, ctx.clone(), left.clone())?;
-                    check(db, ctx.clone(), right.clone(), left_ty.clone())?;
-                    let left_ty_borrow: &ValueData = left_ty.borrow();
-                    match left_ty_borrow.clone() {
-                        ValueData::Intersect { name, first, second } => {
-                            let anno_term = quote(db, anno.clone(), level);
-                            try_unify(db, level, anno.clone(), first.clone(), anno_term)?;
-                            let anno = ValueData::Intersect { name, first, second }.rced();
-                            let left = LazyValueData::lazy(db, ctx.env.clone(), left);
-                            let right = LazyValueData::lazy(db, ctx.env, right);
-                            let ty = ValueData::Equality { left, right, anno }.rced();
-                            Ok(ty)
-                        }
-                        _ => Err(left)
-                    }
-                }
-                _ => Err(equation)
-            }
+        TermData::Promote { variant, equation, lhs, rhs } => {
+            todo!()
+            // let equation_ty = infer(db, ctx.clone(), equation.clone())?;
+            // let equation_ty_borrow: &ValueData = equation_ty.borrow();
+            // match equation_ty_borrow.clone() {
+            //     ValueData::Equality { left, right, anno } => {
+            //         let level: Level = ctx.clone().env.len().into();
+            //         let left_value = left.force(db);
+            //         let left_value = left_value.peel_proj()
+            //             .ok_or_else(|| quote(db, left_value, level))?;
+            //         let right_value = right.force(db);
+            //         let right_value = right_value.peel_proj()
+            //             .ok_or_else(|| quote(db, right_value, level))?;
+            //         let left = quote(db, left_value, level);
+            //         let right = quote(db, right_value, level);
+            //         let left_ty = infer(db, ctx.clone(), left.clone())?;
+            //         check(db, ctx.clone(), right.clone(), left_ty.clone())?;
+            //         let left_ty_borrow: &ValueData = left_ty.borrow();
+            //         match left_ty_borrow.clone() {
+            //             ValueData::Intersect { name, first, second } => {
+            //                 let anno_term = quote(db, anno.clone(), level);
+            //                 try_unify(db, level, anno.clone(), first.clone(), anno_term)?;
+            //                 let anno = ValueData::Intersect { name, first, second }.rced();
+            //                 let left = LazyValueData::lazy(db, ctx.env.clone(), left);
+            //                 let right = LazyValueData::lazy(db, ctx.env, right);
+            //                 let ty = ValueData::Equality { left, right, anno }.rced();
+            //                 Ok(ty)
+            //             }
+            //             _ => Err(left)
+            //         }
+            //     }
+            //     _ => Err(equation)
+            // }
         }
-        TermData::EqInduct { domain, predicate, lhs, rhs, equation, case } => todo!(),
+        TermData::Subst { predicate, equation } => todo!(),
         TermData::Apply { sort, mode:m1, fun, arg } => {
             let fun_ty = infer(db, ctx.clone(), fun.clone())?;
             let fun_ty_borrow: &ValueData = fun_ty.borrow();

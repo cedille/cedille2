@@ -14,31 +14,11 @@ use crate::database::Database;
 pub type Spine = Vector<Action>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EqInductData {
-    pub domain: LazyValue,
-    pub predicate: LazyValue,
-    pub lhs: LazyValue,
-    pub rhs: LazyValue,
-    pub case: LazyValue
-}
-
-impl fmt::Display for EqInductData {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "J({}, {}, {}, {}, {})",
-            self.domain,
-            self.predicate,
-            self.lhs,
-            self.rhs,
-            self.case)
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
     Apply(Mode, LazyValue),
     Project(usize),
-    EqInduct(Rc<EqInductData>),
-    Promote,
+    Subst(Value),
+    Promote(usize, LazyValue, LazyValue),
     Separate
 }
 
@@ -47,8 +27,8 @@ impl fmt::Display for Action {
         match self {
             Action::Apply(m, v) => write!(f, "@{} {}", m, v),
             Action::Project(p) => write!(f, ".{}", p),
-            a @ Action::EqInduct(_) => a.fmt(f),
-            Action::Promote => write!(f, "ϑ"),
+            Action::Subst(t) => write!(f, "𝜓{{{}}}", t),
+            Action::Promote(p, a, b) => write!(f, "ϑ{{{},{},{}}}", p, a, b),
             Action::Separate => write!(f, "δ"),
         }
     }
@@ -150,9 +130,9 @@ impl LazyValueData {
     //     self.value.get().cloned()
     // }
 
-    pub(crate) fn set(&self, value: Value) -> Result<(), Value> {
-        self.value.set(value)
-    }
+    // pub(crate) fn set(&self, value: Value) -> Result<(), Value> {
+    //     self.value.set(value)
+    // }
 }
 
 impl std::hash::Hash for LazyValueData {
@@ -268,13 +248,11 @@ impl fmt::Display for ValueData {
 
 pub trait ValueOps {
     fn var(sort: Sort, level: impl Into<Level>) -> Self;
-    fn id(db: &Database, sort: Sort, mode: Mode) -> Self;
+    fn id(db: &Database, sort: Sort, mode: Mode, domain: Value) -> Self;
     fn sort(&self) -> Sort;
     fn push_action(&self, action: Action) -> Self;
     fn get_spine(&self) -> Spine;
     fn set_spine(&self, spine: Spine) -> Value;
-    fn peel_proj(&self) -> Option<Self>
-        where Self : Sized;
 }
 
 impl ValueOps for Value {
@@ -282,9 +260,8 @@ impl ValueOps for Value {
         ValueData::Variable { sort, level: level.into(), spine: Vector::new() }.rced()
     }
 
-    fn id(db: &Database, sort: Sort, mode: Mode) -> Value {
+    fn id(db: &Database, sort: Sort, mode: Mode, domain: Value) -> Value {
         let name = Symbol::from("x");
-        let domain = ValueData::SuperStar.rced();
         let env = Vector::new();
         let code = db.make_term(TermData::Bound { sort, index: 0.into() });
         let erased = false;
@@ -342,20 +319,6 @@ impl ValueOps for Value {
             }
             v => v.rced()
         }
-    }
-
-    fn peel_proj(&self) -> Option<Value> {
-        let spine = self.get_spine();
-        if let Some(first) = spine.last() {
-            match first {
-                Action::Project(_) => {
-                    let mut spine = spine.clone();
-                    spine.pop_back();
-                    Some(self.set_spine(spine))
-                }
-                _ => None
-            }
-        } else { None }
     }
 }
 

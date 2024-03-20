@@ -926,161 +926,95 @@ fn infer(db: &mut Database, ctx: Context, term: &syntax::Term) -> Result<(Term, 
             Ok((result, result_type))
         }
 
-        syntax::Term::Promote { span, equation } => {
-            let (equation_elabed, eq_type) = infer(db, ctx.clone(), equation)?;
-            let eq_type_unfolded = unfold_to_head(db, eq_type);
-            match eq_type_unfolded.as_ref() {
-                ValueData::Equality { left, right, .. } => {
-                    // let left_forced = left.force(db);
-                    // println!("{:#?}", left_forced);
-                    let left_value = left.force(db)
-                        .peel_proj()
-                        .ok_or(ElabError::Unknown(3))?;
-                    let right_value = right.force(db)
-                        .peel_proj()
-                        .ok_or(ElabError::Unknown(4))?;
-                    let left = quote(db, left_value, ctx.env_lvl());
-                    let right = quote(db, right_value, ctx.env_lvl());
-                    let left_ty = core::infer(db, ctx.core_ctx(), left.clone())
-                        .map_err(|_| ElabError::Unknown(5))?;
-                    let left_ty = unfold_to_head(db, left_ty);
-                    match left_ty.as_ref() {
-                        ValueData::Intersect { .. } => {
-                            core::check(db, ctx.core_ctx(), right.clone(), left_ty.clone())
-                                .map_err(|_| ElabError::Unknown(6))?;
-                            let result = db.make_term(TermData::Promote {
-                                equation: equation_elabed
-                            });
-                            let left = LazyValueData::lazy(db, ctx.env(), left);
-                            let right = LazyValueData::lazy(db, ctx.env(), right);
-                            let result_ty = ValueData::Equality {
-                                left,
-                                right,
-                                anno: left_ty
-                            }.rced();
-                            Ok((result, result_ty))
-                        }
-                        _ => Err(ElabError::ExpectedIntersectionType {
-                            src: db.text(ctx.module),
-                            span: source_span(db, ctx.module, *span),
-                            inferred_type: quote(db, left_ty, ctx.env_lvl()).to_string()
-                        })
-                    }
-                }
-                _ => Err(ElabError::ExpectedEqualityType)
-            }
+        syntax::Term::Promote { span, variant, equation, lhs, rhs } => {
+            let (lhs_elabed, inter_type) = infer(db, ctx.clone(), lhs)?;
+            let rhs_elabed = check(db, ctx.clone(), rhs, inter_type.clone())?;
+            let inter_type = unfold_to_head(db, inter_type);
+            let ValueData::Intersect { first, second, .. } = inter_type.as_ref()
+                else { return Err(ElabError::ExpectedIntersectionType { 
+                    src: db.text(ctx.module),
+                    span: source_span(db, ctx.module, lhs.span()),
+                    inferred_type: quote(db, inter_type, ctx.env_lvl()).to_string() 
+                })
+            };
+            let equation_elabed = if *variant == 1 {
+                let eq_lhs = db.make_term(TermData::Project { variant: 1, body: lhs_elabed.clone() });
+                let eq_lhs = LazyValueData::lazy(db, ctx.env(), eq_lhs);
+                let eq_rhs = db.make_term(TermData::Project { variant: 1, body: rhs_elabed.clone() });
+                let eq_rhs = LazyValueData::lazy(db, ctx.env(), eq_rhs);
+                let eq_anno = first.clone();
+                let eq = ValueData::Equality { left: eq_lhs, right: eq_rhs, anno: eq_anno }.rced();
+                check(db, ctx.clone(), equation, eq)?
+            } else {
+                let eq_lhs = db.make_term(TermData::Project { variant: 2, body: lhs_elabed.clone() });
+                let eq_lhs = LazyValueData::lazy(db, ctx.env(), eq_lhs);
+                let eq_rhs = db.make_term(TermData::Project { variant: 2, body: rhs_elabed.clone() });
+                let eq_rhs = LazyValueData::lazy(db, ctx.env(), eq_rhs);
+                let entry = EnvEntry::new(Symbol::default(), Mode::TypeLevel, LazyValueData::var(db, Sort::Type, 0.into()));
+                let eq_anno = second.clone().eval(db, entry);
+                let eq = ValueData::Equality { left: eq_lhs, right: eq_rhs, anno: eq_anno }.rced();
+                check(db, ctx.clone(), equation, eq)?
+            };
+            let result = db.make_term(TermData::Promote {
+                variant: *variant,
+                equation: equation_elabed,
+                lhs: lhs_elabed.clone(),
+                rhs: rhs_elabed.clone()
+            });
+            let left = LazyValueData::lazy(db, ctx.env(), lhs_elabed);
+            let right = LazyValueData::lazy(db, ctx.env(), rhs_elabed);
+            let result_ty = ValueData::Equality { left, right, anno: inter_type }.rced();
+            Ok((result, result_ty))
         }
 
-        syntax::Term::EqInduct { span, domain, predicate, lhs, rhs, equation, case } => {
-            let domain_ctx = ctx.clone().phase_shift(Mode::TypeLevel, Sort::Type);
-            let domain_elab = check(db, domain_ctx, domain, ValueData::Star.rced())?;
-            let domain_value = eval(db, ctx.env(), domain_elab.clone());
-            
-            let domain_elab1 = shift(db, domain_elab.clone(), 1, 0);
-            let domain_elab2 = shift(db, domain_elab.clone(), 2, 0);
-            let predicate_ty_eq_lhs = db.make_term(TermData::Bound { sort: Sort::Term, index: 1.into() });
-            let predicate_ty_eq_rhs = db.make_term(TermData::Bound { sort: Sort::Term, index: 0.into() });
-            let predicate_ty_eq_domain = db.make_term(TermData::Equality { 
-                left: predicate_ty_eq_lhs,
-                right: predicate_ty_eq_rhs,
-                anno: domain_elab2.clone()
-            });
-            let predicate_ty_codomain = db.make_term(TermData::Star);
-            let predicate_ty_layer2 = db.make_term(TermData::Pi {
+        syntax::Term::Subst { span, predicate, equation } => {
+            let (equation_elabed, eq_type) = infer(db, ctx.clone(), equation)?;
+            let ValueData::Equality { left, right, anno } = eq_type.as_ref()
+                else { return Err(ElabError::ExpectedEqualityType) };
+
+            let inner_ty_value = ValueData::Pi {
                 sort: Sort::Kind,
                 mode: Mode::TypeLevel,
-                name: Symbol::from("gen/e"),
-                domain: predicate_ty_eq_domain,
-                body: predicate_ty_codomain,
-            });
-            let predicate_ty_layer1 = db.make_term(TermData::Pi {
+                name: Symbol::default(),
+                domain: ValueData::Equality {
+                    left: left.clone(),
+                    right: LazyValueData::var(db, Sort::Term, ctx.env_lvl()),
+                    anno: anno.clone()
+                }.rced(),
+                closure: Closure::new(Env::new(), db.make_term(TermData::Star)),
+            }.rced();
+            let inner_ty = quote(db, inner_ty_value, ctx.env_lvl() + 1);
+
+            let predicate_ty = ValueData::Pi {
                 sort: Sort::Kind,
                 mode: Mode::TypeLevel,
-                name: Symbol::from("gen/y"),
-                domain: domain_elab1.clone(),
-                body: predicate_ty_layer2,
+                name: Symbol::default(),
+                domain: anno.clone(),
+                closure: Closure::new(ctx.env(), inner_ty),
+            }.rced();
+
+            let predicate_elabed = check(db, ctx.clone().phase_shift(Mode::TypeLevel, Sort::Type), predicate, predicate_ty)?;
+
+            let result = db.make_term(TermData::Subst {
+                predicate: predicate_elabed.clone(),
+                equation: equation_elabed.clone()
             });
-            let predicate_ty = db.make_term(TermData::Pi {
-                sort: Sort::Kind,
-                mode: Mode::TypeLevel,
-                name: Symbol::from("gen/x"),
-                domain: domain_elab.clone(),
-                body: predicate_ty_layer1,
-            });
-            let predicate_ty_value = eval(db, ctx.env(), predicate_ty);
-            let predicate_ctx = ctx.clone().phase_shift(Mode::TypeLevel, Sort::Type);
-            let predicate_elab = check(db, predicate_ctx, predicate, predicate_ty_value)?;
-
-            let hs_ctx = ctx.clone().phase_shift(Mode::Erased, Sort::Term);
-            let lhs_elab = check(db, hs_ctx.clone(), lhs, domain_value.clone())?;
-            let rhs_elab = check(db, hs_ctx, rhs, domain_value)?;
-
-            let equation_ty = db.make_term(TermData::Equality { 
-                left: lhs_elab.clone(),
-                right: rhs_elab.clone(),
-                anno: domain_elab.clone()
-            });
-            let equation_ty_value = eval(db, ctx.env(), equation_ty);
-            let equation_ctx = ctx.clone().phase_shift(Mode::Free, Sort::Term);
-            let equation_elab = check(db, equation_ctx, equation, equation_ty_value)?;
-
-            fn predicate_app(db: &mut Database, p: Term, x: Term, y: Term, e: Term) -> Term {
-                let layer1 = db.make_term(TermData::Apply {
-                    sort: Sort::Type,
-                    mode: Mode::TypeLevel,
-                    fun: p,
-                    arg: x,
-                });
-                let layer2 = db.make_term(TermData::Apply {
-                    sort: Sort::Type,
-                    mode: Mode::TypeLevel,
-                    fun: layer1,
-                    arg: y,
-                });
-                db.make_term(TermData::Apply {
-                    sort: Sort::Type,
-                    mode: Mode::TypeLevel,
-                    fun: layer2,
-                    arg: e,
-                })
-            }
-
-            let predicate_elab1 = shift(db, predicate_elab.clone(), 1, 0);
-            let case_ty_var = db.make_term(TermData::Bound { sort:Sort::Type, index: 0.into() });
-            let case_ty_refl = db.make_term(TermData::Refl { input: case_ty_var.clone() });
-            let case_ty_body = predicate_app(db, 
-                predicate_elab1,
-                case_ty_var.clone(),
-                case_ty_var.clone(),
-                case_ty_refl.clone());
-            let case_ty = db.make_term(TermData::Pi {
+            let left_refl = db.make_term(TermData::Refl { input: left.code.clone() });
+            let domain_ty = eval(db, ctx.env(), predicate_elabed.clone())
+                .perform(db, Action::Apply(Mode::TypeLevel, left.clone()))
+                .perform(db, Action::Apply(Mode::TypeLevel, LazyValueData::lazy(db, left.env.clone(), left_refl)));
+            let codomain_ty = eval(db, ctx.env(), predicate_elabed.clone())
+                .perform(db, Action::Apply(Mode::TypeLevel, right.clone()))
+                .perform(db, Action::Apply(Mode::TypeLevel, LazyValueData::lazy(db, ctx.env(), equation_elabed)));
+            let result_ty = ValueData::Pi {
                 sort: Sort::Type,
-                mode: Mode::Erased,
-                name: Symbol::from("i"),
-                domain: domain_elab.clone(),
-                body: case_ty_body,
-            });
-            let case_ty_value = eval(db, ctx.env(), case_ty);
-            let case_ctx = ctx.clone().phase_shift(Mode::Free, Sort::Term);
-            let case_elab = check(db, case_ctx, case, case_ty_value)?;
-
-            let result_ty = predicate_app(db,
-                predicate_elab.clone(),
-                lhs_elab.clone(),
-                rhs_elab.clone(),
-                equation_elab.clone());
-            let result_ty_value = eval(db, ctx.env(), result_ty);
-
-            let result = db.make_term(TermData::EqInduct {
-                domain: domain_elab,
-                predicate: predicate_elab,
-                lhs: lhs_elab,
-                rhs: rhs_elab,
-                equation: equation_elab,
-                case: case_elab,
-            });
-
-            Ok((result, result_ty_value))
+                mode: Mode::Free,
+                name: Symbol::default(),
+                domain: domain_ty,
+                closure: Closure::new(ctx.env(), quote(db, codomain_ty, ctx.env_lvl() + 1)),
+            }.rced();
+            
+            Ok((result, result_ty))
         }
 
         syntax::Term::Cast { witness, evidence, .. } => {
@@ -1261,7 +1195,7 @@ fn infer_sort(db: &Database, ctx: Context, term: &syntax::Term) -> Result<Sort, 
         | syntax::Term::Refl { .. }
         | syntax::Term::Cast { .. }
         | syntax::Term::Promote { .. }
-        | syntax::Term::EqInduct { .. } => Sort::Term,
+        | syntax::Term::Subst { .. } => Sort::Term,
         syntax::Term::Apply { fun, .. } => infer_sort(db, ctx, fun)?,
         syntax::Term::Variable { id, span } => lookup_sort(db, &ctx, *span, id)?,
         syntax::Term::Hole { .. } => Sort::Unknown,
@@ -1390,87 +1324,87 @@ fn source_span(db: &Database, module: Symbol, span: Span) -> SourceSpan {
     SourceSpan::new(start.into(), len.into())
 }
 
-fn shift(db: &mut Database, term: Term, amount: usize, cutoff: usize) -> Term {
-    let borrow: &TermData = term.borrow();
-    match borrow.clone() {
-        TermData::Lambda { sort, mode, name, domain, body } => {
-            let domain = shift(db, domain, amount, cutoff);
-            let body = shift(db, body, amount, cutoff + 1);
-            db.make_term(TermData::Lambda { sort, mode, name, domain, body })
-        }
-        TermData::Let { sort, name, let_body, body } => {
-            let let_body = shift(db, let_body, amount, cutoff);
-            let body = shift(db, body, amount, cutoff + 1);
-            db.make_term(TermData::Let { sort, name, let_body, body })
-        }
-        TermData::Pi { sort, mode, name, domain, body } => {
-            let domain = shift(db, domain, amount, cutoff);
-            let body = shift(db, body, amount, cutoff + 1);
-            db.make_term(TermData::Pi { sort, mode, name, domain, body })
-        }
-        TermData::Intersect { name, first, second } => {
-            let first = shift(db, first, amount, cutoff);
-            let second = shift(db, second, amount, cutoff + 1);
-            db.make_term(TermData::Intersect { name, first, second })
-        }
-        TermData::Equality { left, right, anno } => {
-            let left = shift(db, left, amount, cutoff);
-            let right = shift(db, right, amount, cutoff);
-            let anno = shift(db, anno, amount, cutoff);
-            db.make_term(TermData::Equality { left, right, anno })
-        }
-        TermData::Project { variant, body } => {
-            let body = shift(db, body, amount, cutoff);
-            db.make_term(TermData::Project { variant, body })
-        }
-        TermData::Pair { first, second, anno } => {
-            let first = shift(db, first, amount, cutoff);
-            let second = shift(db, second, amount, cutoff);
-            let anno = shift(db, anno, amount, cutoff);
-            db.make_term(TermData::Pair { first, second, anno })
-        }
-        TermData::Separate { equation } => {
-            let equation = shift(db, equation, amount, cutoff);
-            db.make_term(TermData::Separate { equation })
-        }
-        TermData::Refl { input } => {
-            let input = shift(db, input, amount, cutoff);
-            db.make_term(TermData::Refl { input })
-        }
-        TermData::Cast { witness, evidence } => {
-            let witness = shift(db, witness, amount, cutoff);
-            let evidence = shift(db, evidence, amount, cutoff);
-            db.make_term(TermData::Cast { witness, evidence })
-        }
-        TermData::Promote { equation } => {
-            let equation = shift(db, equation, amount, cutoff);
-            db.make_term(TermData::Promote { equation })
-        }
-        TermData::EqInduct { domain, predicate, lhs, rhs, equation, case } => {
-            let domain = shift(db, domain, amount, cutoff);
-            let predicate = shift(db, predicate, amount, cutoff);
-            let lhs = shift(db, lhs, amount, cutoff);
-            let rhs = shift(db, rhs, amount, cutoff);
-            let equation = shift(db, equation, amount, cutoff);
-            let case = shift(db, case, amount, cutoff);
-            db.make_term(TermData::EqInduct { domain, predicate, lhs, rhs, equation, case })
-        }
-        TermData::Apply { sort, mode, fun, arg } => {
-            let fun = shift(db, fun, amount, cutoff);
-            let arg = shift(db, arg, amount, cutoff);
-            db.make_term(TermData::Apply { sort, mode, fun, arg })
-        }
-        TermData::Bound { sort, index } => {
-            let index = if *index < cutoff { index } else { index + amount };
-            db.make_term(TermData::Bound { sort, index })
-        }
-        TermData::Free { .. } => term,
-        TermData::Meta { .. } => term,
-        TermData::InsertedMeta { .. } => term,
-        TermData::Star => term,
-        TermData::SuperStar => term,
-    }
-}
+// fn shift(db: &mut Database, term: Term, amount: usize, cutoff: usize) -> Term {
+//     let borrow: &TermData = term.borrow();
+//     match borrow.clone() {
+//         TermData::Lambda { sort, mode, name, domain, body } => {
+//             let domain = shift(db, domain, amount, cutoff);
+//             let body = shift(db, body, amount, cutoff + 1);
+//             db.make_term(TermData::Lambda { sort, mode, name, domain, body })
+//         }
+//         TermData::Let { sort, name, let_body, body } => {
+//             let let_body = shift(db, let_body, amount, cutoff);
+//             let body = shift(db, body, amount, cutoff + 1);
+//             db.make_term(TermData::Let { sort, name, let_body, body })
+//         }
+//         TermData::Pi { sort, mode, name, domain, body } => {
+//             let domain = shift(db, domain, amount, cutoff);
+//             let body = shift(db, body, amount, cutoff + 1);
+//             db.make_term(TermData::Pi { sort, mode, name, domain, body })
+//         }
+//         TermData::Intersect { name, first, second } => {
+//             let first = shift(db, first, amount, cutoff);
+//             let second = shift(db, second, amount, cutoff + 1);
+//             db.make_term(TermData::Intersect { name, first, second })
+//         }
+//         TermData::Equality { left, right, anno } => {
+//             let left = shift(db, left, amount, cutoff);
+//             let right = shift(db, right, amount, cutoff);
+//             let anno = shift(db, anno, amount, cutoff);
+//             db.make_term(TermData::Equality { left, right, anno })
+//         }
+//         TermData::Project { variant, body } => {
+//             let body = shift(db, body, amount, cutoff);
+//             db.make_term(TermData::Project { variant, body })
+//         }
+//         TermData::Pair { first, second, anno } => {
+//             let first = shift(db, first, amount, cutoff);
+//             let second = shift(db, second, amount, cutoff);
+//             let anno = shift(db, anno, amount, cutoff);
+//             db.make_term(TermData::Pair { first, second, anno })
+//         }
+//         TermData::Separate { equation } => {
+//             let equation = shift(db, equation, amount, cutoff);
+//             db.make_term(TermData::Separate { equation })
+//         }
+//         TermData::Refl { input } => {
+//             let input = shift(db, input, amount, cutoff);
+//             db.make_term(TermData::Refl { input })
+//         }
+//         TermData::Cast { witness, evidence } => {
+//             let witness = shift(db, witness, amount, cutoff);
+//             let evidence = shift(db, evidence, amount, cutoff);
+//             db.make_term(TermData::Cast { witness, evidence })
+//         }
+//         TermData::Promote { equation } => {
+//             let equation = shift(db, equation, amount, cutoff);
+//             db.make_term(TermData::Promote { equation })
+//         }
+//         TermData::EqInduct { domain, predicate, lhs, rhs, equation, case } => {
+//             let domain = shift(db, domain, amount, cutoff);
+//             let predicate = shift(db, predicate, amount, cutoff);
+//             let lhs = shift(db, lhs, amount, cutoff);
+//             let rhs = shift(db, rhs, amount, cutoff);
+//             let equation = shift(db, equation, amount, cutoff);
+//             let case = shift(db, case, amount, cutoff);
+//             db.make_term(TermData::EqInduct { domain, predicate, lhs, rhs, equation, case })
+//         }
+//         TermData::Apply { sort, mode, fun, arg } => {
+//             let fun = shift(db, fun, amount, cutoff);
+//             let arg = shift(db, arg, amount, cutoff);
+//             db.make_term(TermData::Apply { sort, mode, fun, arg })
+//         }
+//         TermData::Bound { sort, index } => {
+//             let index = if *index < cutoff { index } else { index + amount };
+//             db.make_term(TermData::Bound { sort, index })
+//         }
+//         TermData::Free { .. } => term,
+//         TermData::Meta { .. } => term,
+//         TermData::InsertedMeta { .. } => term,
+//         TermData::Star => term,
+//         TermData::SuperStar => term,
+//     }
+// }
 
 fn unfold_all(db: &mut Database, term : Term) -> Term {
     let borrow: &TermData = term.borrow();
@@ -1524,18 +1458,16 @@ fn unfold_all(db: &mut Database, term : Term) -> Term {
             let evidence = unfold_all(db, evidence);
             db.make_term(TermData::Cast { witness, evidence })
         }
-        TermData::Promote { equation } => {
+        TermData::Promote { variant, equation, lhs, rhs } => {
             let equation = unfold_all(db, equation);
-            db.make_term(TermData::Promote { equation })
-        }
-        TermData::EqInduct { domain, predicate, lhs, rhs, equation, case } => {
-            let domain = unfold_all(db, domain);
-            let predicate = unfold_all(db, predicate);
             let lhs = unfold_all(db, lhs);
             let rhs = unfold_all(db, rhs);
+            db.make_term(TermData::Promote { variant, equation, lhs, rhs })
+        }
+        TermData::Subst { predicate, equation } => {
+            let predicate = unfold_all(db, predicate);
             let equation = unfold_all(db, equation);
-            let case = unfold_all(db, case);
-            db.make_term(TermData::EqInduct { domain, predicate, lhs, rhs, equation, case })
+            db.make_term(TermData::Subst { predicate, equation })
         }
         TermData::Apply { sort, mode, fun, arg } => {
             let fun = unfold_all(db, fun);
