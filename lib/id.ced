@@ -1,0 +1,58 @@
+module id
+
+import eq
+import cast
+
+IdInd : (A:Set) -> (a:A) -> (b:A) -> (a = b) -> Set
+IdInd A a b e :=
+  (P : (a:A) -> (b:A) -> (a = b) -> Set) =>
+  ((i:A) => P i i β{i}) ->
+  P a b e
+
+Id : (A : Set) -> A -> A -> Set
+Id A a b := (e : a = b) ∩ (IdInd A a b e)
+
+id_refl : (A:Set) => (a:A) => Id A a a
+id_refl -A -a := [β{a}, λ -P r. r a]
+
+id_to : (A:Set) => (a:A) => (b:A) => (a = b) -> Id A a b
+id_to -A -a -b e := subst A (λ i. Id A a i) a b (id_refl A a) e
+
+-- id_toJ : (A:Set) => (a:A) => (b:A) => (a = b) -> Id A a b
+-- id_toJ -A -a -b e := eq_induct A (λ a b i. Id A a b) a b e (λ -i. id_refl A i)
+
+-- id_fixedJ : (A:Set) => (a:A) => (b:A) => (e:a = b) -> (id_toJ A a b e).1 = e
+-- id_fixedJ -A -a -b e := eq_induct A (λ a b i. (id_toJ A a b i).1 = i) a b e (λ -i. β{β{i}})
+
+id_ind :
+  (A:Set) => (a:A) => (b:A) => (e:Id A a b) ->
+  (P : (a:A) -> (b:A) -> Id A a b -> Set) =>
+  ((i:A) => P i i (id_refl A i)) ->
+  P a b e
+id_ind -A -a -b e -P r := e.2 (λ a b e. P a b (id_to A a b e)) r
+
+id_refl_uip : (A:Set) => (a:A) => (p:Id A a a) -> Id (Id A a a) (id_refl A a) p
+id_refl_uip -A -a p := id_ind A a a p
+  (λ a b i. Id (Id A b b) (id_refl A b) (subst A (λ i. Id A i b) a b i i.1))
+  (λ -i. id_refl (Id A i i) (id_refl A i))
+
+id_uip : (A:Set) => (a:A) => (b:A) => (p:Id A a b) -> (q:Id A a b) -> Id (Id A a b) p q
+id_uip -A -a -b p := id_ind A a b p
+  (λ a b i. (q:Id A a b) -> Id (Id A a b) i q)
+  (λ -x q. id_refl_uip A x q)
+
+id_fixed : (A:Set) => (a:A) => (b:A) => (i:Id A a b) -> (id_to A a b i.1) = i
+id_fixed -A -a -b i := id_ind A a b i (λ a b i. (id_to A a b i.1) = i)
+  (λ -i. β{id_refl A i})
+
+id_from : (A:Set) => (a:A) => (b:A) => Id A a b -> a = b
+id_from -A -a -b i := i.1
+
+-- eq_ind :
+--   (A:Set) => (a:A) => (b:A) => (e:a = b) ->
+--   (P : (a:A) -> (b:A) -> (a = b) -> Set) =>
+--   ((i:A) => P i i β{i}) ->
+--   P a b e
+-- eq_ind -A -a -b e -P r :=
+--   let inner := id_ind A a b (id_to A a b e) (λ a b i. P a b i.1) r
+--   ?

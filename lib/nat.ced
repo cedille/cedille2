@@ -1,0 +1,60 @@
+module nat
+
+import eq
+import cast
+import sum
+
+NatF : Set -> Set
+NatF X := Sum Unit X
+
+nat_id_mono_fn : ExtIdMonoFn NatF
+nat_id_mono_fn -A -B f -e a := (sum_cast Unit A).1 a
+  (λ x. NatF A ∩ NatF B)
+  (λ a. [in1 Unit A a, in1 Unit B a])
+  (λ a. [in2 Unit A (f a).1, in2 Unit B (f a).2])
+
+nat_id_mono_p : ExtIdMonoP NatF nat_id_mono_fn
+nat_id_mono_p -A -B f -e a := (sum_cast Unit A).1 a.1
+  (λ x. (nat_id_mono_fn A B f e x).1 = x)
+  (λ a. β{in1 Unit A a})
+  (λ a. the (in2 Unit A (f a).1 = in2 Unit A a)
+  (?))
+
+-- Nat1 : Set
+-- Nat1 := (X : Set) => X -> (X -> X) -> X
+
+-- zero1 : Nat1
+-- zero1 -X z s := z
+
+-- succ1 : Nat1 -> Nat1
+-- succ1 n -X z s := s (n X z s)
+
+-- Nat1Ind : Nat1 -> Set
+-- Nat1Ind n := (P : Nat1 -> Set) => P zero1 -> ((x : Nat1) => P x -> P (succ1 x)) -> P n
+
+-- Nat : Set
+-- Nat := (n : Nat1) ∩ Nat1Ind n
+
+-- zero : Nat
+-- zero := [zero1, λ -P z s. z]
+
+-- succ : Nat -> Nat
+-- succ n := [succ1 n.1, λ -P z s. s n.1 (n.2 P z s)]
+
+-- to : Nat1 -> Nat
+-- to n := n Nat zero succ
+
+-- fixed1 : (n : Nat) -> (to n.1).1 = (n.1)
+-- fixed1 n := n.2 (λ x. (to x).1 = x)
+--   β{zero1}
+--   (λ -x ih. let inner : succ1 (to x).1 = succ1 x :=
+--     subst Nat1 (λ i. succ1 i = succ1 x) x (to x).1 β{succ1 x} ih
+--   inner)
+
+-- fixed : (n : Nat) -> to n.1 = n
+-- fixed n := ϑ{fixed1 n}
+
+-- induct : (n : Nat) -> (P : Nat -> Set) => P zero -> ((x : Nat) => P x -> P (succ x)) -> P n
+-- induct n -P z s :=
+--   let inner := n.2 (λ n. P (to n)) z (λ -x ih. the (P (succ (to x))) (s (to x) ih))
+--   subst Nat P (to n.1) n inner (fixed n)

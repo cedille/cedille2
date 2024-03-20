@@ -1,0 +1,24 @@
+
+import cast
+
+module data
+  (F : Set -> Set)
+  (mono : CastMono F)
+  (idfn : ExtIdMonoFn F)
+  (idp : ExtIdMonoP F idfn)
+
+Church : Set
+Church := (X : Set) => ((R : Set) => (R -> R) -> (R -> X) -> F R -> X) -> X
+
+church_in : F Church -> Church
+church_in xs -X ctor := ctor Church (λ x. x) (λ x. x X ctor) xs
+
+PreInd : Church -> Set
+PreInd x := (P : Church -> Set) =>
+  ((R:Set) =>
+  (f:R -> R ∩ Church) ->
+  (e:(x:R ∩ Church) -> f x.1 = x) =>
+  (ih:(r:R) -> P (f r).2) ->
+  (r:F R) ->
+  P (church_in (idfn R Church f e r).2)) ->
+  P x

@@ -1,0 +1,25 @@
+module omega
+
+import cast
+
+False : Set
+False := (X:Set) => X
+
+Not : Set -> Set
+Not A := A -> False
+
+True : Set
+True := Not False
+
+delta : True
+delta := λ d. d True d
+
+omega : Not ((A:Set) => (B:Set) => Cast A B)
+omega := λ h -X. (h True X).1 delta
+
+#erase omega
+
+Omega : Not ((A:Set) => (B:Set) => Cast A B)
+Omega := λ h. delta (omega h)
+
+#erase Omega

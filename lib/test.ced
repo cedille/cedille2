@@ -1,0 +1,17 @@
+
+(def Nat
+    *
+    (pi 0 X *
+        (pi w _ X
+            (pi w _ (pi w _ X X)
+                X
+))))
+
+(def zero
+    Nat
+    (lam 0 X *
+        (lam w z X
+            (lam w s (pi w _ X X)
+                z
+))))
+

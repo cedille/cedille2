@@ -1,0 +1,52 @@
+module parser
+
+the : (X : Set) => X -> X
+the -X x := x
+
+the2 : (X : Set) => X -> X
+the2
+  -X 
+  x
+  :=
+  x
+
+the3 : (X : Set) => X -> X
+the3 -X x :=
+  x
+
+the4 : (X : Set) => X -> X
+the4
+  -X x
+  := x
+
+the5 : (X : Set) => X -> X
+the5 -X x :=
+  let f : (X : Set) => X -> X := λ -X x. x
+  f X x
+
+the6 : (X : Set) => X -> X
+the6 -X x :=
+  let f : (X : Set) => X -> X :=
+    λ -X x. x
+  f X x
+
+the7 : (X : Set) => X -> X
+the7 -X x :=
+  let f : (Y : Set) => Y -> Y := λ -Y y.
+    let g : (Z : Set) => Z -> Z := λ -Z z. z
+    g Y y
+  f X x
+
+the8 : (X : Set) => X -> X
+the8 -X x :=
+  let f : (Y : Set) => Y -> Y
+    := λ -Y y.
+    let g : (Z : Set) => Z -> Z
+      := λ -Z z. z
+    g Y y
+  f X x
+
+the9 : (X : Set) => X -> X
+the9 -X x := x
+the10 : (X : Set) => X -> X
+the10 -X x := x
