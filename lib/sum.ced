@@ -38,7 +38,7 @@ pre_sum_fixed1 -A -B x := x.2
   (λ b. β{church_in2 A B b})
 
 pre_sum_fixed : (A:Set) => (B:Set) => (x:PreSum A B) -> pre_sum_to A B x.1 = x
-pre_sum_fixed -A -B x := ϑ{pre_sum_fixed1 A B x}
+pre_sum_fixed -A -B x := ϑ1{pre_sum_fixed1 A B x, pre_sum_to A B x.1, x}
 
 pre_sum_ind : (A:Set) => (B:Set) => (x:PreSum A B) ->
   (P:PreSum A B -> Set) =>
@@ -47,7 +47,7 @@ pre_sum_ind : (A:Set) => (B:Set) => (x:PreSum A B) ->
   P x
 pre_sum_ind -A -B x -P in1 in2 :=
   let inner : P (pre_sum_to A B x.1) := x.2 (λ x. P (pre_sum_to A B x)) in1 in2
-  subst (PreSum A B) P (pre_sum_to A B x.1) x inner (pre_sum_fixed A B x)
+  leibniz (PreSum A B) P (pre_sum_to A B x.1) x inner (pre_sum_fixed A B x)
 
 SumInd : (A:Set) -> (B:Set) -> PreSum A B -> Set
 SumInd A B x :=
@@ -112,4 +112,4 @@ sum_cast_full -A -B := φ { sum_ind_witness A B, sum_ind_evidence A B }
 
 sum_cast : (A:Set) => (B:Set) => DepCast (Sum A B)
   (λ x. (P:Sum A B -> Set) => ((a:A) -> P (in1 A B a)) -> ((b:B) -> P (in2 A B b)) -> P x)
-sum_cast -A -B := [λ x. (sum_cast_full A B x).2, unit]
+sum_cast -A -B := [sum_cast_full A B, unit]

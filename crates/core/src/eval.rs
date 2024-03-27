@@ -65,13 +65,12 @@ impl ForceValue for LazyValue {
             Some(v) => v,
             None => {
                 let (env, code) = (self.env.clone(), self.code.clone());
-                let level: Level = env.len().into();
-                let new_value = eval(db, env, code);
                 if self.erased {
-                    let new_object = erase(db, level, new_value);
+                    let new_object = code.erase(db, env);
                     self.object.set(new_object.clone()).ok();
                     new_object
                 } else {
+                    let new_value = eval(db, env, code);
                     self.value.set(new_value.clone()).ok();
                     new_value
                 }
@@ -97,9 +96,8 @@ impl Closure {
         let Closure { env, code, erased } = self;
         let mut env = env.clone();
         env.push_back(arg);
-        let value = eval(db, env.clone(), code.clone());
-        if *erased { erase(db, env.len().into(), value) }
-        else { value }
+        if *erased { code.erase(db, env) }
+        else { eval(db, env.clone(), code.clone()) }
     }
 }
 
@@ -321,65 +319,139 @@ pub(crate) fn erase_spine(db: &Database, spine: Spine) -> Spine {
     result
 }
 
-pub fn erase(db: &Database, level: Level, value: Value) -> Value {
-    let borrow: &ValueData = value.borrow();
-    match borrow.clone() {
-        ValueData::Variable { sort, level, spine } => {
-            let spine = erase_spine(db, spine);
-            ValueData::Variable { sort, level, spine }.rced()
+impl ValueData {
+    pub fn erase(&self, db: &Database) -> Value {
+        match self.clone() {
+            ValueData::Variable { sort, level, spine } => {
+                let spine = erase_spine(db, spine);
+                ValueData::Variable { sort, level, spine }.rced()
+            }
+            ValueData::MetaVariable { sort, name, module, spine } => todo!(),
+            ValueData::Reference { sort, id, spine, unfolded } => {
+                let spine = erase_spine(db, spine);
+                let unfolded = unfolded.map(|v| v.erase(db));
+                ValueData::Reference { sort, id, spine, unfolded }.rced()
+            }
+            ValueData::Pair { first, .. } => first.erase(db),
+            ValueData::Refl { .. } => Value::id(db, Sort::Term, Mode::Free, ValueData::SuperStar.rced()),
+            ValueData::Cast { spine, .. } => {
+                let result = Value::id(db, Sort::Term, Mode::Free, ValueData::SuperStar.rced());
+                let spine = erase_spine(db, spine);
+                result.perform_spine(db, spine)
+            }
+            ValueData::Lambda { sort, mode, name, domain, closure } => {
+                match mode {
+                    Mode::Erased => {
+                        let name = Symbol::from("gen/erase");
+                        let value = LazyValueData::var(db, sort, usize::MAX.into());
+                        closure.erase().eval(db, EnvEntry::new(name, Mode::Erased, value))
+                    }
+                    Mode::Free => {
+                        let domain = ValueData::SuperStar.rced();
+                        let closure = closure.erase();
+                        ValueData::Lambda { sort, mode, name, domain, closure }.rced()
+                    }
+                    Mode::TypeLevel => {
+                        let domain = domain.erase(db);
+                        let closure = closure.erase();
+                        ValueData::Lambda { sort, mode, name, domain, closure }.rced()
+                    }
+                }
+            }
+            ValueData::Pi { sort, mode, name, domain, closure } => {
+                let domain = domain.erase(db);
+                let closure = closure.erase();
+                ValueData::Pi { sort, mode, name, domain, closure }.rced()
+            }
+            ValueData::Intersect { name, first, second } => {
+                let first = first.erase(db);
+                let second = second.erase();
+                ValueData::Intersect { name, first, second }.rced()
+            }
+            ValueData::Equality { left, right, anno } => {
+                let left = left.erase(db);
+                let right = right.erase(db);
+                let anno = anno.erase(db);
+                ValueData::Equality { left, right, anno }.rced()
+            }
+            ValueData::Star => ValueData::Star.rced(),
+            ValueData::SuperStar => ValueData::SuperStar.rced(),
         }
-        ValueData::MetaVariable { sort, name, module, spine } => todo!(),
-        ValueData::Reference { sort, id, spine, unfolded } => {
-            let spine = erase_spine(db, spine);
-            let unfolded = unfolded.map(|v| erase(db, 0.into(), v));
-            ValueData::Reference { sort, id, spine, unfolded }.rced()
-        }
-        ValueData::Pair { first, .. } => erase(db, level, first),
-        ValueData::Refl { .. } => Value::id(db, Sort::Term, Mode::Free, ValueData::SuperStar.rced()),
-        ValueData::Cast { spine, .. } => {
-            let result = Value::id(db, Sort::Term, Mode::Free, ValueData::SuperStar.rced());
-            let spine = erase_spine(db, spine);
-            result.perform_spine(db, spine)
-        }
-        ValueData::Lambda { sort, mode, name, domain, closure } => {
-            match mode {
-                Mode::Erased => {
+    }
+}
+
+impl TermData {
+    pub fn erase(&self, db: &Database, mut env: Env) -> Value {
+        match self.clone() {
+            TermData::Lambda { sort, mode, name, domain, body } => {
+                let closure = Closure::new(env.clone(), body).erase();
+                if mode == Mode::Erased {
                     let name = Symbol::from("gen/erase");
-                    let value = LazyValueData::var(db, sort, level);
-                    closure.erase().eval(db, EnvEntry::new(name, Mode::Erased, value))
-                }
-                Mode::Free => {
-                    let domain = ValueData::SuperStar.rced();
-                    let closure = closure.erase();
-                    ValueData::Lambda { sort, mode, name, domain, closure }.rced()
-                }
-                Mode::TypeLevel => {
-                    let domain = erase(db, level, domain);
-                    let closure = closure.erase();
+                    let value = LazyValueData::var(db, sort, usize::MAX.into());
+                    let arg = EnvEntry::new(name, Mode::Erased, value);
+                    closure.eval(db, arg)
+                } else {
+                    let domain = if mode == Mode::Free {
+                        ValueData::SuperStar.rced()
+                    } else {
+                        domain.erase(db, env.clone())
+                    };
                     ValueData::Lambda { sort, mode, name, domain, closure }.rced()
                 }
             }
+            TermData::Let { name, let_body, body, .. } => {
+                let def = LazyValueData::lazy(db, env.clone(), let_body).erase(db);
+                env.push_back(EnvEntry::new(name, Mode::Free, def));
+                body.erase(db, env)
+            }
+            TermData::Pi { sort, mode, name, domain, body } => {
+                let domain = domain.erase(db, env.clone());
+                let closure = Closure::new(env, body).erase();
+                ValueData::Pi { sort, mode, name, domain, closure }.rced()
+            }
+            TermData::Intersect { name, first, second } => {
+                let first = first.erase(db, env.clone());
+                let second = Closure::new(env, second).erase();
+                ValueData::Intersect { name, first, second }.rced()
+            }
+            TermData::Equality { left, right, anno } => {
+                let left = LazyValueData::lazy(db, env.clone(), left).erase(db);
+                let right = LazyValueData::lazy(db, env.clone(), right).erase(db);
+                let anno = anno.erase(db, env);
+                ValueData::Equality { left, right, anno }.rced()
+            }
+            TermData::Project { body, .. } => body.erase(db, env),
+            TermData::Pair { first, .. } => first.erase(db, env),
+            TermData::Separate { equation } => equation.erase(db, env),
+            TermData::Refl { .. } => Value::id(db, Sort::Term, Mode::Free, ValueData::SuperStar.rced()),
+            TermData::Cast { .. } => Value::id(db, Sort::Term, Mode::Free, ValueData::SuperStar.rced()),
+            TermData::Promote { equation, .. } => equation.erase(db, env),
+            TermData::Subst { equation, ..} => equation.erase(db, env),
+            TermData::Apply { mode, fun, arg, .. } => {
+                let fun = fun.erase(db, env.clone());
+                if mode == Mode::Erased { fun } else {
+                    let arg = LazyValueData::lazy(db, env, arg).erase(db);
+                    fun.perform(db, Action::Apply(mode, arg))
+                }
+            }
+            TermData::Bound { index, .. } => {
+                let position = index.to_level(env.len());
+                // TODO: think about this more
+                env.get(*position).unwrap().value.erase(db).force(db)
+            }
+            TermData::Free { sort, id } => {
+                let spine = Vector::new();
+                let unfolded = db.lookup_def(&id).map(|v| v.erase(db));
+                ValueData::Reference { sort, id, spine, unfolded }.rced()
+            }
+            TermData::Meta { sort, name } => unimplemented!(),
+            TermData::InsertedMeta { sort, name, mask } => unimplemented!(),
+            TermData::Star => ValueData::Star.rced(),
+            TermData::SuperStar => ValueData::SuperStar.rced()
         }
-        ValueData::Pi { sort, mode, name, domain, closure } => {
-            let domain = erase(db, level, domain);
-            let closure = closure.erase();
-            ValueData::Pi { sort, mode, name, domain, closure }.rced()
-        }
-        ValueData::Intersect { name, first, second } => {
-            let first = erase(db, level, first);
-            let second = second.erase();
-            ValueData::Intersect { name, first, second }.rced()
-        }
-        ValueData::Equality { left, right, anno } => {
-            let left = left.erase(db);
-            let right = right.erase(db);
-            let anno = erase(db, level, anno);
-            ValueData::Equality { left, right, anno }.rced()
-        }
-        ValueData::Star => ValueData::Star.rced(),
-        ValueData::SuperStar => ValueData::SuperStar.rced(),
     }
 }
+
 
 // pub fn reify(value: Rc<Value>, db: &Database, level: Level, unfold: bool) -> Term {
 //     let value =

@@ -232,11 +232,14 @@ impl Database {
 
     pub fn lookup_type(&self, id: &Id) -> Option<Value> {
         let namespace = id.namespace.clone();
-        let (params, decl) = self.lookup_decl(true, id.module, namespace, id.name);
+        let (mut params, decl) = self.lookup_decl(true, id.module, namespace, id.name);
         decl.map(|decl| {
             let ann = if params.is_empty() { decl.ann }
                 else { decl.inner_ann };
-            eval(self, Env::new(), ann)
+            let env: Env = params.drain(..).map(|(m, v)| {
+                EnvEntry::new(Symbol::default(), m, v)
+            }).collect();
+            eval(self, env, ann)
         })
     }
 

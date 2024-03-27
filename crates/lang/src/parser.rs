@@ -63,6 +63,7 @@ pub fn parse_command(input : In) -> IResult<In, Command> {
         tag("module").preceded_by(bspace0(0)),
         tag("import").preceded_by(bspace0(0)),
         tag("#erase").preceded_by(bspace0(0)),
+        tag("#unfold").preceded_by(bspace0(0)),
         tag("").preceded_by(bspace0(0))
     )))(input)?;
 
@@ -70,6 +71,7 @@ pub fn parse_command(input : In) -> IResult<In, Command> {
         "module" => parse_module(input),
         "import" => parse_import(input),
         "#erase" => parse_erase_command(input),
+        "#unfold" => parse_unfold_command(input),
         _ => parse_def(input)
     }
 }
@@ -81,6 +83,16 @@ fn parse_erase_command(input: In) -> IResult<In, Command> {
     )))(input)?;
 
     let command = Command::Erase(term);
+    Ok((rest, command))
+}
+
+fn parse_unfold_command(input: In) -> IResult<In, Command> {
+    let (rest, (_, term)) = context("unfold_command", tuple((
+        tag("#unfold").preceded_by(bspace0(0)),
+        parse_term(2)
+    )))(input)?;
+
+    let command = Command::Unfold(term);
     Ok((rest, command))
 }
 
@@ -164,7 +176,7 @@ pub fn parse_term(margin: usize) -> impl FnMut(In) -> IResult<In, Term> {
 
 fn parse_term_let(margin: usize) -> impl FnMut(In) -> IResult<In, Term> {
     move |input| {
-        let (rest, (start, sym, ann, _, def, body))
+        let (rest, (start, sym, ann, _, def, _, body))
         = context("let", tuple((
             tag("let").preceded_by(bspace0(margin)),
             parse_symbol.preceded_by(bspace0(margin + 2)),
@@ -174,7 +186,7 @@ fn parse_term_let(margin: usize) -> impl FnMut(In) -> IResult<In, Term> {
             )),
             tag(":=").preceded_by(bspace0(margin + 2)),
             parse_term(margin + 2),
-            //tag(";").preceded_by(bspace0(margin)),
+            opt(tag(";")).preceded_by(bspace0(margin)),
             parse_term(margin)
         )))(input)?;
     
@@ -363,11 +375,10 @@ fn parse_term_variable_application(margin: usize) -> impl FnMut(In) -> IResult<I
 /*
     atom ::=
     | "[" term "," term (";" term)? "]" (".1" | ".2")*
-    | "J" { term "," term "," term "," term "," term "," term } (".1" | ".2")*
     | "φ" term "{" term "," term "}" (".1" | ".2")*
-    | "ϑ" { term } (".1" | ".2")*
-    | "β" { term } (".1" | ".2")*
-    | "δ" { term } (".1" | ".2")*
+    | "ϑ" (1 | 2) "{" term "," term "," term "}" (".1" | ".2")*
+    | "β" "{" term "}" (".1" | ".2")*
+    | "δ" "{" term "}" (".1" | ".2")*
     | "(" term ")" (".1" | ".2")*
     | "_"
     | "?"

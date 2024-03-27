@@ -6,8 +6,6 @@ the -A a := a
 subst : (A : Set) => (a : A) => (b : A) => (e : a = b) -> (P : (y : A) -> (a = y) -> Set) => P a β{a} -> P b e
 subst -A -a -b e -P := 𝜓 { e, P }
 
---#erase subst
-
 J : (A : Set) =>
   (P : (x : A) -> (y : A) -> (e : x = y) -> Set) =>
   (x : A) =>
@@ -17,23 +15,26 @@ J : (A : Set) =>
   P x y e
 J -A -P -x -y e w := subst A x y e (λ y e. P x y e) (w x)
 
---#erase J
-
-sym : (A : Set) => (x : A) => (y : A) => (x = y) -> y = x
-sym -A -x -y e := J A (λ x y e. y = x) x y e (λ -i. β{i})
-
---#erase sym
-
 leibniz : (A : Set) => (P : (i : A) -> Set) => (x : A) => (y : A) => P x -> (x = y) -> P y
 leibniz -A -P -x -y p e := J A (λ x y e. P x -> P y) x y e (λ -i p. p) p
 
---#erase leibniz
+sym : (A:Set) => (a:A) => (b:A) => (a = b) -> b = a
+sym -A -a -b e := subst A a b e (λ y e. y = a) β{a}
 
-refl_uip : (A:Set) => (a:A) => (p:a = a) -> β{a} = p
-refl_uip -A -a p := J A (λ a b i. β{b} = (leibniz A (λ i. i = b) a b i i))
-  a a p
-  (λ -i. β{β{i}})
+trans : (A:Set) => (a:A) => (b:A) => (c:A) => (a = b) -> (b = c) -> a = c
+trans -A -a -b -c e1 e2 := subst A b c e2 (λ y e. a = y) e1
 
-uip : (A:Set) => (a:A) => (b:A) => (p:a = b) -> (q:a = b) -> p = q
-uip -A -a -b p := J A (λ a b i. (q:a = b) -> i = q)
-  a b p (λ -x q. refl_uip A x q)
+to_true : (A:Set) => (a:A) => (b:A) => (e:a = b) -> (X:Set) => X -> X
+to_true -A -a -b e -X x := subst A a b e (λ y e. X) x
+
+--#erase eq_eta
+-- #erase leibniz
+
+-- refl_uip : (A:Set) => (a:A) => (p:a = a) -> β{a} = p
+-- refl_uip -A -a p := J A (λ a b i. β{b} = (leibniz A (λ i. i = b) a b ? i))
+--   a a p
+--   (λ -i. β{β{i}})
+
+-- uip : (A:Set) => (a:A) => (b:A) => (p:a = b) -> (q:a = b) -> p = q
+-- uip -A -a -b p := J A (λ a b i. (q:a = b) -> i = q)
+--   a b p (λ -x q. subst A x x q (λ i e. β{i} = e) β{β{x}})

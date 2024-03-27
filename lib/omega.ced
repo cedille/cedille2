@@ -2,24 +2,124 @@ module omega
 
 import cast
 
+Id : Set
+Id := (X : Set) => X -> X
+
+id : Id
+id -X x := x
+
+delt : Id -> Id
+delt u := u Id u
+
+#erase delt
+
 False : Set
 False := (X:Set) => X
 
-Not : Set -> Set
-Not A := A -> False
+------------------------------------------------------
+-- Why you can't use normal phi with FV(|e|) ⊂ FV(|a|)
+------------------------------------------------------
+a : False -> False -> False
+a g f := f ((False -> False) -> False -> False) (λ x. x (False -> False) x) g
 
-True : Set
-True := Not False
+#erase a
 
-delta : True
-delta := λ d. d True d
+b : False -> (False -> False) ∩ ((Id -> Id) -> Id)
+b g := [g (False -> False), g ((Id -> Id) -> Id)]
 
-omega : Not ((A:Set) => (B:Set) => Cast A B)
-omega := λ h -X. (h True X).1 delta
+bad : False -> Id
+bad g := (b g).2 delt
 
-#erase omega
+#erase bad
 
-Omega : Not ((A:Set) => (B:Set) => Cast A B)
-Omega := λ h. delta (omega h)
+bad_eq : (g : False) -> (a g) = ((b g).1)
+bad_eq g := g ((a g) = ((b g).1))
 
-#erase Omega
+#erase bad_eq
+
+------------------------------------------------------
+------------------------------------------------------
+
+import pair
+
+phi-safety : Pair (Id -> Id) False
+...
+
+elim tt := False
+elim ff := True
+
+phi-safety : elim b
+phi-safety := 
+
+witness : Pair (Id -> Id) False -> (Pair (Id -> Id) False) ∩ ((Pair (Id -> Id) False -> Id -> Id) -> (Id -> Id) -> Id)
+witness w := (snd (Id -> Id) False w) ((Pair (Id -> Id) False) ∩ ((Pair (Id -> Id) False -> Id -> Id) -> (Id -> Id) -> Id))
+
+
+evidence : (x : Pair (Id -> Id) False) -> x = (witness x).1
+evidence x := (snd (Id -> Id) False x) (x = (witness x).1)
+
+phi : Pair (Id -> Id) False -> (Pair (Id -> Id) False) ∩ ((Pair (Id -> Id) False -> Id -> Id) -> (Id -> Id) -> Id)
+phi := φ { witness, evidence }
+
+#erase phi
+#erase pair
+#erase snd
+#erase delt
+
+bad2 : False -> Id
+bad2 b := (phi (pair (Id -> Id) False delt b)).2 (λ p. fst (Id -> Id) False p) delt
+
+#erase bad2
+
+bad3 : False -> Id -> Id
+bad3 b := ((bad2 b) Id id) (Id -> Id) delt
+
+#erase bad3
+
+-- e : { a = b }
+
+-- a : A
+-- f : (a : A) -> (x : A) ∩ (B x)
+-- e : (a : A) -> (a = (f a).1), but otherwise FV(|e|) is empty
+
+-- φ e - a { b } : A
+-- |φ e - a { b }| = |b|
+
+-- |a| is contextually equivalent to |b| in A contexts
+-- C[ ] : (Γ, A) -> (ε, Unit)
+
+    -- |C[a]| terminates iff |C[b]| terminates
+
+-- Layer 0: Initially: Accept defeat, allow phi to produce non-terminating terms.
+    -- Just use Cedille1 phi
+-- Layer 1: Also, communicate when phi is safe to use, given an outside proof.
+-- Layer 2: In the surface language, proceed a Bohm-proof for the user to show that they are in fact contextually equivalent
+    -- It is *possible* though unlikey, that a Bohm-out algorithm would be terminating (b/c objects without phis are terminating)
+
+
+
+
+
+
+
+
+
+
+-- Not : Set -> Set
+-- Not A := A -> False
+
+-- True : Set
+-- True := Not False
+
+-- delta : True
+-- delta := λ d. d True d
+
+-- omega : Not ((A:Set) => (B:Set) => Cast A B)
+-- omega := λ h -X. (h True X).1 delta
+
+-- #erase omega
+
+-- Omega : Not ((A:Set) => (B:Set) => Cast A B)
+-- Omega := λ h. delta (omega h)
+
+-- #erase Omega

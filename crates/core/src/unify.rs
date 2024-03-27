@@ -31,6 +31,7 @@ pub fn unfold_to_head(db: &mut Database, value: Value) -> Value {
 }
 
 fn unify_spine(db: &mut Database, level: Level, lhs: Spine, rhs: Spine) -> bool {
+    if lhs.len() != rhs.len() { return false; }
     let mut result = true;
     for (a1, a2) in lhs.iter().cloned().zip(rhs.iter().cloned()) {
         let update = match (a1, a2) {

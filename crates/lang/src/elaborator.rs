@@ -266,10 +266,11 @@ pub fn elaborate(db: &mut Database, module: Symbol, mut commands: Vec<syntax::Co
                 match elaborate_define_term(db, ctx.clone(), &def) {
                     Ok(decl) => {
                         let inner_ann = decl.ty.clone();
+                        let sort = decl.body.sort();
                         let decl = Decl {
                             name: decl.name,
-                            ty: wrap_type_from_context(db, ctx.clone(), decl.ty),
-                            body: wrap_term_from_context(db, ctx.clone(), decl.body),
+                            ty: wrap_type_from_context(db, ctx.clone(), decl.ty, sort),
+                            body: wrap_term_from_context(db, ctx.clone(), decl.body, sort),
                         };
                         log::info!("\n{}\n{}\n{}", def.as_str(db.text_ref(module)), "elaborated to".green(), decl);
                         db.insert_decl(module, def.opaque, decl.clone(), inner_ann).ok().unwrap();
@@ -283,10 +284,16 @@ pub fn elaborate(db: &mut Database, module: Symbol, mut commands: Vec<syntax::Co
             syntax::Command::Erase(term) => {
                 let (term_elabed, _) = infer(db, ctx.clone(), &term)?;
                 let term_unfolded = unfold_all(db, term_elabed);
-                let value = eval(db, ctx.env(), term_unfolded);
-                let erased = erase(db, ctx.env_lvl(), value);
+                let erased = term_unfolded.erase(db, ctx.env());
+                // eprintln!("unfolded:    {}", term_unfolded);
+                // eprintln!("erased:       {}", erased);
                 let quote = quote(db, erased, ctx.env_lvl());
                 log::info!("\n{}\n{}\n{}", term.as_str(db.text_ref(module)), "erased to".green(), quote.to_string());
+            }
+            syntax::Command::Unfold(term) => {
+                let (term_elabed, _) = infer(db, ctx.clone(), &term)?;
+                let term_unfolded = unfold_all(db, term_elabed);
+                log::info!("\n{}\n{}\n{}", term.as_str(db.text_ref(module)), "unfolded to".green(), term_unfolded.to_string());
             }
             syntax::Command::Value(_) => todo!(),
         }
@@ -511,7 +518,7 @@ fn check(db: &mut Database, ctx: Context, term: &syntax::Term, ty: Value) -> Res
         {
             let (_, anno_value) = if let Some(anno) = &def.anno {
                 let anno_ctx = ctx.clone().phase_shift(Mode::Free, Sort::Type);
-                let anno_elabed = check(db, anno_ctx, anno, ValueData::Star.rced())?;
+                let (anno_elabed, _) = infer(db, anno_ctx, anno)?;
                 let anno_value = eval(db, ctx.env(), anno_elabed.clone());
                 (anno_elabed, anno_value)
             } else { infer(db, ctx.clone(), &def.body)? };
@@ -779,7 +786,7 @@ fn infer(db: &mut Database, ctx: Context, term: &syntax::Term) -> Result<(Term, 
         syntax::Term::Let { mode, def, body, .. } => {
             let (anno_elabed, anno_value) = if let Some(anno) = &def.anno {
                 let anno_ctx = ctx.clone().phase_shift(Mode::Free, Sort::Type);
-                let anno_elabed = check(db, anno_ctx, anno, ValueData::Star.rced())?;
+                let (anno_elabed, _) = infer(db, anno_ctx, anno)?;
                 let anno_value = eval(db, ctx.env(), anno_elabed.clone());
                 (anno_elabed, anno_value)
             } else { infer(db, ctx.clone(), &def.body)? };
@@ -809,7 +816,9 @@ fn infer(db: &mut Database, ctx: Context, term: &syntax::Term) -> Result<(Term, 
                 let index = level.to_index(ctx.env.len());
                 Ok((db.make_term(TermData::Bound { sort, index }), var_type))
             } else {
-                Ok((db.make_term(TermData::Free { sort, id:id.clone() }), var_type))
+                let result = db.make_term(TermData::Free { sort, id:id.clone() });
+                //let result = wrap_ref_with_params(db, ctx.module, result);
+                Ok((result, var_type))
             }
         }
 
@@ -1034,7 +1043,7 @@ fn infer(db: &mut Database, ctx: Context, term: &syntax::Term) -> Result<(Term, 
                             let evidence_ty_value = eval(db, ctx.env(), evidence_ty);
                             let evidence_elabed = check(db, ctx.clone(), evidence, evidence_ty_value)?;
                             let evidence_value = eval(db, ctx.env(), evidence_elabed.clone());
-                            let evidence_erased = erase(db, ctx.env_lvl(), evidence_value);
+                            let evidence_erased = evidence_value.erase(db);
                             let evidence_erased_quote = quote(db, evidence_erased, ctx.env_lvl());
                             if !evidence_erased_quote.fv_empty_index(0.into()) { todo!() }
                             let result = db.make_term(TermData::Cast {
@@ -1206,8 +1215,8 @@ fn infer_sort(db: &Database, ctx: Context, term: &syntax::Term) -> Result<Sort, 
 }
 
 fn try_unify(db: &mut Database, ctx: Context, span: Span, left: Value, right: Value) -> Result<(), ElabError> {
-    let left = erase(db, ctx.env_lvl(), left);
-    let right = erase(db, ctx.env_lvl(), right);
+    let left = left.erase(db);
+    let right = right.erase(db);
     match unify(db, ctx.env_lvl(), left.clone(), right.clone()) {
         true => Ok(()),
         false => Err(ElabError::Inconvertible {
@@ -1267,15 +1276,35 @@ fn lookup_sort(db: &Database, ctx: &Context, span: Span, id: &Id) -> Result<Sort
     }
 }
 
-fn wrap_term_from_context(db: &Database, ctx: Context, body: Term) -> Term {
-    let sort = body.sort();
+// fn wrap_ref_with_params(db: &Database, module: Symbol, body: Term) -> Term {
+//     let mut result = body;
+//     let params = db.lookup_params(module);
+//     for param in params.iter() {
+//         let sort = param.body.sort().demote();
+//         let id = Id::new(module, param.name);
+//         let mode = if param.body.sort() == Sort::Kind && param.mode == Mode::Free { Mode::TypeLevel }
+//             else { param.mode };
+//         let arg = db.make_term(TermData::Free { sort, id });
+//         result = db.make_term(TermData::Apply {
+//             sort,
+//             mode,
+//             fun: result,
+//             arg
+//         })
+//     }
+//     result
+// }
+
+fn wrap_term_from_context(db: &Database, ctx: Context, body: Term, sort: Sort) -> Term {
     let mut result = body;
     let mut level = ctx.env_lvl();
     for i in (0..ctx.len()).rev() {
         level = level - 1; // As we peel off a module parameter, the context maximum level is reduced by one
         let name = ctx.names[i];
         let domain = quote(db, ctx.types[i].clone(), level);
-        let mode = if sort != Sort::Term { Mode::TypeLevel } else { ctx.modes[i] };
+        let mode = if sort == Sort::Type { Mode::TypeLevel }
+            else if ctx.sorts[i] == Sort::Type { Mode::Erased }
+            else { ctx.modes[i] };
         result = db.make_term(TermData::Lambda {
             sort: result.sort(),
             mode,
@@ -1287,15 +1316,16 @@ fn wrap_term_from_context(db: &Database, ctx: Context, body: Term) -> Term {
     result
 }
 
-fn wrap_type_from_context(db: &Database, ctx: Context, body: Term) -> Term {
-    let sort = body.sort();
+fn wrap_type_from_context(db: &Database, ctx: Context, body: Term, sort: Sort) -> Term {
     let mut result = body;
     let mut level = ctx.env_lvl();
     for i in (0..ctx.len()).rev() {
         level = level - 1; // As we peel off a module parameter, the context maximum level is reduced by one
         let name = ctx.names[i];
         let domain = quote(db, ctx.types[i].clone(), level);
-        let mode = if sort != Sort::Term { Mode::TypeLevel } else { ctx.modes[i] };
+        let mode = if sort == Sort::Type { Mode::TypeLevel }
+            else if ctx.sorts[i] == Sort::Type { Mode::Erased }
+            else { ctx.modes[i] };
         result = db.make_term(TermData::Pi {
             sort: result.sort(),
             domain,

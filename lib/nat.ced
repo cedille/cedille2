@@ -3,22 +3,61 @@ module nat
 import eq
 import cast
 import sum
+import pair
 
 NatF : Set -> Set
 NatF X := Sum Unit X
 
-nat_id_mono_fn : ExtIdMonoFn NatF
-nat_id_mono_fn -A -B f -e a := (sum_cast Unit A).1 a
-  (λ x. NatF A ∩ NatF B)
-  (λ a. [in1 Unit A a, in1 Unit B a])
-  (λ a. [in2 Unit A (f a).1, in2 Unit B (f a).2])
+phi-safety : (A:Set) => (B:Set) => Pair (Cast A B) (NatF A)
+phi-safety := 
 
-nat_id_mono_p : ExtIdMonoP NatF nat_id_mono_fn
-nat_id_mono_p -A -B f -e a := (sum_cast Unit A).1 a.1
-  (λ x. (nat_id_mono_fn A B f e x).1 = x)
-  (λ a. β{in1 Unit A a})
-  (λ a. the (in2 Unit A (f a).1 = in2 Unit A a)
-  (?))
+
+
+nat_mono_witness2 : (A:Set) => (B:Set) => Pair (Cast A B) (NatF A) -> Pair (Cast A B) (NatF A) ∩ Pair (Cast A B) (NatF B)
+nat_mono_witness2 -A -B xs :=
+  let Ty : Set -> Set := λ X. Pair (Cast A B) (NatF X)
+  let ipair : (X:Set) => Cast A B -> NatF X -> Ty X := λ -X. pair (Cast A B) (NatF X)
+  let ifst : (X:Set) => Ty X -> Cast A B := λ -X. fst (Cast A B) (NatF X)
+  let isnd : (X:Set) => Ty X -> NatF X := λ -X. snd (Cast A B) (NatF X)
+  ((sum_cast Unit A).1 (isnd A xs)).2 (λ x. Ty A ∩ Ty B)
+  (λ x. [ipair A (ifst A xs) (in1 Unit A x), ipair B (ifst A xs) (in1 Unit B x)])
+  (λ x. [ipair A (ifst A xs) (in2 Unit A ((ifst A xs).1 x).1), ipair B (ifst A xs) (in2 Unit B ((ifst A xs).1 x).2)])
+
+nat_mono_evidence : (A:Set) => (B:Set) => (x : Pair (Cast A B) (NatF A)) -> x = (nat_mono_witness2 A B x).1
+nat_mono_evidence -A -B xs :=
+  let Ty : Set -> Set := λ X. Pair (Cast A B) (NatF X)
+  let ipair : (X:Set) => Cast A B -> NatF X -> Ty X := λ -X. pair (Cast A B) (NatF X)
+  let ifst : (X:Set) => Ty X -> Cast A B := λ -X. fst (Cast A B) (NatF X)
+  let isnd : (X:Set) => Ty X -> NatF X := λ -X. snd (Cast A B) (NatF X)
+  let inner : ipair A (ifst A xs) (isnd A xs) = (nat_mono_witness2 A B (ipair A (ifst A xs) (isnd A xs))).1 := ((sum_cast Unit A).1 (isnd A xs)).2 (λ x. ipair A (ifst A xs) x = (nat_mono_witness2 A B (ipair A (ifst A xs) x)).1)
+    (λ x. β{ipair A (ifst A xs) (in1 Unit A x)})
+    (λ x. subst A x ((ifst A xs).1 x).1 (cast_ind A B (ifst A xs) x) (λ y e. ipair A (ifst A xs) (in2 Unit A x) = ipair A (ifst A xs) (in2 Unit A y)) β{ipair A (ifst A xs) (in2 Unit A x)})
+  subst (Ty A) (ipair A (ifst A xs) (isnd A xs)) xs (sym (Ty A) xs (ipair A (ifst A xs) (isnd A xs)) (pair_eta_law (Cast A B) (NatF A) xs)) (λ y e. y = (nat_mono_witness2 A B y).1) inner
+
+nat_mono_inner : (A:Set) => (B:Set) => Pair (Cast A B) (NatF A) -> Pair (Cast A B) (NatF A) ∩ Pair (Cast A B) (NatF B)
+nat_mono_inner -A -B := φ { nat_mono_witness2 A B, nat_mono_evidence A B}
+
+nat_mono : (A:Set) => (B:Set) => Cast A B -> NatF A -> NatF B
+nat_mono -A -B k xs := snd (Cast A B) (NatF B) (nat_mono_inner A B (pair (Cast A B) (NatF A) k xs)).2
+
+#erase nat_mono
+
+-- nat_mono_witness : (A:Set) => (B:Set) => (Cast A A ∩ Cast A B) -> NatF A -> NatF A ∩ NatF B
+-- nat_mono_witness -A -B k xs := (sum_cast Unit A).1 xs (λ x. NatF A ∩ NatF B) 
+--   (λ x. [in1 Unit A x, in1 Unit B x])
+--   (λ x. [in2 Unit A (k.1.1 x), in2 Unit B (k.2.1 x)])
+
+-- --#erase nat_mono_witness
+
+-- nat_mono_evidence : (A:Set) => (B:Set) => (k:Cast A A ∩ Cast A B) -> (xs : NatF A) -> (nat_mono_candidate A B k xs) = (nat_mono_witness A B k xs).1
+-- nat_mono_evidence -A -B k xs := (sum_cast Unit A).1 xs (λ xs. (nat_mono_candidate A B k xs) = (nat_mono_witness A B k xs).1)
+--   (λ x. leibniz (Cast A A) (λ k. (unit_cast.1 k.2 (λ x. NatF A) (in1 Unit A x)) = (in1 Unit A x)) (cast_refl A) k.1  β{in1 Unit A x} (cast_singleton A A (cast_refl A) k.1))
+--   (λ x. leibniz (Cast A A) (λ k. (unit_cast.1 k.2 (λ x. NatF A) (in2 Unit A x)) = in2 Unit A (k.1 x)) (cast_refl A) k.1 β{in2 Unit A x} (cast_singleton A A (cast_refl A) k.1))
+
+-- #erase nat_mono_evidence
+
+-- nat_mono : CastMono NatF
+-- nat_mono -A -B k := ?
 
 -- Nat1 : Set
 -- Nat1 := (X : Set) => X -> (X -> X) -> X

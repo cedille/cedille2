@@ -24,12 +24,12 @@ pre_unit_fixed1 : (u : PreUnit) -> (pre_unit_to u.1).1 = (u.1)
 pre_unit_fixed1 u := u.2 (λ x. (pre_unit_to x).1 = x) β{church_unit}
 
 pre_unit_fixed : (u : PreUnit) -> pre_unit_to u.1 = u
-pre_unit_fixed u := ϑ{pre_unit_fixed1 u}
+pre_unit_fixed u := ϑ1{pre_unit_fixed1 u, pre_unit_to u.1, u}
 
 pre_unit_ind : (u : PreUnit) -> (P : (x : PreUnit) -> Set) => P pre_unit -> P u
 pre_unit_ind u -P cs :=
   let inner : P (pre_unit_to u.1) := u.2 (λ x. P (pre_unit_to x)) cs
-  subst PreUnit P (pre_unit_to u.1) u inner (pre_unit_fixed u)
+  leibniz PreUnit P (pre_unit_to u.1) u inner (pre_unit_fixed u)
 
 UnitInd : PreUnit -> Set
 UnitInd u := (P : (x:PreUnit) -> Set) => P pre_unit -> P u
@@ -70,6 +70,11 @@ unit_ind_evidence u := unit_ind u (λ x. x = (unit_ind_witness x).1) β{unit}
 unit_cast_full : (u : Unit) -> Unit ∩ ((P : (x:Unit) -> Set) => P unit -> P u)
 unit_cast_full := φ { unit_ind_witness, unit_ind_evidence }
 
+unit_rec : Unit -> (X:Set) => X -> X
+unit_rec u -X x := (unit_cast_full u).2 (λ u. X) x
+
+#erase unit_rec
+
 pre_unit_compose : PreUnit -> PreUnit -> PreUnit
 pre_unit_compose u v := [λ -X x. v.1 X (u.1 X x),
   λ -P x. v.2 (λ v. P (λ -X x. v X (u.1 X x))) (u.2 (λ u. P (λ -X x. u X x)) x)]
@@ -79,67 +84,84 @@ unit_compose u v := [pre_unit_compose u.1 v.1,
   λ -P x. v.2 (λ v. P (pre_unit_compose u.1 v)) (u.2 (λ u. P (pre_unit_compose u pre_unit)) x)]
 
 Cast : Set -> Set -> Set
-Cast A B := (A -> B) ∩ Unit
+Cast A B := (f : A -> A ∩ B) ∩ Unit
+
+cast : (A:Set) => (B:Set) => (k : Cast A B) -> A -> B
+cast -A -B k a := (k.1 a).2
+
+cast_ind : (A:Set) => (B:Set) => (k : Cast A B) -> (a:A) -> a = (k.1 a).1
+cast_ind -A -B k a := (unit_cast_full k.2).2 (λ k. a = (unit_rec k A a)) β{a}
 
 cast_trans : (A:Set) => (B:Set) => (C:Set) => Cast A B -> Cast B C -> Cast A C
-cast_trans -A -B -C u v := [λ a. v.1 (u.1 a), unit_compose u.2 v.2]
+cast_trans -A -B -C u v :=
+  [λ a. [unit_rec v.2 A (unit_rec u.2 A a), (v.1 (u.1 a).2).2],
+  unit_compose u.2 v.2]
 
 cast_refl : (A : Set) => Cast A A
-cast_refl -A := [λ a. a, unit]
+cast_refl -A := [λ a. [a, a], unit]
 
 DepCast : (A:Set) -> (A -> Set) -> Set
-DepCast A B := ((a:A) -> B a) ∩ Unit
+DepCast A B := ((a:A) -> A ∩ B a) ∩ Unit
+
+dcast : (A:Set) => (B:A -> Set) => (k : DepCast A B) -> (a:A) -> B a
+dcast -A -B k a := (k.1 a).2
 
 dcast_down : (A:Set) => (B:Set) => Cast (DepCast A (λ b. B)) (Cast A B)
-dcast_down -A -B := [λ c. c, unit]
+dcast_down -A -B := [λ c. [c, c], unit]
 
 unit_cast : DepCast Unit (λ u. (P : (x:Unit) -> Set) => P unit -> P u)
-unit_cast := [λ u. (unit_cast_full u).2, unit]
+unit_cast := [λ u. [u, (unit_cast_full u).2], unit]
 
-unit_to_fn : Cast Unit (Unit -> Unit)
-unit_to_fn := [λ u. unit_cast.1 u (λ u. Unit), unit]
+-- unit_to_fn : Cast Unit (Unit -> Unit)
+-- unit_to_fn := [λ u. unit_cast.1 u (λ u. Unit), unit]
 
 cast_singleton1 : (A:Set) => (B:Set) => (a:Cast A B) -> (b:Cast A B) -> (a.2) = (b.2)
-cast_singleton1 -A -B a b := unit_cast.1 a.2 (λ u. u = (b.2))
-  (unit_cast.1 b.2 (λ u. unit = u) β{unit})
+cast_singleton1 -A -B a b := (unit_cast.1 a.2).2 (λ u. u = (b.2))
+  ((unit_cast.1 b.2).2 (λ u. unit = u) β{unit})
 
 cast_singleton : (A:Set) => (B:Set) => (a:Cast A B) -> (b:Cast A B) -> a = b
-cast_singleton -A -B a b := ϑ{cast_singleton1 A B a b}
+cast_singleton -A -B a b := ϑ2{cast_singleton1 A B a b, a, b}
 
 CastMono : (Set -> Set) -> Set
 CastMono F := (A:Set) => (B:Set) => Cast A B -> Cast (F A) (F B)
 
-ExtIdMonoFn : (Set -> Set) -> Set
-ExtIdMonoFn F := (A:Set) => (B:Set) =>
-  (f:A -> A ∩ B) ->
-  ((a:A ∩ B) -> f a.1 = a) =>
-  F A -> F A ∩ F B
+-- Functor : (Set -> Set) -> Set
+-- Functor F := (A:Set) => (B:Set) => (A -> B) -> F A -> F B
 
-ExtIdMonoP : (F:Set -> Set) -> ExtIdMonoFn F -> Set
-ExtIdMonoP F i := (A:Set) => (B:Set) =>
-  (f: A -> A ∩ B) ->
-  (e: (a:A ∩ B) -> f a.1 = a) =>
-  (a: F A ∩ F B) -> (i A B f e a.1) = a
+cast_forget : (A:Set) => (B:Set) => Cast A B -> Cast A A
+cast_forget -A -B k := [λ a. [(k.1 a).1, (k.1 a).1], unit_eta k.2]
 
--- Lin : Set -> Set -> Set
--- Lin A B := (A -> B) ∩ (Unit -> Unit)
+-- -- ExtIdMonoFn : (Set -> Set) -> Set                  yyghbt vv
+-- -- ExtIdMonoFn F := (A:Set) => (B:Set) =>
+-- --   (f:A -> A ∩ B) ->
+-- --   ((a:A ∩ B) -> f a.1 = a) =>
+-- --   F A -> F A ∩ F B
 
--- lin_trans : (A:Set) => (B:Set) => (C:Set) => Lin A B -> Lin B C -> Lin A C
--- lin_trans -A -B -C u v := [λ a. v.1 (u.1 a), λ a. v.2 (u.2 a)]
+-- -- ExtIdMonoP : (F:Set -> Set) -> ExtIdMonoFn F -> Set
+-- -- ExtIdMonoP F i := (A:Set) => (B:Set) =>
+-- --   (f: A -> A ∩ B) ->
+-- --   (e: (a:A ∩ B) -> f a.1 = a) =>
+-- --   (a: F A ∩ F B) -> (i A B f e a.1) = a
 
--- lin_refl : (A:Set) => Lin A A
--- lin_refl -A := [λ a. a, λ a. a]
+-- -- Lin : Set -> Set -> Set
+-- -- Lin A B := (A -> B) ∩ (Unit -> Unit)
 
--- cast_to_lin : (A:Set) => (B:Set) => Cast A B -> Lin A B
--- cast_to_lin -A -B c := [c.1, unit_to_fn.1 c.2]
+-- -- lin_trans : (A:Set) => (B:Set) => (C:Set) => Lin A B -> Lin B C -> Lin A C
+-- -- lin_trans -A -B -C u v := [λ a. v.1 (u.1 a), λ a. v.2 (u.2 a)]
 
--- cast_cast_to_lin : (A:Set) => (B:Set) => Cast (Cast A B) (Lin A B)
--- cast_cast_to_lin -A -B := [cast_to_lin A B, unit]
+-- -- lin_refl : (A:Set) => Lin A A
+-- -- lin_refl -A := [λ a. a, λ a. a]
 
--- LinMono : (Set -> Set) -> Set
--- LinMono F := (A:Set) => (B:Set) => Lin A B -> Lin (F A) (F B)
+-- -- cast_to_lin : (A:Set) => (B:Set) => Cast A B -> Lin A B
+-- -- cast_to_lin -A -B c := [c.1, unit_to_fn.1 c.2]
 
--- cast_mono_to_lin_mono : (F:Set -> Set) => LinMono F -> CastMono F
--- cast_mono_to_lin_mono -F m -A -B l := ?
+-- -- cast_cast_to_lin : (A:Set) => (B:Set) => Cast (Cast A B) (Lin A B)
+-- -- cast_cast_to_lin -A -B := [cast_to_lin A B, unit]
 
--- lin_mono_to_cast_mono : (F:Set -> Set) => LinMono F -> CastMono F
+-- -- LinMono : (Set -> Set) -> Set
+-- -- LinMono F := (A:Set) => (B:Set) => Lin A B -> Lin (F A) (F B)
+
+-- -- cast_mono_to_lin_mono : (F:Set -> Set) => LinMono F -> CastMono F
+-- -- cast_mono_to_lin_mono -F m -A -B l := ?
+
+-- -- lin_mono_to_cast_mono : (F:Set -> Set) => LinMono F -> CastMono F

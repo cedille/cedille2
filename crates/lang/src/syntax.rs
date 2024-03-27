@@ -21,6 +21,7 @@ pub enum Command {
     Check(Term, Term),
     Erase(Term),
     Value(Term),
+    Unfold(Term),
 }
 
 #[derive(Debug, Clone)]
