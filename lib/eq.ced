@@ -7,28 +7,25 @@ subst : (A : Set) => (a : A) => (b : A) => (e : a = b) -> (P : (y : A) -> (a = y
 subst -A -a -b e -P := 𝜓 { e, P }
 
 J : (A : Set) =>
-  (P : (x : A) -> (y : A) -> (e : x = y) -> Set) =>
   (x : A) =>
   (y : A) =>
   (e : x = y) ->
+  (P : (x : A) -> (y : A) -> (e : x = y) -> Set) =>
   (w : (i : A) => P i i β{i}) ->
   P x y e
-J -A -P -x -y e w := subst A x y e (λ y e. P x y e) (w x)
+J -A -x -y e -P w := subst e -(λ y e. P x y e) (w -x)
 
 leibniz : (A : Set) => (P : (i : A) -> Set) => (x : A) => (y : A) => P x -> (x = y) -> P y
-leibniz -A -P -x -y p e := J A (λ x y e. P x -> P y) x y e (λ -i p. p) p
+leibniz -A -P -x -y p e := J e -(λ x y e. P x -> P y) (λ -i p. p) p
 
 sym : (A:Set) => (a:A) => (b:A) => (a = b) -> b = a
-sym -A -a -b e := subst A a b e (λ y e. y = a) β{a}
+sym -A -a -b e := subst e -(λ y e. y = a) β{a}
 
 trans : (A:Set) => (a:A) => (b:A) => (c:A) => (a = b) -> (b = c) -> a = c
-trans -A -a -b -c e1 e2 := subst A b c e2 (λ y e. a = y) e1
+trans -A -a -b -c e1 e2 := subst e2 -(λ y e. a = y) e1
 
 to_true : (A:Set) => (a:A) => (b:A) => (e:a = b) -> (X:Set) => X -> X
-to_true -A -a -b e -X x := subst A a b e (λ y e. X) x
-
---#erase eq_eta
--- #erase leibniz
+to_true -A -a -b e -X x := subst e -(λ y e. X) x
 
 -- refl_uip : (A:Set) => (a:A) => (p:a = a) -> β{a} = p
 -- refl_uip -A -a p := J A (λ a b i. β{b} = (leibniz A (λ i. i = b) a b ? i))

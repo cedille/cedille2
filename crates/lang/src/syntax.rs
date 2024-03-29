@@ -4,11 +4,24 @@ use cedille2_core::utility::*;
 type Span = (usize, usize);
 
 #[derive(Debug, Clone)]
-pub struct Parameter {
+pub struct ModuleInput {
     pub span: Span,
     pub mode: Mode,
     pub name: Symbol,
+    pub ann: Term
+}
+
+#[derive(Debug, Clone)]
+pub struct ObjectCondition {
+    pub span: Span,
+    pub name: Symbol,
     pub body: Term
+}
+
+#[derive(Debug, Clone)]
+pub enum Parameter {
+    Input(ModuleInput),
+    ObjectCondition(ObjectCondition)
 }
 
 #[derive(Debug, Clone)]
@@ -123,6 +136,7 @@ pub enum Term {
     },
     Cast {
         span: Span,
+        input: Box<Term>,
         witness: Box<Term>,
         evidence: Box<Term>
     },
@@ -140,6 +154,7 @@ pub enum Term {
     },
     Apply {
         span: Span,
+        mode: Mode,
         fun: Box<Term>,
         arg: Box<Term>
     },

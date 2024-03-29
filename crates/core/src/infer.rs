@@ -50,7 +50,7 @@ pub fn infer(db: &mut Database, ctx: Context, t: Term) -> Result<Value, Term> {
             let right = left.clone();
             Ok(ValueData::Equality { left, right, anno }.rced())
         }
-        TermData::Cast { witness, evidence } => todo!(),
+        TermData::Cast { input, witness, evidence } => todo!(),
         TermData::Promote { variant, equation, lhs, rhs } => {
             todo!()
             // let equation_ty = infer(db, ctx.clone(), equation.clone())?;
@@ -111,17 +111,17 @@ pub fn infer(db: &mut Database, ctx: Context, t: Term) -> Result<Value, Term> {
                 Ok(result)
             } else { Err(t) }
         },
-        TermData::Meta { sort, name } => unimplemented!(),
-        TermData::InsertedMeta { sort, name, mask } => unimplemented!(),
+        TermData::Meta { sort, module, name } => unimplemented!(),
+        TermData::InsertedMeta { sort, module, name, mask } => unimplemented!(),
         TermData::Star => Ok(ValueData::SuperStar.rced()),
         TermData::SuperStar => Err(t),
     }
 }
 
 pub fn check(db: &mut Database, ctx: Context, t: Term, ty: Value) -> Result<(), Term> {
-    let inferred_ty = infer(db, ctx.clone(), t)?;
+    let inferred_ty = infer(db, ctx.clone(), t.clone())?;
     let level: Level = ctx.env.len().into();
-    if unify(db, level, inferred_ty, ty.clone()) { Ok(()) }
+    if unify(db, level, inferred_ty, ty.clone()).map_err(|_| t)? { Ok(()) }
     else { Err(quote(db, ty, level)) }
 }
 
@@ -131,7 +131,7 @@ fn check_mode(lhs: Mode, rhs: Mode, err: Term) -> Result<Mode, Term> {
 }
 
 fn try_unify(db: &mut Database, level: Level, lhs: Value, rhs: Value, err: Term) -> Result<(), Term> {
-    if unify(db, level, lhs, rhs) { Ok(()) }
+    if unify(db, level, lhs, rhs).map_err(|_| err.clone())? { Ok(()) }
     else { Err(err) }
 }
 

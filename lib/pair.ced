@@ -12,73 +12,73 @@ church_pair -A -B a b -X ctor := ctor a b
 PrePairInd : (A:Set) -> (B:Set) -> ChurchPair A B -> Set
 PrePairInd A B x :=
   (P:ChurchPair A B -> Set) =>
-  ((a:A) -> (b:B) -> P (church_pair A B a b)) ->
+  ((a:A) -> (b:B) -> P (church_pair a b)) ->
   P x
 
 PrePair : Set -> Set -> Set
 PrePair A B := (x:ChurchPair A B) ∩ PrePairInd A B x
 
 pre_pair : (A:Set) => (B:Set) => A -> B -> PrePair A B
-pre_pair -A -B a b := [church_pair A B a b, λ -P ctor. ctor a b]
+pre_pair -A -B a b := [church_pair a b, λ -P ctor. ctor a b]
 
 pre_pair_to : (A:Set) => (B:Set) => ChurchPair A B -> PrePair A B
-pre_pair_to -A -B x := x (PrePair A B) (pre_pair A B)
+pre_pair_to -A -B x := x (pre_pair -A -B)
 
-pre_pair_fixed1 : (A:Set) => (B:Set) => (x:PrePair A B) -> (pre_pair_to A B x.1).1 = (x.1)
+pre_pair_fixed1 : (A:Set) => (B:Set) => (x:PrePair A B) -> (pre_pair_to x.1).1 = (x.1)
 pre_pair_fixed1 -A -B x := x.2
-  (λ x. (pre_pair_to A B x).1 = x)
-  (λ a b. β{church_pair A B a b})
+  -(λ x. (pre_pair_to x).1 = x)
+  (λ a b. β{church_pair a b})
 
-pre_pair_fixed : (A:Set) => (B:Set) => (x:PrePair A B) -> pre_pair_to A B x.1 = x
-pre_pair_fixed -A -B x := ϑ1{pre_pair_fixed1 A B x, pre_pair_to A B x.1, x}
+pre_pair_fixed : (A:Set) => (B:Set) => (x:PrePair A B) -> pre_pair_to x.1 = x
+pre_pair_fixed -A -B x := ϑ1{pre_pair_fixed1 x, pre_pair_to x.1, x}
 
 pre_pair_ind : (A:Set) => (B:Set) => (x:PrePair A B) ->
   (P:PrePair A B -> Set) =>
-  ((a:A) -> (b:B) -> P (pre_pair A B a b)) ->
+  ((a:A) -> (b:B) -> P (pre_pair a b)) ->
   P x
 pre_pair_ind -A -B x -P ctor :=
-  let inner : P (pre_pair_to A B x.1) := x.2 (λ x. P (pre_pair_to A B x)) ctor
-  leibniz (PrePair A B) P (pre_pair_to A B x.1) x inner (pre_pair_fixed A B x)
+  let inner : P (pre_pair_to x.1) := x.2 -(λ x. P (pre_pair_to x)) ctor
+  leibniz -(PrePair A B) -P -(pre_pair_to x.1) -x inner (pre_pair_fixed x)
 
 PairInd : (A:Set) -> (B:Set) -> PrePair A B -> Set
 PairInd A B x :=
   (P:PrePair A B -> Set) =>
-  ((a:A) -> (b:B) -> P (pre_pair A B a b)) ->
+  ((a:A) -> (b:B) -> P (pre_pair a b)) ->
   P x
 
 Pair : Set -> Set -> Set
 Pair A B := (x:PrePair A B) ∩ PairInd A B x
 
 pair : (A:Set) => (B:Set) => A -> B -> Pair A B
-pair -A -B a b := [pre_pair A B a b, λ -P ctor. ctor a b]
+pair -A -B a b := [pre_pair a b, λ -P ctor. ctor a b]
 
 pair_to : (A:Set) => (B:Set) => PrePair A B -> Pair A B
-pair_to -A -B x := x.1 (Pair A B) (pair A B)
+pair_to -A -B x := x.1 (pair -A -B)
 
-pair_fixed : (A:Set) => (B:Set) => (x:PrePair A B) -> x = (pair_to A B x).1
-pair_fixed -A -B x := pre_pair_ind A B x
-  (λ x. x = (pair_to A B x).1)
-  (λ a b. β{pre_pair A B a b})
+pair_fixed : (A:Set) => (B:Set) => (x:PrePair A B) -> x = (pair_to x).1
+pair_fixed -A -B x := pre_pair_ind x
+  -(λ x. x = (pair_to -A -B x).1)
+  (λ a b. β{pre_pair -A -B a b})
 
 pre_pair_cast : (A:Set) => (B:Set) => PrePair A B -> Pair A B
-pre_pair_cast -A -B := φ { pair_to A B, pair_fixed A B }
+pre_pair_cast -A -B x := φ { x, pair_to x, pair_fixed x }
 
 pair_ind : (A:Set) => (B:Set) => (x:Pair A B) ->
   (P:Pair A B -> Set) =>
-  ((a:A) -> (b:B) -> P (pair A B a b)) ->
+  ((a:A) -> (b:B) -> P (pair a b)) ->
   P x
-pair_ind -A -B x -P ctor := x.2 (λ x. P (pre_pair_cast A B x)) ctor
+pair_ind -A -B x -P ctor := x.2 -(λ x. P (pre_pair_cast x)) ctor
 
 pair_rec : (A:Set) => (B:Set) => (x:Pair A B) -> (X:Set) => (A -> B -> X) -> X
-pair_rec -A -B x -X elim := pair_ind A B x (λ p. X) elim
+pair_rec -A -B x -X elim := pair_ind x -(λ p. X) elim
 
 fst : (A:Set) => (B:Set) => Pair A B -> A
-fst -A -B x := pair_rec A B x A (λ a b. a)
+fst -A -B x := pair_rec x -A (λ a b. a)
 
 snd : (A:Set) => (B:Set) => Pair A B -> B
-snd -A -B x := pair_rec A B x B (λ a b. b)
+snd -A -B x := pair_rec x -B (λ a b. b)
 
-pair_eta_law : (A:Set) => (B:Set) => (x:Pair A B) -> x = pair A B (fst A B x) (snd A B x)
-pair_eta_law -A -B x := pair_ind A B x
-  (λ x. x = pair A B (fst A B x) (snd A B x))
-  (λ a b. β{pair A B a b})
+pair_eta_law : (A:Set) => (B:Set) => (x:Pair A B) -> x = pair -A -B (fst x) (snd x)
+pair_eta_law -A -B x := pair_ind x
+  -(λ x. x = pair -A -B (fst -A -B x) (snd -A -B x))
+  (λ a b. β{pair -A -B a b})

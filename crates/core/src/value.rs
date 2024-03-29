@@ -173,6 +173,7 @@ pub enum ValueData {
         input: LazyValue
     },
     Cast {
+        input: Value,
         witness: Value,
         evidence: Value,
         spine: Spine
@@ -223,8 +224,8 @@ impl fmt::Display for ValueData {
                 write!(f, "[{}, {}; {}]", first, second, anno)
             }
             ValueData::Refl { input } => write!(f, "β({})", input),
-            ValueData::Cast { witness, evidence, spine } => {
-                write!(f, "φ({}, {})", witness, evidence)?;
+            ValueData::Cast { input, witness, evidence, spine } => {
+                write!(f, "φ({}, {}, {})", input, witness, evidence)?;
                 for action in spine.iter() { action.fmt(f)?; }
                 Ok(())
             }
@@ -314,8 +315,8 @@ impl ValueOps for Value {
             ValueData::Reference { sort, id, unfolded, .. } => {
                 ValueData::Reference { sort, id, spine, unfolded }.rced()
             }
-            ValueData::Cast { witness, evidence, .. } => {
-                ValueData::Cast { witness, evidence, spine }.rced()
+            ValueData::Cast { input, witness, evidence, .. } => {
+                ValueData::Cast { input, witness, evidence, spine }.rced()
             }
             v => v.rced()
         }

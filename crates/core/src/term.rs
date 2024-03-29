@@ -21,7 +21,8 @@ pub struct Module {
 pub struct Parameter {
     pub name: Symbol,
     pub mode: Mode,
-    pub body: Term
+    pub ann: Term,
+    pub erasure: Option<Term>
 }
 
 #[derive(Debug, Hash, Clone, PartialEq, Eq)]
@@ -88,6 +89,7 @@ pub enum TermData {
         input: Term
     },
     Cast {
+        input: Term,
         witness: Term,
         evidence: Term,
     },
@@ -117,10 +119,12 @@ pub enum TermData {
     },
     Meta {
         sort: Sort,
+        module: Symbol,
         name: Symbol
     },
     InsertedMeta {
         sort: Sort,
+        module: Symbol,
         name: Symbol,
         mask: Vec<EnvBound>
     },
@@ -156,50 +160,6 @@ impl TermData {
             | TermData::InsertedMeta { sort, .. } => *sort,
             TermData::Star => Sort::Kind,
             TermData::SuperStar => Sort::Kind,
-        }
-    }
-
-    pub fn fv_empty_index(&self, index: Index) -> bool {
-        match self {
-            TermData::Lambda { domain, body, .. } => {
-                domain.fv_empty_index(index) && body.fv_empty_index(index + 1)
-            }
-            TermData::Let { let_body, body, .. } => {
-                let_body.fv_empty_index(index) && body.fv_empty_index(index + 1)
-            }
-            TermData::Pi { domain, body, .. } => {
-                domain.fv_empty_index(index) && body.fv_empty_index(index + 1)
-            }
-            TermData::Intersect { first, second, .. } => {
-                first.fv_empty_index(index) && second.fv_empty_index(index + 1)
-            }
-            TermData::Equality { left, right, anno } => {
-                left.fv_empty_index(index) && right.fv_empty_index(index) && anno.fv_empty_index(index)
-            }
-            TermData::Project { body, .. } => body.fv_empty_index(index),
-            TermData::Pair { first, second, anno } => {
-                first.fv_empty_index(index) && second.fv_empty_index(index) && anno.fv_empty_index(index)
-            }
-            TermData::Separate { equation } => equation.fv_empty_index(index),
-            TermData::Refl { input } => input.fv_empty_index(index),
-            TermData::Cast { witness, evidence } => {
-                witness.fv_empty_index(index) && evidence.fv_empty_index(index)
-            }
-            TermData::Promote { equation, lhs, rhs, .. } => {
-                equation.fv_empty_index(index) && lhs.fv_empty_index(index) && rhs.fv_empty_index(index)
-            }
-            TermData::Subst { equation, predicate } => {
-                equation.fv_empty_index(index) && predicate.fv_empty_index(index)
-            }
-            TermData::Apply { fun, arg, .. } => {
-                fun.fv_empty_index(index) && arg.fv_empty_index(index)
-            }
-            TermData::Bound { index:var, .. } => **var < *index,
-            TermData::Free { .. } => true,
-            TermData::Meta { .. } => true,
-            TermData::InsertedMeta { .. } => true,
-            TermData::Star => true,
-            TermData::SuperStar => true,
         }
     }
 
@@ -296,10 +256,11 @@ impl TermData {
                 let rhs_str = rhs.to_string_with_context(ctx);
                 format!("ϑ{} {{ {}, {}, {} }}", *variant, equation_str, lhs_str, rhs_str)
             }
-            TermData::Cast { witness, evidence } => {
+            TermData::Cast { input, witness, evidence } => {
                 let equation_str = evidence.to_string_with_context(ctx.clone());
-                let witness = witness.to_string_with_context(ctx);
-                format!("φ {{{}, {}}}", witness, equation_str)
+                let witness_str = witness.to_string_with_context(ctx.clone());
+                let input_str = input.to_string_with_context(ctx);
+                format!("φ {{{}, {}, {}}}", input_str, witness, equation_str)
             }
             TermData::Subst { equation, predicate } => {
                 let equation_str = equation.to_string_with_context(ctx.clone());
@@ -409,10 +370,11 @@ impl TermExt for Term {
                 let input = input.shift(db, amount, cutoff);
                 db.make_term(TermData::Refl { input })
             }
-            TermData::Cast { witness, evidence } => {
+            TermData::Cast { input, witness, evidence } => {
+                let input = input.shift(db, amount, cutoff);
                 let witness = witness.shift(db, amount, cutoff);
                 let evidence = evidence.shift(db, amount, cutoff);
-                db.make_term(TermData::Cast { witness, evidence })
+                db.make_term(TermData::Cast { input, witness, evidence })
             }
             TermData::Promote { variant, equation, lhs, rhs } => {
                 let equation = equation.shift(db, amount, cutoff);

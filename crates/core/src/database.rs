@@ -195,8 +195,13 @@ impl Database {
                     params = module_data.params.iter()
                         .enumerate()
                         .map(|(level, p)| {
-                            let sort = p.body.sort().demote();
-                            (p.mode, LazyValueData::var(self, sort, level.into()))
+                            let sort = p.ann.sort().demote();
+                            let arg = if let Some(erasure) = p.erasure.clone() {
+                                LazyValueData::lazy(self, Env::new(), erasure)
+                            } else {
+                                LazyValueData::var(self, sort, level.into())
+                            };
+                            (p.mode, arg)
                         }).collect();
                 }
             }
@@ -321,7 +326,6 @@ impl Database {
                 *meta = MetaState::Solved(value.clone());
             }
         }
-        //log::info!("\n{}\n{}\n{}", name, "solved to", value.quote(self, 0.into()));
         Ok(())
     }
 

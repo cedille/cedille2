@@ -7,6 +7,7 @@ use crate::utility::*;
 use crate::database::*;
 use crate::term::*;
 use crate::value::*;
+use crate::metavar::*;
 
 pub trait PerformAction {
     fn perform(self, db: &Database, action: Action) -> Self;
@@ -102,6 +103,18 @@ impl Closure {
 }
 
 pub fn eval(db: &Database, env: Env, term: Term) -> Value {
+    fn eval_meta(db: &Database, sort: Sort, module: Symbol, name: Symbol) -> Value {
+        match db.lookup_meta(module, name) {
+            MetaState::Unsolved | MetaState::Frozen => ValueData::MetaVariable {
+                sort,
+                name,
+                module,
+                spine: Spine::new(),
+            }.rced(),
+            MetaState::Solved(v) => v
+        }
+    }
+
     //println!("env_len: {}, term: {}", env.len(), term.clone());
     let result = match term.cloned() {
         TermData::Lambda { sort, mode, name, domain, body } => {
@@ -149,11 +162,12 @@ pub fn eval(db: &Database, env: Env, term: Term) -> Value {
             let input = LazyValueData::lazy(db, env.clone(), input);
             ValueData::Refl { input }.rced()
         }
-        TermData::Cast { witness, evidence } => {
+        TermData::Cast { input, witness, evidence } => {
+            let input = eval(db, env.clone(), input);
             let witness = eval(db, env.clone(), witness);
             let evidence = eval(db, env, evidence);
             let spine = Vector::new();
-            ValueData::Cast { witness, evidence, spine }.rced()
+            ValueData::Cast { input, witness, evidence, spine }.rced()
         }
         TermData::Promote { variant, equation, lhs, rhs } => {
             let lhs = LazyValueData::lazy(db, env.clone(), lhs);
@@ -181,35 +195,26 @@ pub fn eval(db: &Database, env: Env, term: Term) -> Value {
             let unfolded = db.lookup_def(&id);
             ValueData::Reference { sort, id, spine, unfolded }.rced()
         }
-        TermData::Meta { sort, name } => unimplemented!(),
-        TermData::InsertedMeta { sort, name, mask } => unimplemented!(),
+        TermData::Meta { sort, module, name } => eval_meta(db, sort, module, name),
+        TermData::InsertedMeta { sort, module, name, mask } => {
+            let mut result = eval_meta(db, sort, module, name);
+            for (level, bound) in mask.iter().enumerate() {
+                let level = Level::from(level);
+                match bound {
+                    EnvBound::Bound => {
+                        let arg = env.get(*level).unwrap();
+                        result = result.perform(db, Action::Apply(arg.mode, arg.value.clone()));
+                    }
+                    EnvBound::Defined => { }
+                }
+            }
+            result
+        }
         TermData::Star => ValueData::Star.rced(),
         TermData::SuperStar => ValueData::SuperStar.rced()
     };
 
     result
-    // fn eval_meta(db: &Database, sort: Sort, module: Symbol, name: Symbol) -> Value {
-    //     match db.lookup_meta(module, name) {
-    //         MetaState::Unsolved | MetaState::Frozen => Value::meta(sort, name, module, Spine::new()),
-    //         MetaState::Solved(v) => v
-    //     }
-    // }
-    //     TermData::Meta { sort, name } => eval_meta(db, *sort, module, *name),
-    //     TermData::InsertedMeta { sort, name, mask } => {
-    //         let mut result = eval_meta(db,*sort,  module, *name);
-    //         for (level, bound) in mask.iter().enumerate() {
-    //             let level = Level::from(level);
-    //             match bound {
-    //                 EnvBound::Bound => {
-    //                     let arg = &env[level];
-    //                     let arg = SpineEntry::new(arg.mode, arg.value.clone());
-    //                     result = result.apply(db, arg);
-    //                 }
-    //                 EnvBound::Defined => { }
-    //             }
-    //         }
-    //         result
-    //     }
 }
 
 fn quote_spine(db: &Database, head: Term, spine: Spine, level: Level) -> Term {
@@ -246,7 +251,10 @@ pub fn quote(db: &Database, value: Value, level: Level) -> Term {
             let head = db.make_term(TermData::Bound { sort, index });
             quote_spine(db, head, spine, level)
         }
-        ValueData::MetaVariable { sort, name, module, spine } => unimplemented!(),
+        ValueData::MetaVariable { sort, name, module, spine } => {
+            let head = db.make_term(TermData::Meta { sort, module, name });
+            quote_spine(db, head, spine, level)
+        }
         ValueData::Reference { sort, id, spine, .. } => {
             let head = db.make_term(TermData::Free { sort, id });
             quote_spine(db, head, spine, level)
@@ -262,10 +270,11 @@ pub fn quote(db: &Database, value: Value, level: Level) -> Term {
             let input = quote(db, input, level);
             db.make_term(TermData::Refl { input })
         }
-        ValueData::Cast { witness, evidence, spine } => {
+        ValueData::Cast { input, witness, evidence, spine } => {
+            let input = quote(db, input, level);
             let witness = quote(db, witness, level);
             let evidence = quote(db, evidence, level);
-            let head = db.make_term(TermData::Cast { witness, evidence });
+            let head = db.make_term(TermData::Cast { input, witness, evidence });
             quote_spine(db, head, spine, level)
         }
         ValueData::Lambda { sort, mode, name, domain, closure } => {
@@ -326,7 +335,10 @@ impl ValueData {
                 let spine = erase_spine(db, spine);
                 ValueData::Variable { sort, level, spine }.rced()
             }
-            ValueData::MetaVariable { sort, name, module, spine } => todo!(),
+            ValueData::MetaVariable { sort, name, module, spine } => {
+                let spine = erase_spine(db, spine);
+                ValueData::MetaVariable { sort, name, module, spine }.rced()
+            }
             ValueData::Reference { sort, id, spine, unfolded } => {
                 let spine = erase_spine(db, spine);
                 let unfolded = unfolded.map(|v| v.erase(db));
@@ -334,10 +346,10 @@ impl ValueData {
             }
             ValueData::Pair { first, .. } => first.erase(db),
             ValueData::Refl { .. } => Value::id(db, Sort::Term, Mode::Free, ValueData::SuperStar.rced()),
-            ValueData::Cast { spine, .. } => {
-                let result = Value::id(db, Sort::Term, Mode::Free, ValueData::SuperStar.rced());
+            ValueData::Cast { input, spine, .. } => {
+                let input = input.erase(db);
                 let spine = erase_spine(db, spine);
-                result.perform_spine(db, spine)
+                input.perform_spine(db, spine)
             }
             ValueData::Lambda { sort, mode, name, domain, closure } => {
                 match mode {
@@ -382,6 +394,18 @@ impl ValueData {
 
 impl TermData {
     pub fn erase(&self, db: &Database, mut env: Env) -> Value {
+        fn erase_meta(db: &Database, sort: Sort, module: Symbol, name: Symbol) -> Value {
+            match db.lookup_meta(module, name) {
+                MetaState::Unsolved | MetaState::Frozen => ValueData::MetaVariable {
+                    sort,
+                    name,
+                    module,
+                    spine: Spine::new(),
+                }.rced(),
+                MetaState::Solved(v) => v
+            }
+        }
+
         match self.clone() {
             TermData::Lambda { sort, mode, name, domain, body } => {
                 let closure = Closure::new(env.clone(), body).erase();
@@ -424,7 +448,7 @@ impl TermData {
             TermData::Pair { first, .. } => first.erase(db, env),
             TermData::Separate { equation } => equation.erase(db, env),
             TermData::Refl { .. } => Value::id(db, Sort::Term, Mode::Free, ValueData::SuperStar.rced()),
-            TermData::Cast { .. } => Value::id(db, Sort::Term, Mode::Free, ValueData::SuperStar.rced()),
+            TermData::Cast { input, .. } => input.erase(db, env),
             TermData::Promote { equation, .. } => equation.erase(db, env),
             TermData::Subst { equation, ..} => equation.erase(db, env),
             TermData::Apply { mode, fun, arg, .. } => {
@@ -444,8 +468,21 @@ impl TermData {
                 let unfolded = db.lookup_def(&id).map(|v| v.erase(db));
                 ValueData::Reference { sort, id, spine, unfolded }.rced()
             }
-            TermData::Meta { sort, name } => unimplemented!(),
-            TermData::InsertedMeta { sort, name, mask } => unimplemented!(),
+            TermData::Meta { sort, module, name } => erase_meta(db, sort, module, name),
+            TermData::InsertedMeta { sort, module, name, mask } => {
+                let mut result = erase_meta(db, sort, module, name);
+                for (level, bound) in mask.iter().enumerate() {
+                    let level = Level::from(level);
+                    match bound {
+                        EnvBound::Bound => {
+                            let arg = env.get(*level).unwrap();
+                            result = result.perform(db, Action::Apply(arg.mode, arg.value.clone()));
+                        }
+                        EnvBound::Defined => { }
+                    }
+                }
+                result
+            }
             TermData::Star => ValueData::Star.rced(),
             TermData::SuperStar => ValueData::SuperStar.rced()
         }
@@ -460,9 +497,7 @@ impl TermData {
 //     match value.as_ref() {
 
 //         Value::MetaVariable { name, spine, .. } => {
-//             let sort = value.sort(db);
-//             let var = Term::Meta { sort, name: *name };
-//             Value::reify_spine(db, level, var, spine.clone(), unfold)
+
 //         }
 //     }
 // }

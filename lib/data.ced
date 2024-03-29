@@ -4,7 +4,7 @@ import cast
 module data
   (F : Set -> Set)
   (mono : CastMono F)
-  (func : Functor F)
+  (mono = unit)
 
 Church : Set
 Church := (X : Set) => ((R : Set) => (R -> R) -> (R -> X) -> F R -> X) -> X
@@ -16,14 +16,14 @@ PreInd : Church -> Set
 PreInd x := (P : Church -> Set) =>
   ((R:Set) =>
   (f: Cast R Church) ->
-  (ih:(r:R) -> P (f.1 r)) ->
+  (ih:(r:R) -> P (f.1 r).2) ->
   (r:F R) ->
-  P (church_in ((mono R Church f).1 r))) ->
+  P (church_in ((mono R Church f).1 r).2)) ->
   P x
 
 Pre : Set
 Pre := (x : Church) ∩ PreInd x
 
 pre_in : F Pre -> Pre
-pre_in xs := [church_in ((mono Pre Church [λ x. x.1, unit]).1 xs)
-  , λ -P ctor. ctor Pre [λ x. x.1, unit] (λ x. x.2 P ctor) xs]
+pre_in xs := [church_in ((mono Pre Church [λ x. [x, x.1], unit]).1 xs).2
+  , λ -P ctor. ctor Pre [λ x. [x, x.1], unit] (λ x. x.2 P ctor) xs]

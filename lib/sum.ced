@@ -15,101 +15,101 @@ church_in2 -A -B b -X in1 in2 := in2 b
 PreSumInd : (A:Set) -> (B:Set) -> ChurchSum A B -> Set
 PreSumInd A B x :=
   (P:ChurchSum A B -> Set) =>
-  ((a:A) -> P (church_in1 A B a)) ->
-  ((b:B) -> P (church_in2 A B b)) ->
+  ((a:A) -> P (church_in1 a)) ->
+  ((b:B) -> P (church_in2 b)) ->
   P x
 
 PreSum : Set -> Set -> Set
 PreSum A B := (x:ChurchSum A B) ∩ PreSumInd A B x
 
 pre_in1 : (A:Set) => (B:Set) => A -> PreSum A B
-pre_in1 -A -B a := [church_in1 A B a, λ -P in1 in2. in1 a]
+pre_in1 -A -B a := [church_in1 a, λ -P in1 in2. in1 a]
 
 pre_in2 : (A:Set) => (B:Set) => B -> PreSum A B
-pre_in2 -A -B b := [church_in2 A B b, λ -P in1 in2. in2 b]
+pre_in2 -A -B b := [church_in2 b, λ -P in1 in2. in2 b]
 
 pre_sum_to : (A:Set) => (B:Set) => ChurchSum A B -> PreSum A B
-pre_sum_to -A -B x := x (PreSum A B) (pre_in1 A B) (pre_in2 A B)
+pre_sum_to -A -B x := x -(PreSum A B) (pre_in1 -A -B) (pre_in2 -A -B)
 
-pre_sum_fixed1 : (A:Set) => (B:Set) => (x:PreSum A B) -> (pre_sum_to A B x.1).1 = (x.1)
-pre_sum_fixed1 -A -B x := x.2
-  (λ x. (pre_sum_to A B x).1 = x)
-  (λ a. β{church_in1 A B a})
-  (λ b. β{church_in2 A B b})
+pre_sum_fixed1 : (A:Set) => (B:Set) => (x:PreSum A B) -> (pre_sum_to -A -B x.1).1 = (x.1)
+pre_sum_fixed1 -A -B xs := xs.2
+  -(λ x. (pre_sum_to -A -B x).1 = x)
+  (λ a. β{church_in1 -A -B a})
+  (λ b. β{church_in2 -A -B b})
 
-pre_sum_fixed : (A:Set) => (B:Set) => (x:PreSum A B) -> pre_sum_to A B x.1 = x
-pre_sum_fixed -A -B x := ϑ1{pre_sum_fixed1 A B x, pre_sum_to A B x.1, x}
+pre_sum_fixed : (A:Set) => (B:Set) => (x:PreSum A B) -> pre_sum_to x.1 = x
+pre_sum_fixed -A -B x := ϑ1{pre_sum_fixed1 x, pre_sum_to x.1, x}
 
 pre_sum_ind : (A:Set) => (B:Set) => (x:PreSum A B) ->
   (P:PreSum A B -> Set) =>
-  ((a:A) -> P (pre_in1 A B a)) ->
-  ((b:B) -> P (pre_in2 A B b)) ->
+  ((a:A) -> P (pre_in1 a)) ->
+  ((b:B) -> P (pre_in2 b)) ->
   P x
 pre_sum_ind -A -B x -P in1 in2 :=
-  let inner : P (pre_sum_to A B x.1) := x.2 (λ x. P (pre_sum_to A B x)) in1 in2
-  leibniz (PreSum A B) P (pre_sum_to A B x.1) x inner (pre_sum_fixed A B x)
+  let inner : P (pre_sum_to x.1) := x.2 -(λ x. P (pre_sum_to x)) in1 in2
+  leibniz -(PreSum A B) -P -(pre_sum_to x.1) -x inner (pre_sum_fixed -A -B x)
 
 SumInd : (A:Set) -> (B:Set) -> PreSum A B -> Set
 SumInd A B x :=
   (P:PreSum A B -> Set) =>
-  ((a:A) -> P (pre_in1 A B a)) ->
-  ((b:B) -> P (pre_in2 A B b)) ->
+  ((a:A) -> P (pre_in1 a)) ->
+  ((b:B) -> P (pre_in2 b)) ->
   P x
 
 Sum : Set -> Set -> Set
 Sum A B := (x:PreSum A B) ∩ SumInd A B x
 
 in1 : (A:Set) => (B:Set) => A -> Sum A B
-in1 -A -B a := [pre_in1 A B a, λ -P in1 in2. in1 a]
+in1 -A -B a := [pre_in1 a, λ -P in1 in2. in1 a]
 
 in2 : (A:Set) => (B:Set) => B -> Sum A B
-in2 -A -B b := [pre_in2 A B b, λ -P in1 in2. in2 b]
+in2 -A -B b := [pre_in2 b, λ -P in1 in2. in2 b]
 
 sum_to : (A:Set) => (B:Set) => PreSum A B -> Sum A B
-sum_to -A -B x := x.1 (Sum A B) (in1 A B) (in2 A B)
+sum_to -A -B x := x.1 (in1 -A -B) (in2 -A -B)
 
-sum_fixed : (A:Set) => (B:Set) => (x:PreSum A B) -> x = (sum_to A B x).1
-sum_fixed -A -B x := pre_sum_ind A B x
-  (λ x. x = (sum_to A B x).1)
-  (λ a. β{pre_in1 A B a})
-  (λ b. β{pre_in2 A B b})
+sum_fixed : (A:Set) => (B:Set) => (x:PreSum A B) -> x = (sum_to -A -B x).1
+sum_fixed -A -B x := pre_sum_ind x
+  -(λ x. x = (sum_to -A -B x).1)
+  (λ a. β{pre_in1 -A -B a})
+  (λ b. β{pre_in2 -A -B b})
 
 pre_sum_cast : (A:Set) => (B:Set) => PreSum A B -> Sum A B
-pre_sum_cast -A -B := φ { sum_to A B, sum_fixed A B }
+pre_sum_cast -A -B x := φ { x, sum_to x, sum_fixed x }
 
 sum_ind : (A:Set) => (B:Set) => (x:Sum A B) ->
   (P:Sum A B -> Set) =>
-  ((a:A) -> P (in1 A B a)) ->
-  ((b:B) -> P (in2 A B b)) ->
+  ((a:A) -> P (in1 a)) ->
+  ((b:B) -> P (in2 b)) ->
   P x
-sum_ind -A -B x -P i1 i2 := x.2 (λ x. P (pre_sum_cast A B x)) i1 i2
+sum_ind -A -B x -P i1 i2 := x.2 -(λ x. P (pre_sum_cast x)) i1 i2
 
 church_sum_eta : (A:Set) => (B:Set) => ChurchSum A B -> ChurchSum A B
-church_sum_eta -A -B x := λ -X i1 i2. x X i1 i2
+church_sum_eta -A -B x := λ -X i1 i2. x -X i1 i2
 
 pre_sum_eta : (A:Set) => (B:Set) => PreSum A B -> PreSum A B
-pre_sum_eta -A -B x := [church_sum_eta A B x.1,
-  λ -P i1 i2. x.2 (λ x. P (church_sum_eta A B x)) i1 i2]
+pre_sum_eta -A -B x := [church_sum_eta x.1,
+  λ -P i1 i2. x.2 -(λ x. P (church_sum_eta x)) i1 i2]
 
 sum_eta : (A:Set) => (B:Set) => Sum A B -> Sum A B
-sum_eta -A -B x := [pre_sum_eta A B x.1,
-  λ -P i1 i2. x.2 (λ x. P (pre_sum_eta A B x)) i1 i2]
+sum_eta -A -B x := [pre_sum_eta x.1,
+  λ -P i1 i2. x.2 -(λ x. P (pre_sum_eta x)) i1 i2]
 
 sum_ind_witness : (A:Set) => (B:Set) => (x:Sum A B) ->
   (Sum A B)
-  ∩ ((P:Sum A B -> Set) => ((a:A) -> P (in1 A B a)) -> ((b:B) -> P (in2 A B b)) -> P x)
-sum_ind_witness -A -B x := [sum_eta A B x, sum_ind A B x]
+  ∩ ((P:Sum A B -> Set) => ((a:A) -> P (in1 a)) -> ((b:B) -> P (in2 b)) -> P x)
+sum_ind_witness -A -B x := [sum_eta x, sum_ind x]
 
-sum_ind_evidence : (A:Set) => (B:Set) => (x:Sum A B) -> x = (sum_ind_witness A B x).1
-sum_ind_evidence -A -B x := sum_ind A B x (λ x. x = (sum_ind_witness A B x).1)
-  (λ a. β{in1 A B a})
-  (λ b. β{in2 A B b})
+sum_ind_evidence : (A:Set) => (B:Set) => (x:Sum A B) -> x = (sum_ind_witness x).1
+sum_ind_evidence -A -B x := sum_ind x -(λ x. x = (sum_ind_witness -A -B x).1)
+  (λ a. β{in1 -A -B a})
+  (λ b. β{in2 -A -B b})
 
 sum_cast_full : (A:Set) => (B:Set) => (x:Sum A B) ->
   (Sum A B)
-  ∩ ((P:Sum A B -> Set) => ((a:A) -> P (in1 A B a)) -> ((b:B) -> P (in2 A B b)) -> P x)
-sum_cast_full -A -B := φ { sum_ind_witness A B, sum_ind_evidence A B }
+  ∩ ((P:Sum A B -> Set) => ((a:A) -> P (in1 a)) -> ((b:B) -> P (in2 b)) -> P x)
+sum_cast_full -A -B x := φ { x, sum_ind_witness x, sum_ind_evidence x }
 
 sum_cast : (A:Set) => (B:Set) => DepCast (Sum A B)
-  (λ x. (P:Sum A B -> Set) => ((a:A) -> P (in1 A B a)) -> ((b:B) -> P (in2 A B b)) -> P x)
-sum_cast -A -B := [sum_cast_full A B, unit]
+  (λ x. (P:Sum A B -> Set) => ((a:A) -> P (in1 a)) -> ((b:B) -> P (in2 b)) -> P x)
+sum_cast -A -B := [sum_cast_full -A -B, unit]

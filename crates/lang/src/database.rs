@@ -15,11 +15,7 @@ use normpath::PathExt;
 use if_chain::if_chain;
 use nom_locate::LocatedSpan;
 
-use cedille2_core::utility::*;
-use cedille2_core::term;
-use cedille2_core::metavar::MetaState;
-use cedille2_core::value::*;
-use cedille2_core::database::{Database, ModuleData, ImportData};
+use cedille2_core::prelude::*;
 use crate::{syntax, elaborator};
 use crate::parser;
 //use crate::elaborator::{self, Context, ElabError};

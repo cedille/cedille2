@@ -42,14 +42,6 @@ bad_eq g := g ((a g) = ((b g).1))
 
 import pair
 
-phi-safety : Pair (Id -> Id) False
-...
-
-elim tt := False
-elim ff := True
-
-phi-safety : elim b
-phi-safety := 
 
 witness : Pair (Id -> Id) False -> (Pair (Id -> Id) False) ∩ ((Pair (Id -> Id) False -> Id -> Id) -> (Id -> Id) -> Id)
 witness w := (snd (Id -> Id) False w) ((Pair (Id -> Id) False) ∩ ((Pair (Id -> Id) False -> Id -> Id) -> (Id -> Id) -> Id))

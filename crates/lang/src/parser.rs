@@ -317,18 +317,20 @@ fn parse_term_application(margin: usize) -> impl FnMut(In) -> IResult<In, Term> 
     move |input| {
         let (rest, mut args)
         = context("application",
-            separated_list1(bspace1(margin), parse_term_atom(margin)).preceded_by(bspace0(margin))
+            separated_list1(bspace1(margin), pair(opt(tag("-")), parse_term_atom(margin)))
+                .preceded_by(bspace0(margin))
         )(input)?;
 
         let mut tail = args.split_off(1);
         // Safety: Parser guarantees that args.len() > 0
         let head = args.drain(..).next().unwrap();
-        let start = head.span().0;
+        let start = head.1.span().0;
 
         let term = tail.drain(..)
-            .fold(head, |acc, t| {
+            .fold(head.1, |acc, (m, t)| {
                 let span = (start, t.span().1);
-                Term::Apply { span, fun: acc.boxed(), arg: t.boxed() }
+                let mode = if m.is_some() { Mode::Erased } else { Mode::Free };
+                Term::Apply { span, mode, fun: acc.boxed(), arg: t.boxed() }
             });
 
         Ok((rest, term))
@@ -353,7 +355,7 @@ fn parse_term_variable_application(margin: usize) -> impl FnMut(In) -> IResult<I
             tuple((
                 parse_term_variable.preceded_by(bspace0(margin)),
                 opt(pair(bspace1(margin),
-                    separated_list1(bspace1(margin), parse_term_atom(margin))
+                    separated_list1(bspace1(margin), pair(opt(tag("-")), parse_term_atom(margin)))
                         .preceded_by(bspace0(margin))
                 ))
             ))
@@ -362,9 +364,10 @@ fn parse_term_variable_application(margin: usize) -> impl FnMut(In) -> IResult<I
         let start = head.span().0;
         let term = if let Some((_, mut tail)) = tail {
             tail.drain(..)
-                .fold(head, |acc, t| {
+                .fold(head, |acc, (m, t)| {
                     let span = (start, t.span().1);
-                    Term::Apply { span, fun: acc.boxed(), arg: t.boxed() }
+                    let mode = if m.is_some() { Mode::Erased } else { Mode::Free };
+                    Term::Apply { span, mode, fun: acc.boxed(), arg: t.boxed() }
                 })
         } else { head };
 
@@ -375,7 +378,7 @@ fn parse_term_variable_application(margin: usize) -> impl FnMut(In) -> IResult<I
 /*
     atom ::=
     | "[" term "," term (";" term)? "]" (".1" | ".2")*
-    | "φ" term "{" term "," term "}" (".1" | ".2")*
+    | "φ" term "{" term "," term "," term "}" (".1" | ".2")*
     | "ϑ" (1 | 2) "{" term "," term "," term "}" (".1" | ".2")*
     | "β" "{" term "}" (".1" | ".2")*
     | "δ" "{" term "}" (".1" | ".2")*
@@ -491,13 +494,15 @@ fn parse_term_equality_induction(margin: usize) -> impl FnMut(In) -> IResult<In,
     }
 }
 
-// "φ" "{" term "," term "}"
+// "φ" "{" term "," term "," term "}"
 fn parse_term_cast(margin: usize) -> impl FnMut(In) -> IResult<In, Term> {
     move |input| {
-        let (rest, (start, _, witness, _, evidence, end))
+        let (rest, (start, _, input, _, witness, _, evidence, end))
         = context("cast", tuple((
             tag("φ").preceded_by(bspace0(margin)),
             tag("{").preceded_by(bspace0(margin)),
+            parse_term(margin),
+            tag(",").preceded_by(bspace0(margin)),
             parse_term(margin),
             tag(",").preceded_by(bspace0(margin)),
             parse_term(margin),
@@ -507,6 +512,7 @@ fn parse_term_cast(margin: usize) -> impl FnMut(In) -> IResult<In, Term> {
         let span = (start.location_offset(), end.location_offset());
         let term = Term::Cast {
             span,
+            input: input.boxed(),
             witness: witness.boxed(),
             evidence: evidence.boxed()
         };
@@ -614,9 +620,9 @@ fn parse_set_keyword(input: In) -> IResult<In, Term> {
     Ok((rest, term))
 }
 
-fn parse_parameter(margin: usize) -> impl FnMut(In) -> IResult<In, Parameter> {
+fn parse_parameter_input(margin: usize) -> impl FnMut(In) -> IResult<In, Parameter> {
     move |input| {
-        let (rest, (mode, opn, (name, _), _, body, end)) = tuple((
+        let (rest, (mode, opn, (name, _), _, ann, end)) = tuple((
             opt(tag("-")).preceded_by(bspace0(margin)),
             tag("(").preceded_by(bspace0(margin)),
             parse_symbol.preceded_by(bspace0(margin)),
@@ -628,13 +634,45 @@ fn parse_parameter(margin: usize) -> impl FnMut(In) -> IResult<In, Parameter> {
         let start = mode.unwrap_or(opn).location_offset();
         let span = (start, end.location_offset() + 1);
         let mode = if mode.is_some() { Mode::Erased } else { Mode::Free };
-        let parameter = Parameter {
+        let module_input = ModuleInput {
             span,
             mode,
             name,
+            ann,
+        };
+        let parameter = Parameter::Input(module_input);
+        Ok((rest, parameter))
+    }
+}
+
+fn parse_parameter_condition(margin: usize) -> impl FnMut(In) -> IResult<In, Parameter> {
+    move |input| {
+        let (rest, (opn, (name, _), _, body, end)) = tuple((
+            tag("(").preceded_by(bspace0(margin)),
+            parse_symbol.preceded_by(bspace0(margin)),
+            tag("=").preceded_by(bspace0(margin)),
+            parse_term(margin),
+            tag(")").preceded_by(bspace0(margin))
+        ))(input)?;
+
+        let start = opn.location_offset();
+        let span = (start, end.location_offset() + 1);
+        let object_condition = ObjectCondition {
+            span,
+            name,
             body,
         };
+        let parameter = Parameter::ObjectCondition(object_condition);
         Ok((rest, parameter))
+    }
+}
+
+fn parse_parameter(margin: usize) -> impl FnMut(In) -> IResult<In, Parameter> {
+    move |input| {
+        alt((
+            parse_parameter_input(margin),
+            parse_parameter_condition(margin)
+        ))(input)
     }
 }
 
