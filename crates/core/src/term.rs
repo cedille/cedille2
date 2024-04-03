@@ -234,7 +234,7 @@ impl TermData {
             }
             TermData::Project { variant, body } => {
                 let body = body.to_string_with_context(ctx);
-                format!("{}.{}", body, variant)
+                format!("({}).{}", body, variant)
             }
             TermData::Pair { first, second, anno } => {
                 let first = first.to_string_with_context(ctx.clone());
@@ -260,7 +260,7 @@ impl TermData {
                 let equation_str = evidence.to_string_with_context(ctx.clone());
                 let witness_str = witness.to_string_with_context(ctx.clone());
                 let input_str = input.to_string_with_context(ctx);
-                format!("φ {{{}, {}, {}}}", input_str, witness, equation_str)
+                format!("φ {{{}, {}, {}}}", input_str, witness_str, equation_str)
             }
             TermData::Subst { equation, predicate } => {
                 let equation_str = equation.to_string_with_context(ctx.clone());

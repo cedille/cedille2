@@ -28,14 +28,14 @@ pub fn infer(db: &mut Database, ctx: Context, t: Term) -> Result<Value, Term> {
         TermData::Project { variant, body } => {
             let ty = infer(db, ctx.clone(), body)?;
             let ty_unfolded = unfold_to_head(db, ty);
-            match ty_unfolded.as_ref() {
-                ValueData::Intersect { name, first, second, .. } => {
+            match ty_unfolded.head() {
+                Head::Intersect { name, first, second, .. } => {
                     if variant == 1 {
                         Ok(first.clone())
                     } else {
                         let first_quote = quote(db, first.clone(), ctx.env.len().into());
                         let lazy = LazyValueData::lazy(db, ctx.env, first_quote);
-                        let arg = EnvEntry::new(*name, Mode::TypeLevel, lazy);
+                        let arg = EnvEntry::new(name, Mode::TypeLevel, lazy);
                         Ok(second.eval(db, arg))
                     }
                 }
@@ -48,7 +48,7 @@ pub fn infer(db: &mut Database, ctx: Context, t: Term) -> Result<Value, Term> {
             let anno = infer(db, ctx.clone(), input.clone())?;
             let left = LazyValueData::lazy(db, ctx.env, input);
             let right = left.clone();
-            Ok(ValueData::Equality { left, right, anno }.rced())
+            Ok(Head::Equality { left, right, anno }.into())
         }
         TermData::Cast { input, witness, evidence } => todo!(),
         TermData::Promote { variant, equation, lhs, rhs } => {
@@ -88,9 +88,8 @@ pub fn infer(db: &mut Database, ctx: Context, t: Term) -> Result<Value, Term> {
         TermData::Subst { predicate, equation } => todo!(),
         TermData::Apply { sort, mode:m1, fun, arg } => {
             let fun_ty = infer(db, ctx.clone(), fun.clone())?;
-            let fun_ty_borrow: &ValueData = fun_ty.borrow();
-            match fun_ty_borrow.clone() {
-                ValueData::Pi { sort, mode:m2, name, domain, closure } => {
+            match fun_ty.head() {
+                Head::Pi { sort, mode:m2, name, domain, closure } => {
                     let mode = check_mode(m1, m2, arg.clone())?;
                     check(db, ctx.clone(), arg.clone(), domain)?;
                     let lazy_arg = LazyValueData::lazy(db, ctx.env, arg);
@@ -113,7 +112,7 @@ pub fn infer(db: &mut Database, ctx: Context, t: Term) -> Result<Value, Term> {
         },
         TermData::Meta { sort, module, name } => unimplemented!(),
         TermData::InsertedMeta { sort, module, name, mask } => unimplemented!(),
-        TermData::Star => Ok(ValueData::SuperStar.rced()),
+        TermData::Star => Ok(Head::SuperStar.into()),
         TermData::SuperStar => Err(t),
     }
 }
@@ -121,7 +120,7 @@ pub fn infer(db: &mut Database, ctx: Context, t: Term) -> Result<Value, Term> {
 pub fn check(db: &mut Database, ctx: Context, t: Term, ty: Value) -> Result<(), Term> {
     let inferred_ty = infer(db, ctx.clone(), t.clone())?;
     let level: Level = ctx.env.len().into();
-    if unify(db, level, inferred_ty, ty.clone()).map_err(|_| t)? { Ok(()) }
+    if unify(db, true, level, inferred_ty, ty.clone()).map_err(|_| t)? { Ok(()) }
     else { Err(quote(db, ty, level)) }
 }
 
@@ -131,7 +130,7 @@ fn check_mode(lhs: Mode, rhs: Mode, err: Term) -> Result<Mode, Term> {
 }
 
 fn try_unify(db: &mut Database, level: Level, lhs: Value, rhs: Value, err: Term) -> Result<(), Term> {
-    if unify(db, level, lhs, rhs).map_err(|_| err.clone())? { Ok(()) }
+    if unify(db, true, level, lhs, rhs).map_err(|_| err.clone())? { Ok(()) }
     else { Err(err) }
 }
 
@@ -165,13 +164,13 @@ pub fn church_bool_type_value(db: &mut Database) -> Value {
         body,
     });
     let closure = Closure::new(env, code);
-    ValueData::Pi {
+    Head::Pi {
         sort: Sort::Type,
         mode: Mode::Erased,
         name: Symbol::from("X"),
-        domain: ValueData::Star.rced(),
+        domain: Head::Star.into(),
         closure
-    }.rced()
+    }.into()
 }
 
 pub fn cast_evidence_ty(db: &Database, domain: Term, witness: Term) -> Term {

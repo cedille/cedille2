@@ -1,7 +1,6 @@
 
 use std::fmt;
 use std::rc::Rc;
-use std::borrow::Borrow;
 use std::cell::OnceCell;
 
 use imbl::Vector;
@@ -27,7 +26,7 @@ impl fmt::Display for Action {
         match self {
             Action::Apply(m, v) => write!(f, "@{} {}", m, v),
             Action::Project(p) => write!(f, ".{}", p),
-            Action::Subst(t) => write!(f, "𝜓{{{}}}", t),
+            Action::Subst(t) => write!(f, "𝜓{{{}}}", t.head()),
             Action::Promote(p, a, b) => write!(f, "ϑ{{{},{},{}}}", p, a, b),
             Action::Separate => write!(f, "δ"),
         }
@@ -59,7 +58,6 @@ pub enum EnvBound {
 pub struct Closure {
     pub env: Env,
     pub code: Term,
-    pub erased: bool
 }
 
 impl fmt::Display for Closure {
@@ -70,13 +68,12 @@ impl fmt::Display for Closure {
 
 impl Closure {
     pub fn new(env: Env, code: Term) -> Closure {
-        Closure { env, code, erased: false }
+        Closure { env, code }
     }
 
     pub fn erase(self) -> Closure {
         let Closure { env, code, .. } = self;
-        let erased = true;
-        Closure { env, code, erased }
+        Closure { env, code }
     }
 }
 
@@ -85,8 +82,6 @@ pub type LazyValue = Hc<LazyValueData>;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LazyValueData {
     pub(crate) value: OnceCell<Value>,
-    pub(crate) object: OnceCell<Value>,
-    pub erased: bool,
     pub env: Env,
     pub code: Term
 }
@@ -101,25 +96,25 @@ impl LazyValueData {
     pub fn lazy(db: &Database, env: Env, code: Term) -> LazyValue {
         db.make_value(LazyValueData {
             value: OnceCell::new(),
-            object: OnceCell::new(),
-            erased: false,
             env,
             code
         })
     }
 
     pub fn var(db: &Database, sort: Sort, level: Level) -> LazyValue {
-        let erased = false;
+        LazyValueData::var_with_erasure(db, sort, level, None)
+    }
+
+    pub fn var_with_erasure(db: &Database, sort: Sort, level: Level, erasure: Option<LazyValue>) -> LazyValue {
         let spine = Vector::new();
-        let var = ValueData::Variable { sort, level, spine }.rced();
-        let value = OnceCell::from(var.clone());
-        let object = OnceCell::from(var);
+        let var = Head::Variable { sort, level, erasure };
+        let value = OnceCell::from((var, spine).rced());
         let module = Symbol::from("gen/lazy_value");
         let env = Vector::new();
         let name = format!("gen/{}/{}", sort, *level);
         let id = Id::new(module, Symbol::from(name.as_str()));
         let code = db.make_term(TermData::Free { sort, id });
-        db.make_value(LazyValueData { value, object, erased, env, code })
+        db.make_value(LazyValueData { value, env, code })
     }
 
     pub fn sort(&self) -> Sort {
@@ -137,31 +132,28 @@ impl LazyValueData {
 
 impl std::hash::Hash for LazyValueData {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.erased.hash(state);
         self.env.hash(state);
         self.code.hash(state);
     }
 }
 
-pub type Value = Rc<ValueData>;
+pub type Value = Rc<(Head, Spine)>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ValueData {
+pub enum Head {
     Variable {
         sort: Sort,
         level: Level,
-        spine: Spine
+        erasure: Option<LazyValue>
     },
     MetaVariable {
         sort: Sort,
         name: Symbol,
         module: Symbol,
-        spine: Spine
     },
     Reference {
         sort: Sort,
         id: Id,
-        spine: Spine,
         unfolded: Option<Value>
     },
     Pair {
@@ -176,7 +168,6 @@ pub enum ValueData {
         input: Value,
         witness: Value,
         evidence: Value,
-        spine: Spine
     },
     Lambda {
         sort: Sort,
@@ -206,43 +197,40 @@ pub enum ValueData {
     SuperStar,
 }
 
-impl fmt::Display for ValueData {
+impl fmt::Display for Head {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ValueData::Variable { sort, level, spine } => {
+            Head::Variable { sort, level, .. } => {
                 level.fmt(f)?;
-                for action in spine.iter() { action.fmt(f)?; }
                 Ok(())
             }
-            ValueData::MetaVariable { sort, name, module, spine } => todo!(),
-            ValueData::Reference { sort, id, spine, unfolded } => {
+            Head::MetaVariable { sort, name, module } => todo!(),
+            Head::Reference { sort, id, unfolded } => {
                 id.fmt(f)?;
-                for action in spine.iter() { action.fmt(f)?; }
                 Ok(())
             }
-            ValueData::Pair { first, second, anno } => {
-                write!(f, "[{}, {}; {}]", first, second, anno)
+            Head::Pair { first, second, anno } => {
+                write!(f, "[{}, {}; {}]", first.head(), second.head(), anno.head())
             }
-            ValueData::Refl { input } => write!(f, "β({})", input),
-            ValueData::Cast { input, witness, evidence, spine } => {
-                write!(f, "φ({}, {}, {})", input, witness, evidence)?;
-                for action in spine.iter() { action.fmt(f)?; }
+            Head::Refl { input } => write!(f, "β({})", input),
+            Head::Cast { input, witness, evidence } => {
+                write!(f, "φ({}, {}, {})", input.head(), witness.head(), evidence.head())?;
                 Ok(())
             }
-            ValueData::Lambda { sort, mode, name, domain, closure } => {
-                write!(f, "λ{} {}:{}. {}", mode, name, domain, closure)
+            Head::Lambda { sort, mode, name, domain, closure } => {
+                write!(f, "λ{} {}:{}. {}", mode, name, domain.head(), closure)
             }
-            ValueData::Pi { sort, mode, name, domain, closure } => {
-                write!(f, "({} : {}) -{}> {}", name, domain, mode, closure)
+            Head::Pi { sort, mode, name, domain, closure } => {
+                write!(f, "({} : {}) -{}> {}", name, domain.head(), mode, closure)
             }
-            ValueData::Intersect { name, first, second } => {
-                write!(f, "({} : {}) ∩ {}", name, first, second)
+            Head::Intersect { name, first, second } => {
+                write!(f, "({} : {}) ∩ {}", name, first.head(), second)
             }
-            ValueData::Equality { left, right, anno } => {
-                write!(f, "({} =[{}] {})", left, anno, right)
+            Head::Equality { left, right, anno } => {
+                write!(f, "({} =[{}] {})", left, anno.head(), right)
             }
-            ValueData::Star => write!(f, "Set"),
-            ValueData::SuperStar => write!(f, "□"),
+            Head::Star => write!(f, "Set"),
+            Head::SuperStar => write!(f, "□"),
         }
     }
 }
@@ -252,82 +240,72 @@ pub trait ValueOps {
     fn id(db: &Database, sort: Sort, mode: Mode, domain: Value) -> Self;
     fn sort(&self) -> Sort;
     fn push_action(&self, action: Action) -> Self;
-    fn get_spine(&self) -> Spine;
+    fn head(&self) -> Head;
+    fn spine(&self) -> Spine;
     fn set_spine(&self, spine: Spine) -> Value;
 }
 
 impl ValueOps for Value {
+    fn head(&self) -> Head { self.0.clone() }
+    fn spine(&self) -> Spine { self.1.clone() }
+
     fn var(sort: Sort, level: impl Into<Level>) -> Value {
-        ValueData::Variable { sort, level: level.into(), spine: Vector::new() }.rced()
+        let head = Head::Variable { sort, level: level.into(), erasure: None };
+        let spine = Spine::new();
+        (head, spine).rced()
     }
 
     fn id(db: &Database, sort: Sort, mode: Mode, domain: Value) -> Value {
         let name = Symbol::from("x");
         let env = Vector::new();
         let code = db.make_term(TermData::Bound { sort, index: 0.into() });
-        let erased = false;
-        let closure = Closure { env, code, erased };
-        ValueData::Lambda { sort, mode, name, domain, closure }.rced()
+        let closure = Closure { env, code };
+        let head = Head::Lambda { sort, mode, name, domain, closure };
+        let spine = Spine::new();
+        (head, spine).rced()
     }
 
     fn sort(&self) -> Sort {
-        match self.as_ref() {
-            ValueData::Variable { sort, .. }
-            | ValueData::MetaVariable { sort, .. }
-            | ValueData::Reference { sort, .. }
-            | ValueData::Lambda { sort, .. }
-            | ValueData::Pi { sort, .. } => *sort,
-            ValueData::Refl { .. }
-            | ValueData::Pair { .. }
-            | ValueData::Cast { .. } => Sort::Term,
-            ValueData::Intersect { .. }
-            | ValueData::Equality { .. } => Sort::Type,
-            ValueData::Star => Sort::Kind,
-            ValueData::SuperStar => Sort::Unknown,
+        match self.head() {
+            Head::Variable { sort, .. }
+            | Head::MetaVariable { sort, .. }
+            | Head::Reference { sort, .. }
+            | Head::Lambda { sort, .. }
+            | Head::Pi { sort, .. } => sort,
+            Head::Refl { .. }
+            | Head::Pair { .. }
+            | Head::Cast { .. } => Sort::Term,
+            Head::Intersect { .. }
+            | Head::Equality { .. } => Sort::Type,
+            Head::Star => Sort::Kind,
+            Head::SuperStar => Sort::Unknown,
         }
     }
 
     fn push_action(&self, action: Action) -> Value {
-        let mut spine = self.get_spine();
+        let mut spine = self.spine();
         spine.push_back(action);
         self.set_spine(spine)
     }
 
-    fn get_spine(&self) -> Spine {
-        match self.as_ref() {
-            ValueData::Variable { spine, .. } => spine.clone(),
-            ValueData::MetaVariable { spine, .. } => spine.clone(),
-            ValueData::Reference { spine, .. } => spine.clone(),
-            ValueData::Cast { spine, .. } => spine.clone(),
-            _ => Vector::new()
-        }
-    }
-
     fn set_spine(&self, spine: Spine) -> Value {
-        let borrow: &ValueData = self.borrow();
-        match borrow.clone() {
-            ValueData::Variable { sort, level, .. } => {
-                ValueData::Variable { sort, level, spine }.rced()
-            }
-            ValueData::MetaVariable { sort, name, module, .. } => {
-                ValueData::MetaVariable { sort, name, module, spine }.rced()
-            }
-            ValueData::Reference { sort, id, unfolded, .. } => {
-                ValueData::Reference { sort, id, spine, unfolded }.rced()
-            }
-            ValueData::Cast { input, witness, evidence, .. } => {
-                ValueData::Cast { input, witness, evidence, spine }.rced()
-            }
-            v => v.rced()
-        }
+        (self.head(), spine).rced()
+    }
+}
+
+impl From<Head> for Value {
+    fn from(head: Head) -> Self {
+        let spine = Spine::new();
+        (head, spine).rced()
     }
 }
 
 pub fn classifier(sort: Sort) -> Result<Value, ()> {
+    let spine = Spine::new();
     match sort {
         Sort::Unknown => Err(()),
         Sort::Term => Err(()),
-        Sort::Type => Ok(ValueData::Star.rced()),
-        Sort::Kind => Ok(ValueData::SuperStar.rced()),
+        Sort::Type => Ok((Head::Star, spine).rced()),
+        Sort::Kind => Ok((Head::SuperStar, spine).rced()),
     }
 }

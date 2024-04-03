@@ -1,6 +1,5 @@
 
 use std::collections::HashMap;
-use std::rc::Rc;
 
 use crate::utility::*;
 use crate::eval::*;
@@ -16,6 +15,7 @@ pub enum MetaState {
     Solved(Value),
 }
 
+#[derive(Debug)]
 struct PartialRenaming {
     domain: Level,
     codomain: Level,
@@ -45,11 +45,11 @@ fn invert(db: &Database, env: Level, spine: Spine) -> Result<(PartialRenaming, V
         modes.push((mode, arg.sort()));
         let value = arg.force(db);
         let value = unfold_meta_to_head(db, value);
-        match value.as_ref() {
-            ValueData::Variable { level, spine, .. }
-            if spine.is_empty() && !result.renaming.contains_key(level) =>
+        match value.head() {
+            Head::Variable { level, .. }
+            if value.spine().is_empty() && !result.renaming.contains_key(&level) =>
             {
-                result.renaming.insert(*level, result.domain);
+                result.renaming.insert(level, result.domain);
                 result.domain = result.domain + 1;
             },
             _ => return Err(())
@@ -75,29 +75,29 @@ fn rename(db: &mut Database, meta: Symbol, renaming: &PartialRenaming, value: Va
     }
 
     let value = unfold_meta_to_head(db, value);
-    match value.as_ref() {
-        ValueData::Variable { sort, level, spine } => {
-            if let Some(renamed) = renaming.renaming.get(level) {
-                let head = db.make_term(TermData::Bound { sort: *sort, index: renamed.to_index(*renaming.domain) });
-                rename_spine(db, meta, renaming, head, spine.clone())
+    match value.head() {
+        Head::Variable { sort, level, .. } => {
+            if let Some(renamed) = renaming.renaming.get(&level) {
+                let head = db.make_term(TermData::Bound { sort, index: renamed.to_index(*renaming.domain) });
+                rename_spine(db, meta, renaming, head, value.spine())
             } else {
                 Err(())
             }
         }
-        ValueData::MetaVariable { sort, name, module, spine } => {
+        Head::MetaVariable { sort, name, module } => {
             let sort = value.sort();
-            if *name == meta {
+            if name == meta {
                 Err(())
             } else {
-                let head = db.make_term(TermData::Meta { sort, module: *module, name: *name });
-                rename_spine(db, meta, renaming, head, spine.clone())
+                let head = db.make_term(TermData::Meta { sort, module, name });
+                rename_spine(db, meta, renaming, head, value.spine())
             }
         }
-        ValueData::Reference { sort, id, spine, .. } => {
-            let head = db.make_term(TermData::Free { sort: *sort, id: id.clone() });
-            rename_spine(db, meta, renaming, head, spine.clone())
+        Head::Reference { sort, id, .. } => {
+            let head = db.make_term(TermData::Free { sort, id });
+            rename_spine(db, meta, renaming, head, value.spine())
         }
-        ValueData::Pair { first, second, anno } => {
+        Head::Pair { first, second, anno } => {
             let first = rename(db, meta, renaming, first.clone())?;
             let second = rename(db, meta, renaming, second.clone())?;
             let anno = rename(db, meta, renaming, anno.clone())?;
@@ -107,65 +107,65 @@ fn rename(db: &mut Database, meta: Symbol, renaming: &PartialRenaming, value: Va
                 anno,
             }))
         }
-        ValueData::Refl { input } => {
+        Head::Refl { input } => {
             let input = rename(db, meta, renaming, input.force(db))?;
             Ok(db.make_term(TermData::Refl { input }))
         }
-        ValueData::Cast { input, witness, evidence, spine } => {
+        Head::Cast { input, witness, evidence } => {
             let input = rename(db, meta, renaming, input.clone())?;
             let witness = rename(db, meta, renaming, witness.clone())?;
             let evidence = rename(db, meta, renaming, evidence.clone())?;
             let head = db.make_term(TermData::Cast { input, witness, evidence });
-            rename_spine(db, meta, renaming, head, spine.clone())
+            rename_spine(db, meta, renaming, head, value.spine())
         }
-        ValueData::Lambda { sort, mode, name, domain, closure } => {
+        Head::Lambda { sort, mode, name, domain, closure } => {
             let domain = rename(db, meta, renaming, domain.clone())?;
             let v = LazyValueData::var(db, domain.sort(), renaming.codomain);
-            let arg = EnvEntry::new(*name, *mode, v);
+            let arg = EnvEntry::new(name, mode, v);
             let body = closure.eval(db, arg);
             let body = rename(db, meta, &lift(renaming), body)?;
             Ok(db.make_term(TermData::Lambda {
-                sort: *sort,
+                sort,
                 domain,
-                mode: *mode,
-                name: *name,
+                mode,
+                name,
                 body
             }))
         }
-        ValueData::Pi { sort, mode, name, domain, closure } => {
+        Head::Pi { sort, mode, name, domain, closure } => {
             let domain = rename(db, meta, renaming, domain.clone())?;
             let v = LazyValueData::var(db, domain.sort(), renaming.codomain);
-            let arg = EnvEntry::new(*name, *mode, v);
+            let arg = EnvEntry::new(name, mode, v);
             let body = closure.eval(db, arg);
             let body = rename(db, meta, &lift(renaming), body)?;
             Ok(db.make_term(TermData::Pi {
-                sort: *sort,
-                mode: *mode,
-                name: *name,
+                sort,
+                mode,
+                name,
                 domain,
                 body
             }))
         }
-        ValueData::Intersect { name, first, second } => {
+        Head::Intersect { name, first, second } => {
             let first = rename(db, meta, renaming, first.clone())?;
             let v = LazyValueData::var(db, first.sort(), renaming.codomain);
-            let arg = EnvEntry::new(*name, Mode::Free, v);
+            let arg = EnvEntry::new(name, Mode::Free, v);
             let second = second.eval(db, arg);
             let second = rename(db, meta, &lift(renaming), second)?;
             Ok(db.make_term(TermData::Intersect {
-                name: *name,
+                name,
                 first,
                 second
             }))
         }
-        ValueData::Equality { left, right, anno } => {
+        Head::Equality { left, right, anno } => {
             let anno = rename(db, meta, renaming, anno.clone())?;
             let left = rename(db, meta, renaming, left.force(db))?;
             let right = rename(db, meta, renaming, right.force(db))?;
             Ok(db.make_term(TermData::Equality { left, right, anno }))
         }
-        ValueData::Star => Ok(db.make_term(TermData::Star)),
-        ValueData::SuperStar => Ok(db.make_term(TermData::SuperStar)),
+        Head::Star => Ok(db.make_term(TermData::Star)),
+        Head::SuperStar => Ok(db.make_term(TermData::SuperStar)),
     }
 }
 
@@ -185,10 +185,19 @@ fn wrap_in_lambdas(db: &Database, env: Level, modes: Vec<(Mode, Sort)>, term: Te
 }
 
 pub fn solve(db: &mut Database, module: Symbol, env: Level, meta: Symbol, spine: Spine, rhs: Value) -> Result<(), ()> {
+    // eprintln!("SOLVING:");
+    // eprint!("  {}", meta);
+    // for action in spine.iter() {
+    //     eprint!(" {}", action);
+    // }
+    // eprintln!();
+    // eprintln!("  {}", rhs);
     let (renaming, mut modes) = invert(db, env, spine)?;
+    // eprintln!("RENAMING: {:#?}", renaming);
     modes.reverse();
     let domain = renaming.domain;
     let rhs = rename(db, meta, &renaming, rhs)?;
+    // eprintln!("RENAMED RHS: {}", rhs);
     let solution = wrap_in_lambdas(db, domain, modes, rhs);
     let solution = eval(db, Env::new(), solution);
     db.insert_meta(module, meta, solution)

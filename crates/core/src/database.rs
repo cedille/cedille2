@@ -7,6 +7,7 @@ use std::collections::{HashSet, HashMap};
 
 use imbl::Vector;
 use if_chain::if_chain;
+use colored::Colorize;
 
 use crate::hc::*;
 use crate::utility::*;
@@ -326,6 +327,7 @@ impl Database {
                 *meta = MetaState::Solved(value.clone());
             }
         }
+        log::info!("\n{}\n{}\n{}", name, "solved to".green(), value.head());
         Ok(())
     }
 

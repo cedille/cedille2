@@ -120,5 +120,8 @@ cast_singleton -A -B a b := ϑ2{cast_singleton1 a b, a, b}
 CastMono : (Set -> Set) -> Set
 CastMono F := (A:Set) => (B:Set) => Cast A B -> Cast (F A) (F B)
 
+mono_erasure : (A:Set) => (B:Set) => (A -> A) -> (A -> A)
+mono_erasure -A -B k x := k x 
+
 cast_forget : (A:Set) => (B:Set) => Cast A B -> Cast A A
 cast_forget -A -B k := [λ a. [(k.1 a).1, (k.1 a).1], unit_eta k.2]
