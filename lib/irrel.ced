@@ -1,0 +1,18 @@
+module irrel
+
+import eq
+import cast
+import not
+
+irrel_witness : (A:Set) => (a:A) => (b:A) => (a = b) -> (a = a) ∩ (a = b)
+irrel_witness -A -a -b e := 𝜓 { e , λ y e. (a = a) ∩ (a = y) } [β{a}, β{a}]
+
+-- erasure: λ x. x
+irrel : (A:Set) => (a:A) => (b:A) => (a = b) => (a = b)
+irrel -A -a -b -e := φ { β{a}
+  , irrel_witness -A -a -b e
+  , J e -(λ x y e. β{x} = (irrel_witness -A -x -y e).1) (λ -i. β{β{i}}) }.2
+
+-- erasure: λ x. x
+cast_irrel : (A:Set) => (B:Set) => Cast A B => Cast A B
+cast_irrel -A -B -k := [λ a. φ { a , k.1 a , cast_eq k a }, unit]

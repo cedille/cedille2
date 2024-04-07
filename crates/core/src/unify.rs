@@ -89,13 +89,16 @@ fn unify_spine(db: &mut Database, typed: bool, level: Level, lhs: Value, rhs: Va
     // If there is still stuff in either spine, it must be a non-well-typed conversion
     // Second, erase the spine
     if !lhs.is_empty() || !rhs.is_empty() {
-        let erase_lhs_spine = erase_spine(lhs)?;
-        let erase_rhs_spine = erase_spine(rhs)?;
-        let lhs: Value = lhs_head.into();
-        let lhs = lhs.perform_spine(db, erase_lhs_spine);
-        let rhs: Value = rhs_head.into();
-        let rhs = rhs.perform_spine(db, erase_rhs_spine);
-        result &= unify(db, false, level, lhs, rhs)?;
+        let (lhs_len, rhs_len) = (lhs.len(), rhs.len());
+        let erase_lhs_spine = erase_spine(lhs.clone())?;
+        let erase_rhs_spine = erase_spine(rhs.clone())?;
+        if lhs_len != erase_lhs_spine.len() || rhs_len != erase_rhs_spine.len() {
+            let lhs: Value = lhs_head.into();
+            let lhs = lhs.perform_spine(db, erase_lhs_spine);
+            let rhs: Value = rhs_head.into();
+            let rhs = rhs.perform_spine(db, erase_rhs_spine);
+            result &= unify(db, false, level, lhs, rhs)?;
+        } else { result = false }
     }
     Ok(result)
 }
@@ -119,9 +122,19 @@ fn unify_inner(db: &mut Database, typed: bool, level: Level, lhs: Value, rhs: Va
             let folded = n1 == n2 && unify_spine(db, typed, level, lhs.clone(), rhs.clone())?;
             let unfolded = || {
                 match (db.lookup_meta(m1, n1), db.lookup_meta(m2, n2)) {
-                    (MetaState::Solved(lhs), MetaState::Solved(rhs)) => unify(db, typed, level, lhs, rhs),
-                    (MetaState::Solved(lhs), MetaState::Unsolved) => unify(db, typed, level, lhs, rhs),
-                    (MetaState::Unsolved, MetaState::Solved(rhs)) => unify(db, typed, level, lhs, rhs),
+                    (MetaState::Solved(lhs), MetaState::Solved(rhs)) => {
+                        let lhs = lhs.perform_spine(db, s1);
+                        let rhs = rhs.perform_spine(db, s2);
+                        unify(db, typed, level, lhs, rhs)
+                    }
+                    (MetaState::Solved(lhs), MetaState::Unsolved) => {
+                        let lhs = lhs.perform_spine(db, s1);
+                        unify(db, typed, level, lhs, rhs)
+                    }
+                    (MetaState::Unsolved, MetaState::Solved(rhs)) => {
+                        let rhs = rhs.perform_spine(db, s2);
+                        unify(db, typed, level, lhs, rhs)
+                    }
                     _ => Ok(false)
                 }
             };
@@ -225,54 +238,6 @@ fn unify_inner(db: &mut Database, typed: bool, level: Level, lhs: Value, rhs: Va
             && rhs.spine().is_empty()
             && lhs.spine().is_empty()
         }
-        (Head::Lambda { sort:s1, mode:m1, name:n1, domain:d1, closure:c1 }
-        , Head::Lambda { sort:s2, mode:m2, name:n2, domain:d2, closure:c2, .. })
-        if m1 == Mode::TypeLevel && m2 == Mode::TypeLevel
-        => {
-            let input = LazyValueData::var(db, s1, level);
-            let c1 = c1.eval(db, EnvEntry::new(n1, m1, input.clone()));
-            let c2 = c2.eval(db, EnvEntry::new(n2, m2, input));
-            unify(db, typed, level, d1, d2)?
-            && unify(db, typed, level + 1, c1, c2)?
-            && unify_spine(db, typed, level, lhs, rhs)?
-        }
-        (Head::Lambda { sort:s1, mode:m1, name:n1, domain:d1, closure:c1 }
-        , Head::Lambda { sort:s2, mode:m2, name:n2, domain:d2, closure:c2, .. })
-        if (m1 == Mode::Free && m2 == Mode::Free) || (m1 == Mode::Erased && m2 == Mode::Erased)
-        => {
-            let input = LazyValueData::var(db, s1, level);
-            let c1 = c1.eval(db, EnvEntry::new(n1, m1, input.clone()));
-            let c2 = c2.eval(db, EnvEntry::new(n2, m2, input));
-            unify(db, typed, level, d1, d2).ok();
-            unify(db, typed, level + 1, c1, c2)?
-            && unify_spine(db, typed, level, lhs, rhs)?
-        }
-        (Head::Lambda { mode:Mode::Free, .. }, _) if !lhs.spine().is_empty() => {
-            let spine = erase_spine(lhs.spine())?;
-            let head: Value = lhs.head().into();
-            let lhs = head.perform_spine(db, spine);
-            unify(db, false, level, lhs, rhs)?
-        }
-        (_, Head::Lambda { mode:Mode::Free, .. }) if !rhs.spine().is_empty() => {
-            let spine = erase_spine(rhs.spine())?;
-            let head: Value = lhs.head().into();
-            let rhs = head.perform_spine(db, spine);
-            unify(db, false, level, lhs, rhs)?
-        }
-        (Head::Lambda { mode, name, closure, .. }, _) if mode == Mode::Erased => {
-            let input = LazyValueData::var(db, Sort::Term, level);
-            let body = closure
-                .eval(db, EnvEntry::new(name, mode, input.clone()))
-                .perform_spine(db, lhs.spine());
-            unify(db, false, level + 1, body, rhs)?
-        }
-        (_, Head::Lambda { mode, name, closure, .. }) if mode == Mode::Erased => {
-            let input = LazyValueData::var(db, Sort::Term, level);
-            let body = closure
-                .eval(db, EnvEntry::new(name, mode, input.clone()))
-                .perform_spine(db, rhs.spine());
-            unify(db, false, level + 1, lhs, body)?
-        }
         (Head::Pair { first:f1, second:s1, anno:a1 }
         , Head::Pair { first:f2, second:s2, anno:a2 })
         => {
@@ -353,6 +318,54 @@ fn unify_inner(db: &mut Database, typed: bool, level: Level, lhs: Value, rhs: Va
             let Some(erasure) = erasure else { return Ok(false) };
             let erasure = erasure.force(db).perform_spine(db, spine);
             unify(db, false, level, lhs, erasure)?
+        }
+        (Head::Lambda { sort:s1, mode:m1, name:n1, domain:d1, closure:c1 }
+        , Head::Lambda { sort:s2, mode:m2, name:n2, domain:d2, closure:c2, .. })
+        if m1 == Mode::TypeLevel && m2 == Mode::TypeLevel
+        => {
+            let input = LazyValueData::var(db, s1, level);
+            let c1 = c1.eval(db, EnvEntry::new(n1, m1, input.clone()));
+            let c2 = c2.eval(db, EnvEntry::new(n2, m2, input));
+            unify(db, typed, level, d1, d2)?
+            && unify(db, typed, level + 1, c1, c2)?
+            && unify_spine(db, typed, level, lhs, rhs)?
+        }
+        (Head::Lambda { sort:s1, mode:m1, name:n1, domain:d1, closure:c1 }
+        , Head::Lambda { sort:s2, mode:m2, name:n2, domain:d2, closure:c2, .. })
+        if (m1 == Mode::Free && m2 == Mode::Free) || (m1 == Mode::Erased && m2 == Mode::Erased)
+        => {
+            let input = LazyValueData::var(db, s1, level);
+            let c1 = c1.eval(db, EnvEntry::new(n1, m1, input.clone()));
+            let c2 = c2.eval(db, EnvEntry::new(n2, m2, input));
+            unify(db, typed, level, d1, d2).ok();
+            unify(db, typed, level + 1, c1, c2)?
+            && unify_spine(db, typed, level, lhs, rhs)?
+        }
+        (Head::Lambda { mode:Mode::Free, .. }, _) if !lhs.spine().is_empty() => {
+            let spine = erase_spine(lhs.spine())?;
+            let head: Value = lhs.head().into();
+            let lhs = head.perform_spine(db, spine);
+            unify(db, false, level, lhs, rhs)?
+        }
+        (_, Head::Lambda { mode:Mode::Free, .. }) if !rhs.spine().is_empty() => {
+            let spine = erase_spine(rhs.spine())?;
+            let head: Value = lhs.head().into();
+            let rhs = head.perform_spine(db, spine);
+            unify(db, false, level, lhs, rhs)?
+        }
+        (Head::Lambda { mode, name, closure, .. }, _) if mode == Mode::Erased => {
+            let input = LazyValueData::var(db, Sort::Term, level);
+            let body = closure
+                .eval(db, EnvEntry::new(name, mode, input.clone()))
+                .perform_spine(db, lhs.spine());
+            unify(db, false, level + 1, body, rhs)?
+        }
+        (_, Head::Lambda { mode, name, closure, .. }) if mode == Mode::Erased => {
+            let input = LazyValueData::var(db, Sort::Term, level);
+            let body = closure
+                .eval(db, EnvEntry::new(name, mode, input.clone()))
+                .perform_spine(db, rhs.spine());
+            unify(db, false, level + 1, lhs, body)?
         }
         _ => false
     };

@@ -1,0 +1,17 @@
+module not
+
+False : Set
+False := (X:Set) => X
+
+Not : Set -> Set
+Not A := A -> False
+
+cBool : Set
+cBool := (X:Set) => X -> X -> X
+
+ctt : cBool
+ctt -X x y := x
+
+cff : cBool
+cff -X x y := y
+

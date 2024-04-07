@@ -1,0 +1,132 @@
+module nat
+
+import eq
+import cast
+import nat
+import bool
+
+-- tt: even
+-- ff: odd
+
+IsEven1 : Bool -> Nat -> Set
+IsEven1 b n :=
+  (X:Bool -> Nat -> Set) =>
+  X tt zero ->
+  (
+    (R:Bool -> Nat -> Set) =>
+    ((b:Bool) => (i:Nat) => R b i -> R b i) ->
+    ((b:Bool) => (i:Nat) => R b i -> X b i) ->
+    (b:Bool) =>
+    (i:Nat) =>
+    R b i ->
+    X (not b) (succ i)
+  ) ->
+  X b n
+
+ezero1 : IsEven1 tt zero
+ezero1 -X z s := z
+
+esucc1 : (b:Bool) => (i:Nat) => IsEven1 b i -> IsEven1 (not b) (succ i)
+esucc1 -b -i n -X z s := s -IsEven1 (λ -b -i x. x) (λ -b -i n. n -X z s) -b -i n
+
+IsEvenInd1 : (b:Bool) -> (i:Nat) -> IsEven1 b i -> Set
+IsEvenInd1 b i n := (P:(b:Bool) -> (i:Nat) -> IsEven1 b i -> Set) =>
+  P tt zero ezero1 ->
+  (
+    (R:Bool -> Nat -> Set) =>
+    (f:(b:Bool) => (i:Nat) => R b i -> IsEven1 b i) ->
+    (ih:(b:Bool) => (i:Nat) => (r:R b i) -> P b i (f -b -i r)) ->
+    (b:Bool) =>
+    (i:Nat) =>
+    (r:R b i) ->
+    P (not b) (succ i) (esucc1 (f -b -i r))
+  ) ->
+  P b i n
+
+IsEven2 : Bool -> Nat -> Set
+IsEven2 b i := (n : IsEven1 b i) ∩ IsEvenInd1 b i n
+
+ezero2 : IsEven2 tt zero
+ezero2 := [ezero1, λ -P z s. z]
+
+esucc2 : (b:Bool) => (i:Nat) => IsEven2 b i -> IsEven2 (not b) (succ i)
+esucc2 -b -i n := [esucc1 -b -i n.1, λ -P z s. s -IsEven2 (λ -b -i x. x.1) (λ -b -i r. r.2 -P z s) -b -i n]
+
+iseven1_to : (b:Bool) => (i:Nat) => IsEven1 b i -> IsEven2 b i
+iseven1_to -b -i n := n -IsEven2 ezero2 (λ -R f rec -b -i x. esucc2 -b -i (rec -b -i x))
+
+iseven1_fixed1 : (b:Bool) => (i:Nat) => (n:IsEven2 b i) -> (iseven1_to -b -i n.1).1 = (n.1)
+iseven1_fixed1 -b -i n := n.2 -(λ b i x. (iseven1_to -b -i x).1 = x) β{ezero1}
+  (λ -R f rec -b -i xs. J (rec -b -i xs) -(λ x y e. esucc1 -b -i x = esucc1 -b -i y) (λ -w. β{esucc1 -b -i w}))
+
+iseven1_fixed : (b:Bool) => (i:Nat) => (n:IsEven2 b i) -> (iseven1_to -b -i n.1) = n
+iseven1_fixed -b -i x := ϑ1{iseven1_fixed1 -b -i x, iseven1_to -b -i x.1, x}
+
+iseven_ind2 : (b:Bool) => (i:Nat) => (n:IsEven2 b i) ->
+  (P:(b:Bool) -> (i:Nat) -> IsEven2 b i -> Set) =>
+  P tt zero ezero2 ->
+  (
+    (R:Bool -> Nat -> Set) =>
+    (f:(b:Bool) => (i:Nat) => R b i -> IsEven2 b i) ->
+    (ih:(b:Bool) => (i:Nat) => (r:R b i) -> P b i (f -b -i r)) ->
+    (b:Bool) =>
+    (i:Nat) =>
+    (r:R b i) ->
+    P (not b) (succ i) (esucc2 -b -i (f -b -i r))
+  ) ->
+  P b i n
+iseven_ind2 -b -i n -P z s :=
+  let inner : P b i (iseven1_to -b -i n.1) := n.2 -(λ -b -i x. P b i (iseven1_to -b -i x))
+    z
+    (λ -R f ih -b -i r. s -R (λ -b -i r. iseven1_to -b -i (f -b -i r)) ih -b -i r)
+  subst (iseven1_fixed n) -(λ y e. P b i y) inner
+
+IsEvenInd : (b:Bool) -> (i:Nat) -> IsEven2 b i -> Set
+IsEvenInd b i n := (P:(b:Bool) -> (i:Nat) -> IsEven2 b i -> Set) =>
+  P tt zero ezero2 ->
+  (
+    (R:Bool -> Nat -> Set) =>
+    (f:(b:Bool) => (i:Nat) => Cast (R b i) (IsEven2 b i)) ->
+    (ih:(b:Bool) => (i:Nat) => (r:R b i) -> P b i (cast (f -b -i) r)) ->
+    (b:Bool) => 
+    (i:Nat) =>
+    (r:R b i) ->
+    P (not b) (succ i) (esucc2 -b (cast (f -b -i) r))
+  ) ->
+  P b i n
+
+IsEven : Bool -> Nat -> Set
+IsEven b i := (n : IsEven2 b i) ∩ IsEvenInd b i n
+
+ezero : IsEven tt zero
+ezero := [ezero2, λ -P z s. z]
+
+esucc : (b:Bool) => (i:Nat) => IsEven b i -> IsEven (not b) (succ i)
+esucc -b -i n := [esucc2 -b -i n.1, λ -P z s. s -IsEven (λ -b -i. [λ x. [x, x.1], unit]) (λ -b -i r. r.2 -P z s) -b -i n]
+
+iseven_to : (b:Bool) => (i:Nat) => IsEven2 b i -> IsEven b i
+iseven_to -b -i n := n.1 -IsEven ezero (λ -R f rec -b -i x. esucc -b -i (rec -b -i x))
+
+iseven_fixed : (b:Bool) => (i:Nat) => (n:IsEven2 b i) -> (iseven_to -b -i n).1 = n
+iseven_fixed -b -i n := iseven_ind2 -b -i n -(λ -b -i x. (iseven_to -b -i x).1 = x)
+  β{ezero2}
+  (λ -R f ih -b -i r. subst (sym (ih -b -i r)) -(λ y e. esucc2 -b -i y = esucc2 -b -i (f -b -i r)) β{esucc2 -b -i (f -b -i r)})
+
+iseven_cast : (b:Bool) => (i:Nat) => Cast (IsEven2 b i) (IsEven b i)
+iseven_cast -b -i := [λ x. [x, φ {x, iseven_to -b -i x, sym (iseven_fixed -b -i x)}], unit]
+
+iseven_ind : (b:Bool) => (i:Nat) => (n:IsEven b i) ->
+  (P:(b:Bool) -> (i:Nat) -> IsEven b i -> Set) =>
+  P tt zero ezero ->
+  (
+    (R:Bool -> Nat -> Set) =>
+    (f:(b:Bool) => (i:Nat) => Cast (R b i) (IsEven b i)) ->
+    (ih:(b:Bool) => (i:Nat) => (r:R b i) -> P b i (cast (f -b -i) r)) ->
+    (b:Bool) => 
+    (i:Nat) =>
+    (r:R b i) ->
+    P (not b) (succ i) (esucc (cast (f -b -i) r))
+  ) ->
+  P b i n
+iseven_ind -b -i n -P z s := n.2 -(λ -b -i n. P b i (cast (iseven_cast -b -i) n)) z
+  (λ -R f ih -b -i r. s -R (λ -b -i. cast_trans (f -b -i) (iseven_cast -b -i)) ih r)

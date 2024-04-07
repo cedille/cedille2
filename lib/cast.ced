@@ -87,8 +87,8 @@ Cast A B := (f : A -> A ∩ B) ∩ Unit
 cast : (A:Set) => (B:Set) => (k : Cast A B) -> A -> B
 cast -A -B k a := (k.1 a).2
 
-cast_ind : (A:Set) => (B:Set) => (k : Cast A B) -> (a:A) -> a = (k.1 a).1
-cast_ind -A -B k a := (unit_cast_full k.2).2 -(λ k. a = (unit_rec k -A a)) β{a}
+cast_eq : (A:Set) => (B:Set) => (k : Cast A B) -> (a:A) -> a = (k.1 a).1
+cast_eq -A -B k a := (unit_cast_full k.2).2 -(λ k. a = (unit_rec k -A a)) β{a}
 
 cast_trans : (A:Set) => (B:Set) => (C:Set) => Cast A B -> Cast B C -> Cast A C
 cast_trans -A -B -C u v :=
@@ -97,6 +97,12 @@ cast_trans -A -B -C u v :=
 
 cast_refl : (A : Set) => Cast A A
 cast_refl -A := [λ a. [a, a], unit]
+
+cast_eta : (A:Set) => (B:Set) => Cast A B -> Cast A B
+cast_eta -A -B k := [λ a. k.1 a, unit_eta k.2]
+
+cast_idx_eta : (I:Set) => (A:I -> Set) => (B:I -> Set) => ((i:I) => Cast (A i) (B i)) -> (i:I) => Cast (A i) (B i)
+cast_idx_eta -I -A -B k -i := [λ a. (k -i).1 a, unit_eta (k -i).2]
 
 DepCast : (A:Set) -> (A -> Set) -> Set
 DepCast A B := ((a:A) -> A ∩ B a) ∩ Unit
@@ -120,8 +126,25 @@ cast_singleton -A -B a b := ϑ2{cast_singleton1 a b, a, b}
 CastMono : (Set -> Set) -> Set
 CastMono F := (A:Set) => (B:Set) => Cast A B -> Cast (F A) (F B)
 
+IdxCastMono : (I:Set) -> ((I -> Set) -> I -> Set) -> Set
+IdxCastMono I F := (A:I -> Set) => (B:I -> Set) => ((i:I) => Cast (A i) (B i)) -> (i:I) => Cast (F A i) (F B i)
+
 mono_erasure : (A:Set) => (B:Set) => (A -> A) -> (A -> A)
 mono_erasure -A -B k x := k x 
 
 cast_forget : (A:Set) => (B:Set) => Cast A B -> Cast A A
 cast_forget -A -B k := [λ a. [(k.1 a).1, (k.1 a).1], unit_eta k.2]
+
+Functor : (Set -> Set) -> Set
+Functor F := (A:Set) => (B:Set) => (A -> B) -> F A -> F B
+
+FunctorCompositionLaw : (F: Set -> Set) -> (fmap: Functor F) -> Set
+FunctorCompositionLaw F fmap := (A:Set) => (B:Set) => (C:Set) =>
+  (f:A -> B) -> (g:B -> C) -> (a:F A) ->
+  fmap -A -C (compose g f) a = compose (fmap -B -C g) (fmap -A -B f) a
+
+FunctorIdentityLaw : (F: Set -> Set) -> (fmap: Functor F) -> Set
+FunctorIdentityLaw F fmap := (A:Set) =>
+  (f:A -> A) -> (id: (a:A) -> f a = a) ->
+  (a:F A) ->
+  fmap -A -A f a = a

@@ -2,98 +2,85 @@ module nat
 
 import eq
 import cast
-import sum
-import pair
 
-NatF : Set -> Set
-NatF X := Sum Unit X
+Nat1 : Set
+Nat1 := (X:Set) => X -> ((R:Set) => (R -> R) -> (R -> X) -> R -> X) -> X
 
-phi-safety : (A:Set) => (B:Set) => Pair (Cast A B) (NatF A)
-phi-safety := 
+zero1 : Nat1
+zero1 -X z s := z
 
+succ1 : Nat1 -> Nat1
+succ1 n -X z s := s -Nat1 (λ x. x) (λ n. n z s) n
 
+NatInd1 : Nat1 -> Set
+NatInd1 n := (P:Nat1 -> Set) =>
+  P zero1 ->
+  ((R:Set) => (f:R -> Nat1) -> (ih:(r:R) -> P (f r)) -> (r:R) -> P (succ1 (f r))) ->
+  P n
 
-nat_mono_witness2 : (A:Set) => (B:Set) => Pair (Cast A B) (NatF A) -> Pair (Cast A B) (NatF A) ∩ Pair (Cast A B) (NatF B)
-nat_mono_witness2 -A -B xs :=
-  let Ty : Set -> Set := λ X. Pair (Cast A B) (NatF X)
-  let ipair : (X:Set) => Cast A B -> NatF X -> Ty X := λ -X. pair (Cast A B) (NatF X)
-  let ifst : (X:Set) => Ty X -> Cast A B := λ -X. fst (Cast A B) (NatF X)
-  let isnd : (X:Set) => Ty X -> NatF X := λ -X. snd (Cast A B) (NatF X)
-  ((sum_cast Unit A).1 (isnd A xs)).2 (λ x. Ty A ∩ Ty B)
-  (λ x. [ipair A (ifst A xs) (in1 Unit A x), ipair B (ifst A xs) (in1 Unit B x)])
-  (λ x. [ipair A (ifst A xs) (in2 Unit A ((ifst A xs).1 x).1), ipair B (ifst A xs) (in2 Unit B ((ifst A xs).1 x).2)])
+Nat2 : Set
+Nat2 := (n : Nat1) ∩ NatInd1 n
 
-nat_mono_evidence : (A:Set) => (B:Set) => (x : Pair (Cast A B) (NatF A)) -> x = (nat_mono_witness2 A B x).1
-nat_mono_evidence -A -B xs :=
-  let Ty : Set -> Set := λ X. Pair (Cast A B) (NatF X)
-  let ipair : (X:Set) => Cast A B -> NatF X -> Ty X := λ -X. pair (Cast A B) (NatF X)
-  let ifst : (X:Set) => Ty X -> Cast A B := λ -X. fst (Cast A B) (NatF X)
-  let isnd : (X:Set) => Ty X -> NatF X := λ -X. snd (Cast A B) (NatF X)
-  let inner : ipair A (ifst A xs) (isnd A xs) = (nat_mono_witness2 A B (ipair A (ifst A xs) (isnd A xs))).1 := ((sum_cast Unit A).1 (isnd A xs)).2 (λ x. ipair A (ifst A xs) x = (nat_mono_witness2 A B (ipair A (ifst A xs) x)).1)
-    (λ x. β{ipair A (ifst A xs) (in1 Unit A x)})
-    (λ x. subst A x ((ifst A xs).1 x).1 (cast_ind A B (ifst A xs) x) (λ y e. ipair A (ifst A xs) (in2 Unit A x) = ipair A (ifst A xs) (in2 Unit A y)) β{ipair A (ifst A xs) (in2 Unit A x)})
-  subst (Ty A) (ipair A (ifst A xs) (isnd A xs)) xs (sym (Ty A) xs (ipair A (ifst A xs) (isnd A xs)) (pair_eta_law (Cast A B) (NatF A) xs)) (λ y e. y = (nat_mono_witness2 A B y).1) inner
+zero2 : Nat2
+zero2 := [zero1, λ -P z s. z]
 
-nat_mono_inner : (A:Set) => (B:Set) => Pair (Cast A B) (NatF A) -> Pair (Cast A B) (NatF A) ∩ Pair (Cast A B) (NatF B)
-nat_mono_inner -A -B := φ { nat_mono_witness2 A B, nat_mono_evidence A B}
+succ2 : Nat2 -> Nat2
+succ2 n := [succ1 n.1, λ -P z s. s -Nat2 (λ x. x.1) (λ i. i.2 -P z s) n]
 
-nat_mono : (A:Set) => (B:Set) => Cast A B -> NatF A -> NatF B
-nat_mono -A -B k xs := snd (Cast A B) (NatF B) (nat_mono_inner A B (pair (Cast A B) (NatF A) k xs)).2
+nat1_to : Nat1 -> Nat2
+nat1_to n := n zero2 (λ -R f rec x. succ2 (rec x))
 
-#erase nat_mono
+nat1_fixed1 : (n:Nat2) -> (nat1_to n.1).1 = (n.1)
+nat1_fixed1 n := n.2 -(λ i. (nat1_to i).1 = i) β{zero1}
+  (λ -R f rec xs. J -_ -(nat1_to (f xs)).1 -(f xs) (rec xs) -(λ x y e. succ1 x = succ1 y) (λ -i. β{succ1 i}))
 
--- nat_mono_witness : (A:Set) => (B:Set) => (Cast A A ∩ Cast A B) -> NatF A -> NatF A ∩ NatF B
--- nat_mono_witness -A -B k xs := (sum_cast Unit A).1 xs (λ x. NatF A ∩ NatF B) 
---   (λ x. [in1 Unit A x, in1 Unit B x])
---   (λ x. [in2 Unit A (k.1.1 x), in2 Unit B (k.2.1 x)])
+nat1_fixed : (n:Nat2) -> (nat1_to n.1) = n
+nat1_fixed x := ϑ1{nat1_fixed1 x, nat1_to x.1, x}
 
--- --#erase nat_mono_witness
+nat2_ind : (n:Nat2) ->
+  (P:Nat2 -> Set) =>
+  P zero2 ->
+  ((R:Set) => (f:R -> Nat2) -> (ih:(r:R) -> P (f r)) -> (r:R) -> P (succ2 (f r))) ->
+  P n
+nat2_ind n -P z s :=
+  let inner : P (nat1_to n.1) := n.2 -(λ x. P (nat1_to x))
+    z
+    (λ -R f ih r. s -R (λ r. nat1_to (f r)) ih r)
+  subst -_ -(nat1_to n.1) -n (nat1_fixed n) -(λ y e. P y) inner
 
--- nat_mono_evidence : (A:Set) => (B:Set) => (k:Cast A A ∩ Cast A B) -> (xs : NatF A) -> (nat_mono_candidate A B k xs) = (nat_mono_witness A B k xs).1
--- nat_mono_evidence -A -B k xs := (sum_cast Unit A).1 xs (λ xs. (nat_mono_candidate A B k xs) = (nat_mono_witness A B k xs).1)
---   (λ x. leibniz (Cast A A) (λ k. (unit_cast.1 k.2 (λ x. NatF A) (in1 Unit A x)) = (in1 Unit A x)) (cast_refl A) k.1  β{in1 Unit A x} (cast_singleton A A (cast_refl A) k.1))
---   (λ x. leibniz (Cast A A) (λ k. (unit_cast.1 k.2 (λ x. NatF A) (in2 Unit A x)) = in2 Unit A (k.1 x)) (cast_refl A) k.1 β{in2 Unit A x} (cast_singleton A A (cast_refl A) k.1))
+NatInd : Nat2 -> Set
+NatInd n := (P:Nat2 -> Set) =>
+  P zero2 ->
+  ((R:Set) => (f:Cast R Nat2) -> (ih:(r:R) -> P (cast f r)) -> (r:R) -> P (succ2 (cast f r))) ->
+  P n
 
--- #erase nat_mono_evidence
+Nat : Set
+Nat := (n : Nat2) ∩ NatInd n
 
--- nat_mono : CastMono NatF
--- nat_mono -A -B k := ?
+zero : Nat
+zero := [zero2, λ -P z s. z]
 
--- Nat1 : Set
--- Nat1 := (X : Set) => X -> (X -> X) -> X
+succ : Nat -> Nat
+succ n := [succ2 n.1, λ -P z s. s -Nat [λ x. [x, x.1], unit] (λ i. i.2 -P z s) n]
 
--- zero1 : Nat1
--- zero1 -X z s := z
+nat_to : (n:Nat2) -> Nat
+nat_to n := n.1 zero (λ -R f rec x. succ (rec x))
 
--- succ1 : Nat1 -> Nat1
--- succ1 n -X z s := s (n X z s)
+nat_fixed : (n:Nat2) -> (nat_to n).1 = n
+nat_fixed n := nat2_ind n -(λ x. (nat_to x).1 = x)
+  β{zero2}
+  (λ -R f ih r. subst -_ -(f r) -(nat_to (f r)).1 (sym -_ -(nat_to (f r)).1 -(f r) (ih r)) -(λ y e. succ2 y = succ2 (f r)) β{succ2 (f r)})
 
--- Nat1Ind : Nat1 -> Set
--- Nat1Ind n := (P : Nat1 -> Set) => P zero1 -> ((x : Nat1) => P x -> P (succ1 x)) -> P n
+nat_cast : Cast Nat2 Nat
+nat_cast := [λ x. [x, φ {x, nat_to x, sym (nat_fixed x)}], unit]
 
--- Nat : Set
--- Nat := (n : Nat1) ∩ Nat1Ind n
+nat_ind : (n:Nat) ->
+  (P:Nat -> Set) =>
+  P zero ->
+  ((R:Set) => (f:Cast R Nat) -> (ih:(r:R) -> P (cast f r)) -> (r:R) -> P (succ (cast f r))) ->
+  P n
+nat_ind n -P z s := n.2 -(λ n. P (cast nat_cast n)) z
+  (λ -R f ih r. s -R (cast_trans f nat_cast) ih r)
 
--- zero : Nat
--- zero := [zero1, λ -P z s. z]
-
--- succ : Nat -> Nat
--- succ n := [succ1 n.1, λ -P z s. s n.1 (n.2 P z s)]
-
--- to : Nat1 -> Nat
--- to n := n Nat zero succ
-
--- fixed1 : (n : Nat) -> (to n.1).1 = (n.1)
--- fixed1 n := n.2 (λ x. (to x).1 = x)
---   β{zero1}
---   (λ -x ih. let inner : succ1 (to x).1 = succ1 x :=
---     subst Nat1 (λ i. succ1 i = succ1 x) x (to x).1 β{succ1 x} ih
---   inner)
-
--- fixed : (n : Nat) -> to n.1 = n
--- fixed n := ϑ{fixed1 n}
-
--- induct : (n : Nat) -> (P : Nat -> Set) => P zero -> ((x : Nat) => P x -> P (succ x)) -> P n
--- induct n -P z s :=
---   let inner := n.2 (λ n. P (to n)) z (λ -x ih. the (P (succ (to x))) (s (to x) ih))
---   subst Nat P (to n.1) n inner (fixed n)
+nat_rec : Nat -> (X:Set) => X -> ((R:Set) => Cast R Nat -> (R -> X) -> R -> X) -> X
+nat_rec n -X z s := nat_ind n -(λ n. X) z s

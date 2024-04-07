@@ -1,0 +1,31 @@
+module even
+
+import bool
+import nat
+import iseven
+
+Even : Set
+Even := (x : Nat) ∩ IsEven tt x
+
+Odd : Set
+Odd := (x : Nat) ∩ IsEven ff x
+
+even_zero : Even
+even_zero := [zero, ezero]
+
+even_succ : Odd -> Even
+even_succ e := [succ e.1, esucc -ff -e.1 e.2 ]
+
+odd_succ : Even -> Odd
+odd_succ e := [succ e.1, esucc -tt -e.1 e.2 ]
+
+-- even_ind :
+--   (n:Even) ->
+--   (P:Even -> Set) =>
+--   (Q:Odd -> Set) =>
+--   P even_zero ->
+--   ((i:Odd) => Q i -> P (even_succ i)) ->
+--   ((i:Even) => P i -> Q (odd_succ i)) ->
+--   P n
+-- even_ind n -P -Q z os es := iseven_ind -tt -n.1 n.2
+--   -(λ b i e. ((b = tt) -> ))

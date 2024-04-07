@@ -187,6 +187,73 @@ impl TermData {
         }
     }
 
+    pub fn erase(&self, db: &Database) -> Term {
+        let term = self.clone();
+        match term {
+            TermData::Lambda { sort, mode, name, domain, body } => {
+                let domain = if mode == Mode::Free { db.make_term(TermData::SuperStar) }
+                    else { domain.erase(db) };
+                let body = body.erase(db);
+                db.make_term(TermData::Lambda { sort, mode, name, domain, body })
+            }
+            TermData::Let { sort, name, let_body, body } => {
+                let let_body = let_body.erase(db);
+                let body = body.erase(db);
+                db.make_term(TermData::Let { sort, name, let_body, body })
+            }
+            TermData::Pi { sort, mode, name, domain, body } => {
+                let domain = domain.erase(db);
+                let body = body.erase(db);
+                db.make_term(TermData::Pi { sort, mode, name, domain, body })
+            }
+            TermData::Intersect { name, first, second } => {
+                let first = first.erase(db);
+                let second = second.erase(db);
+                db.make_term(TermData::Intersect { name, first, second })
+            }
+            TermData::Equality { left, right, anno } => {
+                let left = left.erase(db);
+                let right = right.erase(db);
+                let anno = anno.erase(db);
+                db.make_term(TermData::Equality { left, right, anno })
+            }
+            TermData::Project { body, .. } => body.erase(db),
+            TermData::Pair { first, .. } => first.erase(db),
+            TermData::Separate { equation } => equation.erase(db),
+            TermData::Refl { .. } => {
+                db.make_term(TermData::Lambda {
+                    sort: Sort::Term,
+                    mode: Mode::Free,
+                    name: Symbol::from("x"),
+                    domain: db.make_term(TermData::SuperStar),
+                    body: db.make_term(TermData::Bound { sort: Sort::Term, index: 0.into() }),
+                })
+            }
+            TermData::Cast { input, .. } => input.erase(db),
+            TermData::Promote { equation, .. } => equation.erase(db),
+            TermData::Subst { equation, .. } => equation.erase(db),
+            TermData::Apply { sort, mode, fun, arg } => {
+                if mode == Mode::Erased { fun.erase(db) }
+                else {
+                    let fun = fun.erase(db);
+                    let arg = arg.erase(db);
+                    db.make_term(TermData::Apply {
+                        sort,
+                        mode,
+                        fun,
+                        arg
+                    })
+                }
+            }
+            TermData::Bound { .. } => db.make_term(term),
+            TermData::Free { .. } => db.make_term(term),
+            TermData::Meta { .. } => db.make_term(term),
+            TermData::InsertedMeta { .. } => db.make_term(term),
+            TermData::Star => db.make_term(term),
+            TermData::SuperStar => db.make_term(term),
+        }
+    }
+
     pub fn is_apply(&self) -> bool { matches!(self, TermData::Apply { .. }) }
 
     pub fn to_string_with_context(&self, mut ctx: Vector<Symbol>) -> String {
@@ -320,11 +387,11 @@ impl fmt::Display for TermData {
 }
 
 pub trait TermExt {
-    fn shift(&self, db: &Database, amount: usize, cutoff: usize) -> Self;
+    fn shift(&self, db: &Database, amount: isize, cutoff: usize) -> Self;
 }
 
 impl TermExt for Term {
-    fn shift(&self, db: &Database, amount: usize, cutoff: usize) -> Self {
+    fn shift(&self, db: &Database, amount: isize, cutoff: usize) -> Self {
         match self.cloned() {
             TermData::Lambda { sort, mode, name, domain, body } => {
                 let domain = domain.shift(db, amount, cutoff);
@@ -393,7 +460,11 @@ impl TermExt for Term {
                 db.make_term(TermData::Apply { sort, mode, fun, arg })
             }
             TermData::Bound { sort, index } => {
-                let index = if *index < cutoff { index } else { index + amount };
+                let index = if *index < cutoff { index } else { 
+                    let index: isize = *index as isize;
+                    let result = index + amount;
+                    (isize::min(result, 0) as usize).into()
+                };
                 db.make_term(TermData::Bound { sort, index })
             }
             TermData::Free { .. } => self.clone(),
@@ -403,4 +474,88 @@ impl TermExt for Term {
             TermData::SuperStar => self.clone(),
         }
     }
+}
+
+pub fn cbool(db: &Database) -> Term {
+    db.make_term(TermData::Pi {
+        sort: Sort::Type,
+        mode: Mode::Erased,
+        name: Symbol::from("X"),
+        domain: db.make_term(TermData::Star),
+        body: db.make_term(TermData::Pi {
+            sort: Sort::Type,
+            mode: Mode::Free,
+            name: Symbol::default(),
+            domain: db.make_term(TermData::Bound { sort: Sort::Type, index: 0.into() }),
+            body: db.make_term(TermData::Pi {
+                sort: Sort::Type,
+                mode: Mode::Free,
+                name: Symbol::default(),
+                domain: db.make_term(TermData::Bound { sort: Sort::Type, index: 1.into() }),
+                body: db.make_term(TermData::Bound { sort: Sort::Type, index: 2.into() })
+            })
+        })
+    })
+}
+
+pub fn ctrue(db: &Database) -> Term {
+    db.make_term(TermData::Lambda {
+        sort: Sort::Term,
+        mode: Mode::Erased,
+        name: Symbol::from("X"),
+        domain: db.make_term(TermData::Star),
+        body: db.make_term(TermData::Lambda {
+            sort: Sort::Term,
+            mode: Mode::Free,
+            name: Symbol::from("x"),
+            domain: db.make_term(TermData::Bound { sort: Sort::Term, index: 0.into() }),
+            body: db.make_term(TermData::Lambda {
+                sort: Sort::Term,
+                mode: Mode::Free,
+                name: Symbol::from("y"),
+                domain: db.make_term(TermData::Bound { sort: Sort::Term, index: 1.into() }),
+                body: db.make_term(TermData::Bound { sort: Sort::Term, index: 1.into() })
+            })
+        })
+    })
+}
+
+pub fn cfalse(db: &Database) -> Term {
+    db.make_term(TermData::Lambda {
+        sort: Sort::Term,
+        mode: Mode::Erased,
+        name: Symbol::from("X"),
+        domain: db.make_term(TermData::Star),
+        body: db.make_term(TermData::Lambda {
+            sort: Sort::Term,
+            mode: Mode::Free,
+            name: Symbol::from("x"),
+            domain: db.make_term(TermData::Bound { sort: Sort::Term, index: 0.into() }),
+            body: db.make_term(TermData::Lambda {
+                sort: Sort::Term,
+                mode: Mode::Free,
+                name: Symbol::from("y"),
+                domain: db.make_term(TermData::Bound { sort: Sort::Term, index: 1.into() }),
+                body: db.make_term(TermData::Bound { sort: Sort::Term, index: 0.into() })
+            })
+        })
+    })
+}
+
+pub fn separate_type(db: &Database) -> Term {
+    db.make_term(TermData::Equality {
+        left: ctrue(db), 
+        right: cfalse(db),
+        anno: cbool(db)
+    })
+}
+
+pub fn false_type(db: &Database) -> Term {
+    db.make_term(TermData::Pi {
+        sort: Sort::Type,
+        mode: Mode::Erased,
+        name: Symbol::from("X"),
+        domain: db.make_term(TermData::Star),
+        body: db.make_term(TermData::Bound { sort: Sort::Type, index: 0.into() })
+    })
 }

@@ -1,8 +1,12 @@
 
+import eq
 import cast
 
 module data
   (F : Set -> Set)
+  (fmap : Functor F)
+  (fmap_comp : FunctorCompositionLaw F fmap)
+  (fmap_id : FunctorIdentityLaw F fmap)
   (mono : CastMono F)
   (mono = mono_erasure)
 
@@ -30,3 +34,46 @@ pre_to_church := [λ x. [x, x.1], unit]
 pre_in : F Pre -> Pre
 pre_in xs := [church_in (cast (mono pre_to_church) xs)
   , λ -P ctor. ctor -Pre pre_to_church (λ x. x.2 -P ctor) xs]
+
+pre_to : Church -> Pre
+pre_to x := x -Pre (λ -R k rec r. pre_in (fmap rec r))
+
+pre_fixed_lemma : (x:Pre) -> ((compose pre_to (cast pre_to_church)) x).1 = (x.1)
+pre_fixed_lemma x := x.2 -(λ x. ((compose (cast pre_to_church) pre_to) x) = x)
+  (λ -R f ih r. ?)
+
+-- pre_fixed1 : (x:Pre) -> (pre_to x.1).1 = (x.1)
+-- pre_fixed1 x := x.2 -(λ x. (pre_to x).1 = x)
+--   (λ -R f ih r. let r2 : F Church := cast (mono f) r
+--   the -((pre_in (fmap pre_to r2)).1 = church_in r2)
+--   (the -(church_in (cast (mono pre_to_church) (fmap pre_to r2)) = church_in r2)
+--   ?
+--   ))
+
+-- 
+-- (pre_to (church_in (cast (mono f) r))).1
+-- ((church_in (cast (mono f) r)) (λ -R k rec r. pre_in (fmap rec r))).1
+-- ((λ k rec r. pre_in (fmap rec r)) (λ x. x) (λ x. x (λ -R k rec r. pre_in (fmap rec r))) (cast (mono f) r))).1
+-- (pre_in (fmap (λ x. x (λ k rec r. pre_in (fmap rec r))) (cast (mono f) r)))).1
+-- (pre_in (fmap pre_to (cast (mono f) r))).1
+
+
+
+
+-- pre_sum_fixed1 : (A:Set) => (B:Set) => (x:PreSum A B) -> (pre_sum_to -A -B x.1).1 = (x.1)
+-- pre_sum_fixed1 -A -B xs := xs.2
+--   -(λ x. (pre_sum_to -A -B x).1 = x)
+--   (λ a. β{church_in1 -A -B a})
+--   (λ b. β{church_in2 -A -B b})
+
+-- pre_sum_fixed : (A:Set) => (B:Set) => (x:PreSum A B) -> pre_sum_to x.1 = x
+-- pre_sum_fixed -A -B x := ϑ1{pre_sum_fixed1 x, pre_sum_to x.1, x}
+
+-- pre_sum_ind : (A:Set) => (B:Set) => (x:PreSum A B) ->
+--   (P:PreSum A B -> Set) =>
+--   ((a:A) -> P (pre_in1 a)) ->
+--   ((b:B) -> P (pre_in2 b)) ->
+--   P x
+-- pre_sum_ind -A -B x -P in1 in2 :=
+--   let inner : P (pre_sum_to x.1) := x.2 -(λ x. P (pre_sum_to x)) in1 in2
+--   leibniz -(PreSum A B) -P -(pre_sum_to x.1) -x inner (pre_sum_fixed -A -B x)

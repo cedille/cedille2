@@ -1,0 +1,50 @@
+
+module nat
+
+import ../eq
+import ../cast
+import ../not
+import ../bool
+import ../nat
+import label
+
+nat_other : Label -> Bool
+nat_other l := not (or (label_eq l lzero) (label_eq l lsucc))
+
+NatF : Label -> Set -> Set
+NatF l X := (((l = lzero) -> Unit) ∩ ((l = lsucc) -> X)) ∩ ((nat_other l = tt) -> False)
+
+ChurchNat : Set
+ChurchNat := (X:Set) => ((l:Label) -> NatF l X -> X) -> X
+
+church_zero : ChurchNat
+church_zero -X f := f lzero [[
+  λ e. to_true e -Unit unit
+  , λ e. δ { lzero_not_lsucc e } -X]
+  , λ e. δ { ff_not_tt e} -False]
+
+church_succ : ChurchNat -> ChurchNat
+church_succ n -X f :=
+  let x : X := n -X f
+  f lsucc [[λ e. δ { lsucc_not_lzero e } -(X -> Unit) x, λ e. to_true (wrap e) -X x], λ e. (δ { ff_not_tt e }) -(X -> False) x]
+
+int_other : Label -> Bool
+int_other l := not (or (label_eq l lzero) (or (label_eq l lsucc) (label_eq l lpred)))
+
+IntF : Label -> Set -> Set
+IntF l X := (((l = lzero) -> Unit) ∩ ((l = lsucc) -> X)) ∩ (((l = lpred) -> X) ∩ ((int_other l = tt) -> False))
+
+ChurchInt : Set
+ChurchInt := (X:Set) => ((l:Label) -> IntF l X -> X) -> X
+
+int_other_to_nat_other : (l:Label) -> (int_other l = tt) -> (int_other l = tt) ∩ (nat_other l = tt)
+int_other_to_nat_other l e := nat_ind l -(λ l. (int_other l = tt) ∩ (nat_other l = tt))
+  [β{tt}, β{tt}]
+  ?
+
+-- natf_to_intf : (l:Label) -> (X:Set) => NatF l X -> IntF l X
+-- natf_to_intf l -X x :=
+--   [[λ e. x.1.1 e, λ e. x.1.2 e]
+--   , [λ e. (x.2 (subst (sym e) -(λ y e. nat_other y = tt) β{tt})) -X
+--   , λ e. ?]]
+

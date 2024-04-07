@@ -108,11 +108,19 @@ fn parse_module(input: In) -> IResult<In, Command> {
 }
 
 fn parse_import(input: In) -> IResult<In, Command> {
-    let (rest, (start, path))
+    let (rest, (start, path, mut args))
     = context("import", tuple((
         tag("import").preceded_by(bspace0(0)),
-        parse_path.preceded_by(bspace0(2))
+        parse_path.preceded_by(bspace0(2)),
+        separated_list0(bspace1(2), pair(opt(tag("-")), parse_term_atom(2)))
+            .preceded_by(bspace0(2))
     )))(input)?;
+
+    let mut import_args = vec![];
+    for (mode, term) in args.drain(..) {
+        let mode = if mode.is_some() { Mode::Erased } else { Mode::Free };
+        import_args.push((mode, term));
+    }
 
     let span = (start.location_offset(), path.1);
     let import = Import {
@@ -120,7 +128,7 @@ fn parse_import(input: In) -> IResult<In, Command> {
         public: false,
         path,
         namespace: None,
-        args: vec![]
+        args: import_args
     };
 
     Ok((rest, Command::Import(import)))
@@ -396,6 +404,7 @@ fn parse_term_atom(margin: usize) -> impl FnMut(In) -> IResult<In, Term> {
             parse_term_cast(margin),
             parse_term_promote(margin),
             parse_term_refl(margin),
+            parse_term_separate(margin),
             parse_term_paren(margin),
             parse_term_omission,
             parse_term_hole,
@@ -599,7 +608,7 @@ fn parse_term_paren(margin: usize) -> impl FnMut(In) -> IResult<In, Term> {
         let (rest, (_, term, _))
         = context("paren", tuple((
             tag("(").preceded_by(bspace0(margin)),
-            parse_term(margin),
+            parse_term(margin + 2),
             tag(")").preceded_by(bspace0(margin))
         )))(input)?;
 

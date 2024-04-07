@@ -1,0 +1,75 @@
+module bool
+
+import eq
+
+ChurchBool : Set
+ChurchBool := (X : Set) => X -> X -> X
+
+church_tt : ChurchBool
+church_tt -X x y := x
+
+church_ff : ChurchBool
+church_ff -X x y := y
+
+PreBoolInd : ChurchBool -> Set
+PreBoolInd u := (P : (x : ChurchBool) -> Set) => P church_tt -> P church_ff -> P u
+
+PreBool : Set
+PreBool := (u : ChurchBool) ∩ PreBoolInd u
+
+pre_tt : PreBool
+pre_tt := [church_tt, λ -P x y. x]
+
+pre_ff : PreBool
+pre_ff := [church_ff, λ -P x y. y]
+
+pre_bool_to : ChurchBool -> PreBool
+pre_bool_to u := u pre_tt pre_ff
+
+pre_bool_fixed1 : (u : PreBool) -> (pre_bool_to u.1).1 = (u.1)
+pre_bool_fixed1 u := u.2 -(λ x. (pre_bool_to x).1 = x) β{church_tt} β{church_ff}
+
+pre_bool_fixed : (u : PreBool) -> pre_bool_to u.1 = u
+pre_bool_fixed u := ϑ1{pre_bool_fixed1 u, pre_bool_to u.1, u}
+
+pre_bool_ind : (u : PreBool) -> (P : (x : PreBool) -> Set) => P pre_tt -> P pre_ff -> P u
+pre_bool_ind u -P t f :=
+  let inner : P (pre_bool_to u.1) := u.2 -(λ x. P (pre_bool_to x)) t f
+  leibniz -PreBool -P -(pre_bool_to u.1) -u inner (pre_bool_fixed u)
+
+BoolInd : PreBool -> Set
+BoolInd u := (P : (x:PreBool) -> Set) => P pre_tt -> P pre_ff -> P u
+
+Bool : Set
+Bool := (u : PreBool) ∩ BoolInd u
+
+tt : Bool
+tt := [pre_tt, λ -P x y. x]
+
+ff : Bool
+ff := [pre_ff, λ -P x y. y]
+
+bool_to : PreBool -> Bool
+bool_to u := u.1 tt ff
+
+bool_fixed : (u : PreBool) -> u = (bool_to u).1
+bool_fixed u := pre_bool_ind u -(λ x. x = (bool_to x).1) β{pre_tt} β{pre_ff}
+
+pre_bool_cast : PreBool -> Bool
+pre_bool_cast u := φ { u, bool_to u, bool_fixed u }
+
+bool_ind : (u : Bool) -> (P : Bool -> Set) => P tt -> P ff -> P u
+bool_ind u -P t f := u.2 -(λ x. P (pre_bool_cast x)) t f
+
+not : Bool -> Bool
+not b := bool_ind b -(λ b. Bool) ff tt
+
+and : Bool -> Bool -> Bool
+and b := bool_ind b -(λ b. Bool -> Bool) 
+  (λ b2. b2)
+  (λ b2. ff)
+
+or : Bool -> Bool -> Bool
+or b := bool_ind b -(λ b. Bool -> Bool) 
+  (λ b2. tt)
+  (λ b2. b2)

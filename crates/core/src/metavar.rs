@@ -1,6 +1,8 @@
 
 use std::collections::HashMap;
 
+use imbl::Vector;
+
 use crate::utility::*;
 use crate::eval::*;
 use crate::term::*;
@@ -62,14 +64,45 @@ fn rename(db: &mut Database, meta: Symbol, renaming: &PartialRenaming, value: Va
     fn rename_spine(db: &mut Database, meta: Symbol, renaming: &PartialRenaming, head: Term, spine: Spine) -> Result<Term, ()> {
         let mut result = head;
         for action in spine.iter() {
-            let Action::Apply(mode, arg) = action else { unimplemented!() };
-            let arg = rename(db, meta, renaming, arg.force(db))?;
-            result = db.make_term(TermData::Apply {
-                sort: result.sort(),
-                mode: *mode,
-                fun: result,
-                arg
-            });
+            match action.clone() {
+                Action::Apply(mode, arg) => {
+                    let arg = rename(db, meta, renaming, arg.force(db))?;
+                    result = db.make_term(TermData::Apply {
+                        sort: result.sort(),
+                        mode,
+                        fun: result,
+                        arg
+                    });
+                }
+                Action::Project(variant) => {
+                    result = db.make_term(TermData::Project {
+                        variant,
+                        body: result,
+                    });
+                }
+                Action::Subst(predicate) => {
+                    let predicate = rename(db, meta, renaming, predicate)?;
+                    result = db.make_term(TermData::Subst {
+                        predicate,
+                        equation: result,
+                    });
+                }
+                Action::Promote(variant, lhs, rhs) => {
+                    let lhs = rename(db, meta, renaming, lhs.force(db))?;
+                    let rhs = rename(db, meta, renaming, rhs.force(db))?;
+                    result = db.make_term(TermData::Promote {
+                        variant,
+                        equation: result,
+                        lhs,
+                        rhs,
+                    });
+                }
+                Action::Separate => {
+                    result = db.make_term(TermData::Separate {
+                        equation: result
+                    })
+                }
+            }
         }
         Ok(result)
     }
@@ -191,16 +224,147 @@ pub fn solve(db: &mut Database, module: Symbol, env: Level, meta: Symbol, spine:
     //     eprint!(" {}", action);
     // }
     // eprintln!();
-    // eprintln!("  {}", rhs);
+    // eprint!("  {}", rhs.head());
+    // for action in rhs.spine().iter() {
+    //     eprint!(" {}", action);
+    // }
+    // eprintln!();
     let (renaming, mut modes) = invert(db, env, spine)?;
-    // eprintln!("RENAMING: {:#?}", renaming);
+    //eprintln!("RENAMING: {:#?}", renaming);
     modes.reverse();
     let domain = renaming.domain;
     let rhs = rename(db, meta, &renaming, rhs)?;
-    // eprintln!("RENAMED RHS: {}", rhs);
+    //eprintln!("RENAMED RHS: {}", rhs);
     let solution = wrap_in_lambdas(db, domain, modes, rhs);
     let solution = eval(db, Env::new(), solution);
     db.insert_meta(module, meta, solution)
         .map_err(|_| ())?;
     Ok(())
+}
+
+fn is_meta_spine(term: &Term) -> bool {
+    match term.cloned() {
+        TermData::Apply { fun, .. } => is_meta_spine(&fun),
+        TermData::Meta { .. } => true,
+        TermData::InsertedMeta { .. } => true,
+        _ => false
+    }
+}
+
+fn zonk_meta(db: &Database, env: Env, mut term: Term) -> Term {
+    let mut spine = Vector::new();
+    while let TermData::Apply { mode, fun, arg, .. } = term.cloned() {
+        spine.push_front((mode, arg));
+        term = fun;
+    }
+    match term.cloned() {
+        TermData::Meta { module, name, .. } => {
+            match db.lookup_meta(module, name) {
+                MetaState::Unsolved | MetaState::Frozen => term,
+                MetaState::Solved(mut result) => {
+                    for (mode, arg) in spine.iter().cloned() {
+                        let arg = LazyValueData::lazy(db, env.clone(), arg);
+                        let action = Action::Apply(mode, arg);
+                        result = result.perform(db, action);
+                    }
+                    quote(db, result, env.len().into())
+                }
+            }
+        }
+        TermData::InsertedMeta { module, name, mask, .. } => {
+            match db.lookup_meta(module, name) {
+                MetaState::Unsolved | MetaState::Frozen => term,
+                MetaState::Solved(mut result) => {
+                    for (i, b) in mask.iter().enumerate() {
+                        let EnvBound::Bound = b else { continue };
+                        let arg = env.get(i).unwrap();
+                        let action = Action::Apply(arg.mode, arg.value.clone());
+                        result = result.perform(db, action)
+                    }
+                    quote(db, result, env.len().into())
+                }
+            }
+        }
+        _ => unreachable!()
+    }
+}
+
+pub fn zonk(db: &Database, env: Env, term: Term) -> Term {
+    return term;
+    match term.cloned() {
+        TermData::Lambda { sort, mode, name, domain, body } => {
+            let domain = zonk(db, env.clone(), domain);
+            let body = zonk(db, env.clone(), body);
+            db.make_term(TermData::Lambda { sort, mode, name, domain, body })
+        }
+        TermData::Let { sort, name, let_body, body } => {
+            let let_body = zonk(db, env.clone(), let_body);
+            let body = zonk(db, env.clone(), body);
+            db.make_term(TermData::Let { sort, name, let_body, body })
+        }
+        TermData::Pi { sort, mode, name, domain, body } => {
+            let domain = zonk(db, env.clone(), domain);
+            let body = zonk(db, env.clone(), body);
+            db.make_term(TermData::Pi { sort, mode, name, domain, body })
+        }
+        TermData::Intersect { name, first, second } => {
+            let first = zonk(db, env.clone(), first);
+            let second = zonk(db, env.clone(), second);
+            db.make_term(TermData::Intersect { name, first, second })
+        }
+        TermData::Equality { left, right, anno } => {
+            let left = zonk(db, env.clone(), left);
+            let right = zonk(db, env.clone(), right);
+            let anno = zonk(db, env.clone(), anno);
+            db.make_term(TermData::Equality { left, right, anno })
+        }
+        TermData::Project { variant, body } => {
+            let body = zonk(db, env.clone(), body);
+            db.make_term(TermData::Project { variant, body })
+        }
+        TermData::Pair { first, second, anno } => {
+            let first = zonk(db, env.clone(), first);
+            let second = zonk(db, env.clone(), second);
+            let anno = zonk(db, env.clone(), anno);
+            db.make_term(TermData::Pair { first, second, anno })
+        }
+        TermData::Separate { equation } => {
+            let equation = zonk(db, env.clone(), equation);
+            db.make_term(TermData::Separate { equation })
+        }
+        TermData::Refl { input } => {
+            let input = zonk(db, env.clone(), input);
+            db.make_term(TermData::Refl { input })
+        }
+        TermData::Cast { input, witness, evidence } => {
+            let input = zonk(db, env.clone(), input);
+            let witness = zonk(db, env.clone(), witness);
+            let evidence = zonk(db, env.clone(), evidence);
+            db.make_term(TermData::Cast { input, witness, evidence })
+        }
+        TermData::Promote { variant, equation, lhs, rhs } => {
+            let equation = zonk(db, env.clone(), equation);
+            let lhs = zonk(db, env.clone(), lhs);
+            let rhs = zonk(db, env.clone(), rhs);
+            db.make_term(TermData::Promote { variant, equation, lhs, rhs })
+        }
+        TermData::Subst { predicate, equation } => {
+            let predicate = zonk(db, env.clone(), predicate);
+            let equation = zonk(db, env.clone(), equation);
+            db.make_term(TermData::Subst { predicate, equation })
+        }
+        TermData::Apply { sort, mode, fun, arg } => {
+            if is_meta_spine(&term) {
+                zonk_meta(db, env, term)
+            } else {
+                let fun = zonk(db, env.clone(), fun);
+                let arg = zonk(db, env.clone(), arg);
+                db.make_term(TermData::Apply { sort, mode, fun, arg })
+            }
+        }
+        TermData::Bound { .. } | TermData::Free { .. } => term,
+        TermData::Meta { .. } | TermData::InsertedMeta { .. } => term,
+        TermData::Star => term,
+        TermData::SuperStar => term,
+    }
 }

@@ -1,0 +1,51 @@
+module label
+
+import ../eq
+import ../cast
+import ../not
+import ../nat
+import ../bool
+
+Label : Set
+Label := Nat
+
+start : Label
+start := zero
+
+next : Label -> Label
+next x := succ x
+
+label_eq : Label -> Label -> Bool
+label_eq l := nat_ind l -(λ x. Label -> Bool)
+  (λ r. nat_rec r -Bool tt (λ -R f rec xs. ff))
+  (λ -R f ih xs rhs. nat_rec rhs -Bool ff (λ -R2 f2 rec2 xs2. ih xs (cast f2 xs2)))
+
+ff_not_tt_f : Bool -> cBool
+ff_not_tt_f b := bool_ind b -(λ b. cBool) cff ctt
+
+ff_not_tt : (ff = tt) -> (ctt = cff)
+ff_not_tt e := cong e -ff_not_tt_f
+
+lzero := start
+lsucc := next lzero
+lpred := next lsucc
+
+lzero_not_lsucc_f : Label -> cBool
+lzero_not_lsucc_f l := nat_rec l -cBool ctt (λ -R f rec xs. cff)
+
+lzero_not_lsucc : (lzero = lsucc) -> (ctt = cff)
+lzero_not_lsucc e := cong e -lzero_not_lsucc_f
+
+lsucc_not_lzero_f : Label -> cBool
+lsucc_not_lzero_f l := nat_rec l -cBool cff (λ -R f rec xs. ctt)
+
+-- λ e. e (λ x. x)
+lsucc_not_lzero : (lsucc = lzero) -> (ctt = cff)
+lsucc_not_lzero e := cong e -lsucc_not_lzero_f
+
+lpred_not_lzero_f : Label -> cBool
+lpred_not_lzero_f l := nat_rec l -cBool cff (λ -R f rec xs. ctt)
+
+-- λ e. e (λ x. x)
+lpred_not_lzero : (lpred = lzero) -> (ctt = cff)
+lpred_not_lzero e := cong e -lpred_not_lzero_f

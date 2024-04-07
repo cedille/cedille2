@@ -1,0 +1,127 @@
+
+import ../eq
+import ../cast
+import ../sigma
+
+module idata
+  (I: Set)
+  (F: (I -> Set) -> I -> Set)
+  (mono : IdxCastMono I F)
+  (mono = mono_erasure)
+
+------------------------------------------------------------------------------------------------------------------------
+---- Mendler Algebra
+------------------------------------------------------------------------------------------------------------------------
+
+AlgM : (I -> Set) -> Set
+AlgM X :=
+  (R:I -> Set) =>
+  ((i:I) => R i -> R i) ->
+  ((i:I) => R i -> X i) ->
+  (i:I) =>
+  F R i ->
+  X i
+
+FixM : I -> Set
+FixM i := (X:I -> Set) => AlgM X -> X i
+
+foldM : (X:I -> Set) => AlgM X -> (i:I) => FixM i -> X i
+foldM -X alg -i d := d alg
+
+inM : (i:I) => F FixM i -> FixM i
+inM -i xs -X alg := alg -FixM (λ -i x. x) (λ -i. foldM -X alg -i) -i xs
+
+------------------------------------------------------------------------------------------------------------------------
+---- Mendler Proof Algebra
+------------------------------------------------------------------------------------------------------------------------
+
+PrfAlgM : (X:I -> Set) -> ((i:I) -> X i -> Set) -> ((i:I) => F X i -> X i) -> Set
+PrfAlgM X P in :=
+  (R: I -> Set) =>
+  (k: (i:I) => Cast (R i) (X i)) -> 
+  (ih: (i:I) => (r:R i) -> P i (cast (k -i) r)) ->
+  (i: I) =>
+  (rs: F R i) ->
+  P i (in -i (cast (mono -R -X (cast_idx_eta k) -i) rs))
+
+InductiveM : (i:I) -> FixM i -> Set
+InductiveM i x := (P:(i:I) -> FixM i -> Set) => PrfAlgM FixM P inM -> P i x
+
+IndM : I -> Set
+IndM i := (x: FixM i) ∩ (InductiveM i x)
+
+toFixM : (i:I) => Cast (IndM i) (FixM i)
+toFixM -i := [λ x. [x, x.1], unit]
+
+inIndM1 : (i:I) => F IndM i -> FixM i
+inIndM1 -i xs := inM -i (cast (mono -IndM -FixM toFixM -i) xs)
+
+inIndM2 : (i:I) => (xs:F IndM i) -> InductiveM i (inIndM1 -i xs)
+inIndM2 -i xs -P alg := alg -IndM toFixM (λ -i d. d.2 -P alg) -i xs
+
+inIndM : (i:I) => F IndM i -> IndM i
+inIndM -i xs := [inIndM1 -i xs, inIndM2 -i xs]
+
+------------------------------------------------------------------------------------------------------------------------
+---- Mendler Inductive
+------------------------------------------------------------------------------------------------------------------------
+
+Lift : ((i:I) -> IndM i -> Set) -> (i:I) -> FixM i -> Set
+Lift P i x := Sigma (IndM i) (λ y. Sigma (x = (y.1)) (λ e. P i (φ { x, y, e })))
+
+IhPlus : (R:I -> Set) -> ((i:I) => Cast (R i) (FixM i)) -> ((i:I) -> IndM i -> Set) -> Set
+IhPlus R k P := (i:I) => (r:R i) -> Lift P i (cast (k -i) r)
+
+castIhPlus :
+  (R:I -> Set) =>
+  (k:(i:I) => Cast (R i) (FixM i)) ->
+  (P:(i:I) -> IndM i -> Set) =>
+  (i:I) =>
+  IhPlus R k P ->
+  Cast (R i) (IndM i)
+castIhPlus -R k -P -i ih := [λ x. [unit_rec (k -i).2 -(R i) x,
+  φ { cast -(R i) -(FixM i) (k -i) x, dfst (ih -i x), dfst (dsnd (ih -i x)) }], unit_eta (k -i).2]
+
+prfIhPlus :
+  (R:I -> Set) =>
+  (k:(i:I) => Cast (R i) (FixM i)) ->
+  (P:(i:I) -> IndM i -> Set) =>
+  (i:I) =>
+  (ih: IhPlus R k P) ->
+  (r:R i) ->
+  P i (cast (castIhPlus -R k -P -i ih) r)
+prfIhPlus -R k -P -i ih r := dsnd (dsnd (ih -i r))
+
+convAlg :
+  (P:(i:I) -> IndM i -> Set) =>
+  PrfAlgM IndM P inIndM ->
+  PrfAlgM FixM (Lift P) inM
+convAlg -P alg -R k ih -i xs :=
+  let ke : (i:I) => Cast (R i) (FixM i) := λ -i. cast_eta (k -i)
+  let kp : (i:I) => Cast (R i) (IndM i) := λ -i. castIhPlus -R k -P -i ih
+  let xf := inM -i (cast (mono -R -FixM ke -i) xs)
+  let x := inIndM -i (cast (mono -R -IndM kp -i) xs)
+  let xeq : (x.1) = xf := β{xf}
+  let ihp : (i:I) => (r:R i) -> P i (cast (kp -i) r) := λ -i. prfIhPlus -R k -P -i ih
+  let T1 : (y:IndM i) -> (e: xf = (y.1)) -> Set := λ y e. P i (φ { xf, y, e })
+  let T2 : (y:IndM i) -> Set := λ y. Sigma (xf = (y.1)) (λ e. T1 y e)
+  sigma -(IndM i) -T2 x (sigma -(xf = (x.1)) -(T1 x) xeq (alg -R kp ihp -i xs))
+
+inductionM : (P:(i:I) -> IndM i -> Set) => PrfAlgM IndM P inIndM -> (i:I) => (x:IndM i) -> P i x
+inductionM -P alg -i x :=
+  let algp := convAlg -P alg
+  let xout := x.2 -(Lift P) algp
+  dsnd (dsnd xout)
+
+outM : (i:I) => IndM i -> F IndM i
+outM := inductionM -(λ i xs. F IndM i) (λ -R k rec -i xs. cast (mono -R -IndM k -i) xs)
+
+foldIndM : (X:I -> Set) => AlgM X -> (i:I) => IndM i -> X i
+foldIndM -X alg := inductionM -(λ i xs. X i) (λ -R k. alg -R (λ -i r. r))
+
+lambek1 : (i:I) => (x:F IndM i) -> (outM -i (inIndM -i x)) = x
+lambek1 -i x := β{x}
+
+lambek2 : (i:I) => (x:IndM i) -> (inIndM -i (outM -i x)) = x
+lambek2 -i x := inductionM -(λ i x. (inIndM -i (outM -i x)) = x)
+  (λ -R k ih -i xs. β{inIndM -i (cast (mono -R -IndM (cast_idx_eta k) -i) xs)}) -i x

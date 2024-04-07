@@ -1,0 +1,50 @@
+module nat
+
+import ../eq
+import ../cast
+import ../sum
+import ../pair
+
+NatF : (Unit -> Set) -> Unit -> Set
+NatF X u := Sum Unit (X u)
+
+nat_mono_witness :
+  (A:Unit -> Set) =>
+  (B:Unit -> Set) =>
+  ((u:Unit) => Cast (A u) (B u)) ->
+  (u:Unit) =>
+  NatF A u ->
+  NatF A u ∩ NatF B u
+nat_mono_witness -A -B k -u xs := sum_ind xs -(λ x. NatF A u ∩ NatF B u)
+  (λ a. [in1 a, in1 a])
+  (λ b. [in2 (cast (cast_forget (k -u)) b), in2 (cast (k -u) b)])
+
+nat_mono_eq :
+  (A:Unit -> Set) =>
+  (B:Unit -> Set) =>
+  (k:(u:Unit) => Cast (A u) (B u)) ->
+  (u:Unit) =>
+  (xs: NatF A u) ->
+  (nat_mono_witness k -u xs).1 = xs
+nat_mono_eq -A -B k -u xs := sum_ind xs -(λ xs. (nat_mono_witness k -u xs).1 = xs)
+  (λ a. β{in1 a})
+  (λ b. subst (cast_singleton (cast_refl -(A u)) (cast_forget (k -u))) -(λ y e. (in2 (cast y b) = in2 -Unit -(A u) b)) β{in2 b})
+
+nat_mono :
+  (A:Unit -> Set) =>
+  (B:Unit -> Set) =>
+  ((u:Unit) => Cast (A u) (B u)) ->
+  (u:Unit) =>
+  Cast (NatF A u) (NatF B u)
+nat_mono -A -B k -u := [λ x. unit_rec (k -u).2 (φ { x, nat_mono_witness k -u x, sym (nat_mono_eq k -u x) }), unit_eta (k -u).2]
+
+import idata Unit NatF nat_mono
+
+Nat : Set
+Nat := IndM unit
+
+zero : Nat
+zero := inIndM -unit (in1 unit)
+
+succ : Nat -> Nat
+succ n := inIndM -unit (in2 n)

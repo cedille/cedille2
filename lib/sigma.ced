@@ -1,0 +1,84 @@
+module sigma
+
+import eq
+import cast
+
+ChurchSigma : (A:Set) -> (A -> Set) -> Set
+ChurchSigma A B := (X:Set) => ((a:A) -> B a -> X) -> X
+
+church_sigma : (A:Set) => (B:A -> Set) => (a:A) -> B a -> ChurchSigma A B
+church_sigma -A -B a b -X ctor := ctor a b
+
+PreSigmaInd : (A:Set) -> (B:A -> Set) -> ChurchSigma A B -> Set
+PreSigmaInd A B x :=
+  (P:ChurchSigma A B -> Set) =>
+  ((a:A) -> (b:B a) -> P (church_sigma -A -B a b)) ->
+  P x
+
+PreSigma : (A:Set) -> (A -> Set) -> Set
+PreSigma A B := (x:ChurchSigma A B) ∩ PreSigmaInd A B x
+
+pre_sigma : (A:Set) => (B:A -> Set) => (a:A) -> B a -> PreSigma A B
+pre_sigma -A -B a b := [church_sigma -A -B a b, λ -P ctor. ctor a b]
+
+pre_sigma_to : (A:Set) => (B:A -> Set) => ChurchSigma A B -> PreSigma A B
+pre_sigma_to -A -B x := x (pre_sigma -A -B)
+
+pre_sigma_fixed1 : (A:Set) => (B:A -> Set) => (x:PreSigma A B) -> (pre_sigma_to -A -B x.1).1 = (x.1)
+pre_sigma_fixed1 -A -B x := x.2
+  -(λ x. (pre_sigma_to -A -B x).1 = x)
+  (λ a b. β{church_sigma -A -B a b})
+
+pre_sigma_fixed : (A:Set) => (B:A -> Set) => (x:PreSigma A B) -> pre_sigma_to -A -B x.1 = x
+pre_sigma_fixed -A -B x := ϑ1{pre_sigma_fixed1 -A -B x, pre_sigma_to -A -B x.1, x}
+
+pre_sigma_ind : (A:Set) => (B:A -> Set) => (x:PreSigma A B) ->
+  (P:PreSigma A B -> Set) =>
+  ((a:A) -> (b:B a) -> P (pre_sigma -A -B a b)) ->
+  P x
+pre_sigma_ind -A -B x -P ctor :=
+  let inner : P (pre_sigma_to x.1) := x.2 -(λ x. P (pre_sigma_to x)) ctor
+  leibniz -(PreSigma A B) -P -(pre_sigma_to x.1) -x inner (pre_sigma_fixed x)
+
+SigmaInd : (A:Set) -> (B:A -> Set) -> PreSigma A B -> Set
+SigmaInd A B x :=
+  (P:PreSigma A B -> Set) =>
+  ((a:A) -> (b:B a) -> P (pre_sigma -A -B a b)) ->
+  P x
+
+Sigma : (A:Set) -> (A -> Set) -> Set
+Sigma A B := (x:PreSigma A B) ∩ SigmaInd A B x
+
+sigma : (A:Set) => (B:A -> Set) => (a:A) -> B a -> Sigma A B
+sigma -A -B a b := [pre_sigma -A -B a b, λ -P ctor. ctor a b]
+
+sigma_to : (A:Set) => (B:A -> Set) => PreSigma A B -> Sigma A B
+sigma_to -A -B x := x.1 (sigma -A -B)
+
+sigma_fixed : (A:Set) => (B:A -> Set) => (x:PreSigma A B) -> x = (sigma_to -A -B x).1
+sigma_fixed -A -B x := pre_sigma_ind x
+  -(λ x. x = (sigma_to -A -B x).1)
+  (λ a b. β{pre_sigma -A -B a b})
+
+pre_sigma_cast : (A:Set) => (B:A -> Set) => PreSigma A B -> Sigma A B
+pre_sigma_cast -A -B x := φ { x, sigma_to x, sigma_fixed x }
+
+sigma_ind : (A:Set) => (B:A -> Set) => (x:Sigma A B) ->
+  (P:Sigma A B -> Set) =>
+  ((a:A) -> (b:B a) -> P (sigma -A -B a b)) ->
+  P x
+sigma_ind -A -B x -P ctor := x.2 -(λ x. P (pre_sigma_cast x)) ctor
+
+sigma_rec : (A:Set) => (B:A -> Set) => (x:Sigma A B) -> (X:Set) => ((a:A) -> B a -> X) -> X
+sigma_rec -A -B x -X elim := sigma_ind x -(λ p. X) elim
+
+dfst : (A:Set) => (B:A -> Set) => Sigma A B -> A
+dfst -A -B x := sigma_rec x -A (λ a b. a)
+
+dsnd : (A:Set) => (B:A -> Set) => (xs:Sigma A B) -> B (dfst -A -B xs)
+dsnd -A -B x := sigma_ind -A -B x -(λ x. B (dfst -A -B x)) (λ a b. b)
+
+sigma_eta_law : (A:Set) => (B:A -> Set) => (x:Sigma A B) -> x = sigma -A -B (dfst x) (dsnd x)
+sigma_eta_law -A -B x := sigma_ind x
+  -(λ x. x = sigma -A -B (dfst -A -B x) (dsnd -A -B x))
+  (λ a b. β{sigma -A -B a b})

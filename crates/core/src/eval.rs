@@ -167,6 +167,10 @@ pub fn eval(db: &Database, env: Env, term: Term) -> Value {
         }
         TermData::Bound { index, .. } => {
             let position = index.to_level(env.len());
+            // eprintln!("===================");
+            // for entry in env.iter() { eprintln!("{}", entry.value) }
+            // eprintln!("FETCHING: {}", *position);
+            // eprintln!("FROM INDEX: {} with LEVEL: {}", *index, env.len());
             let entry = env.get(*position).unwrap().clone();
             entry.value.force(db)
         }

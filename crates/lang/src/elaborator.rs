@@ -300,13 +300,12 @@ pub fn elaborate(db: &mut Database, module: Symbol, mut commands: Vec<syntax::Co
             syntax::Command::Infer(_) => todo!(),
             syntax::Command::Check(_, _) => todo!(),
             syntax::Command::Erase(term) => {
-                // let (term_elabed, _) = infer(db, ctx.clone(), &term)?;
-                // let term_unfolded = unfold_all(db, term_elabed);
-                // let erased = term_unfolded.erase(db, ctx.env());
-                // // eprintln!("unfolded:    {}", term_unfolded);
-                // // eprintln!("erased:       {}", erased);
-                // let quote = quote(db, erased, ctx.env_lvl());
-                // log::info!("\n{}\n{}\n{}", term.as_str(db.text_ref(module)), "erased to".green(), quote.to_string());
+                let (term_elabed, _) = infer(db, ctx.clone(), &term)?;
+                let term_unfolded = unfold_all(db, term_elabed);
+                let erased = term_unfolded.erase(db);
+                // eprintln!("unfolded:    {}", term_unfolded);
+                // eprintln!("erased:       {}", erased);
+                log::info!("\n{}\n{}\n{}", term.as_str(db.text_ref(module)), "erased to".green(), erased.to_string_with_context(ctx.names.clone()));
             }
             syntax::Command::Unfold(term) => {
                 let (term_elabed, _) = infer(db, ctx.clone(), &term)?;
@@ -557,13 +556,18 @@ fn check(db: &mut Database, ctx: Context, term: &syntax::Term, ty: Value) -> Res
 
         (syntax::Term::Let { mode, def, body, .. }, _) =>
         {
-            let (_, anno_value) = if let Some(anno) = &def.anno {
+            let (anno_elabed, anno_value) = if let Some(anno) = &def.anno {
                 let anno_ctx = ctx.clone().phase_shift(Mode::Free, Sort::Type);
                 let (anno_elabed, _) = infer(db, anno_ctx, anno)?;
                 let anno_value = eval(db, ctx.env(), anno_elabed.clone());
                 (anno_elabed, anno_value)
             } else { infer(db, ctx.clone(), &def.body)? };
-            let def_body_elabed = check(db, ctx.clone(), &def.body, anno_value.clone())?;
+            let body_ctx = if anno_elabed.sort() == Sort::Kind {
+                ctx.clone().phase_shift(Mode::TypeLevel, Sort::Type)
+            } else {
+                ctx.clone()
+            };
+            let def_body_elabed = check(db, body_ctx, &def.body, anno_value.clone())?;
             let def_body_value = LazyValueData::lazy(db, ctx.env(), def_body_elabed.clone());
             let ctx = ctx.define(db, def.name, *mode, def_body_value, anno_value);
             let body_elabed = check(db, ctx, body, ty)?;
@@ -687,33 +691,37 @@ fn check(db: &mut Database, ctx: Context, term: &syntax::Term, ty: Value) -> Res
         //     }
         // }
 
-        // (syntax::Term::Cast { span, input, witness, evidence }, _) =>
-        // {
-        //     // let input_ctx = ctx.clone().phase_shift(Mode::Erased, Sort::Term);
-        //     // let input_elabed = check(db, input_ctx, input, ty)?;
-        //     // let input_value = eval(db, ctx.module, ctx.env(), input_elabed.clone());
-        //     // let witness_elabed = erase(db, ctx.clone(), witness)?;
-        //     // let witness_value = eval(db, ctx.module, ctx.env(), witness_elabed.clone());
-        //     unimplemented!();
-        //     // let equality_type = ValueData:Equality { input(input_value, witness_value);
-        //     // let evidence_ctx = ctx.phase_shift(Mode::Erased, Sort::Term);
-        //     // let evidence_elabed = check(db, evidence_ctx, evidence, equality_type)?;
-        //     // Ok(Rc::new(term::Term::Cast { 
-        //     //     evidence: evidence_elabed,
-        //     //     input: input_elabed,
-        //     //     witness: witness_elabed
-        //     // }))
-        // }
+        (syntax::Term::Cast { span, input, witness, evidence },
+            Head::Intersect { name, first, second }) =>
+        {
+            let input_elabed = check(db, ctx.clone(), input, first.clone())?;
+            let witness_ctx = ctx.clone().phase_shift(Mode::Erased, Sort::Term);
+            let witness_elabed = check(db, witness_ctx, witness, ty)?;
+            let lhs = LazyValueData::lazy(db, ctx.env(), input_elabed.clone());
+            let rhs = db.make_term(TermData::Project {
+                variant:1,
+                body:witness_elabed.clone(),
+            });
+            let rhs = LazyValueData::lazy(db, ctx.env(), rhs);
+            let eq_ty: Value = Head::Equality { left: lhs, right: rhs, anno: first }.into();
+            let evidence_ctx = ctx.clone().phase_shift(Mode::Erased, Sort::Term);
+            let evidence_elabed = check(db, evidence_ctx, evidence, eq_ty)?;
+            let result = db.make_term(TermData::Cast { 
+                evidence: evidence_elabed,
+                input: input_elabed,
+                witness: witness_elabed
+            });
+            Ok(result)
+        }
 
         (syntax::Term::Hole { span, .. }, _) => {
             let ty_folded = quote(db, ty_folded, ctx.env_lvl());
-            let expected_type = ty_folded.to_string_with_context(ctx.names.clone());
-            Err(ElabError::Hole { 
-                src: db.text(ctx.module), 
-                span: source_span(db, ctx.module, *span),
-                expected_type,
-                context: ctx.clone().to_string(db)
-            })
+            let zonked_type = zonk(db, ctx.env(), ty_folded);
+            let expected_type = zonked_type.to_string_with_context(ctx.names.clone());
+            log::error!("\n{} {}\n{} {}", "Hole:".red(), expected_type, "Context:".bright_purple(), ctx.clone().to_string(db));
+            let id = Id::new(ctx.module, Symbol::from("hole"));
+            let result = db.make_term(TermData::Free { sort: Sort::Term, id });
+            Ok(result)
         }
 
         (syntax::Term::Omission { .. }, _) => Ok(fresh_meta(db, ctx, ty.sort().demote())),
@@ -722,26 +730,26 @@ fn check(db: &mut Database, ctx: Context, term: &syntax::Term, ty: Value) -> Res
         _ => {
             let (mut result, mut inferred_type) = infer(db, ctx.clone(), term)?;
 
-            loop {
-                match (&*result, inferred_type.head()) {
-                    (TermData::Free { sort, .. }, Head::Pi { mode, name, domain, closure, .. })
-                    if mode == Mode::Erased && *sort == Sort::Term =>
-                    {
-                        let sort = domain.sort().demote();
-                        let meta = fresh_meta(db, ctx.clone(), sort);
-                        let meta_value = LazyValueData::lazy(db, ctx.env(), meta.clone());
+            // loop {
+            //     match (&*result, inferred_type.head()) {
+            //         (TermData::Free { sort, .. }, Head::Pi { mode, name, domain, closure, .. })
+            //         if mode == Mode::Erased && *sort == Sort::Term =>
+            //         {
+            //             let sort = domain.sort().demote();
+            //             let meta = fresh_meta(db, ctx.clone(), sort);
+            //             let meta_value = LazyValueData::lazy(db, ctx.env(), meta.clone());
 
-                        result = db.make_term(TermData::Apply {
-                            sort,
-                            mode,
-                            fun: result,
-                            arg: meta
-                        });
-                        inferred_type = closure.eval(db, EnvEntry::new(name, mode, meta_value));
-                    }
-                    _ => break
-                }
-            }
+            //             result = db.make_term(TermData::Apply {
+            //                 sort,
+            //                 mode,
+            //                 fun: result,
+            //                 arg: meta
+            //             });
+            //             inferred_type = closure.eval(db, EnvEntry::new(name, mode, meta_value));
+            //         }
+            //         _ => break
+            //     }
+            // }
 
             try_unify(db, ctx, term.span(), true, ty, inferred_type)?;
             Ok(result)
@@ -1067,7 +1075,8 @@ fn infer(db: &mut Database, ctx: Context, term: &syntax::Term) -> Result<(Term, 
         }
 
         syntax::Term::Cast { input, witness, evidence, .. } => {
-            let (witness_elabed, witness_ty) = infer(db, ctx.clone(), witness)?;
+            let witness_ctx = ctx.clone().phase_shift(Mode::Erased, Sort::Term);
+            let (witness_elabed, witness_ty) = infer(db, witness_ctx, witness)?;
             let witness_ty_unfolded = unfold_to_head(db, witness_ty.clone());
             match witness_ty_unfolded.head() {
                 Head::Intersect { name, first, second } => {
@@ -1083,7 +1092,8 @@ fn infer(db: &mut Database, ctx: Context, term: &syntax::Term) -> Result<(Term, 
                         right: rhs,
                         anno: first.clone()
                     }.into();
-                    let evidence_elabed = check(db, ctx, evidence, eq_type)?;
+                    let evidence_ctx = ctx.clone().phase_shift(Mode::Erased, Sort::Term);
+                    let evidence_elabed = check(db, evidence_ctx, evidence, eq_type)?;
                     let result = db.make_term(TermData::Cast {
                         input: input_elabed,
                         witness: witness_elabed,
@@ -1100,7 +1110,13 @@ fn infer(db: &mut Database, ctx: Context, term: &syntax::Term) -> Result<(Term, 
         }
 
         syntax::Term::Separate { span, equation } => {
-            todo!()
+            let equation_ty = eval(db, ctx.env(), separate_type(db));
+            let equation_elabed = check(db, ctx.clone(), equation, equation_ty)?;
+            let result_ty = eval(db, ctx.env(), false_type(db));
+            let result = db.make_term(TermData::Separate {
+                equation: equation_elabed
+            });
+            Ok((result, result_ty))
         }
 
         syntax::Term::Omission { .. } => {
@@ -1257,15 +1273,17 @@ fn infer_sort(db: &Database, ctx: Context, term: &syntax::Term) -> Result<Sort, 
 fn try_unify(db: &mut Database, ctx: Context, span: Span, typed: bool, left: Value, right: Value) -> Result<(), ElabError> {
     match unify(db, typed, ctx.env_lvl(), left.clone(), right.clone()) {
         Ok(true) => Ok(()),
-        _ => Err(ElabError::Inconvertible {
-            src: db.text(ctx.module),
-            span: source_span(db, ctx.module, span),
-            left: quote(db, left.clone(), ctx.env_lvl())
-                .to_string_with_context(ctx.names.clone()),
-            right: quote(db, right.clone(), ctx.env_lvl())
-                .to_string_with_context(ctx.names.clone()),
-            context: ctx.to_string(db)
-        })
+        _ => {
+            let zonked_left = zonk(db, ctx.env(), quote(db, left.clone(), ctx.env_lvl()));
+            let zonked_right = zonk(db, ctx.env(), quote(db, right.clone(), ctx.env_lvl()));
+            Err(ElabError::Inconvertible {
+                src: db.text(ctx.module),
+                span: source_span(db, ctx.module, span),
+                left: zonked_left.to_string_with_context(ctx.names.clone()),
+                right: zonked_right.to_string_with_context(ctx.names.clone()),
+                context: ctx.to_string(db)
+            })
+        }
     }
 }
 

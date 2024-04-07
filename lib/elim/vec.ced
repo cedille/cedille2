@@ -1,0 +1,28 @@
+module vec
+
+import ../eq
+import ../cast
+import ../not
+import ../nat
+import ../pair
+
+zero_not_succ_f : Nat -> cBool
+zero_not_succ_f n := nat_rec n -cBool ctt (λ -R f rec xs. cff)
+
+zero_not_succ : (x:Nat) => (zero = succ x) -> ctt = cff
+zero_not_succ -x e := cong e -zero_not_succ_f
+
+elim : Set -> (Nat -> Set) -> Nat -> Set
+elim A X n :=
+  ((n = zero) -> Unit)
+  ∩ ((x:Nat) => (n = succ x) -> Pair (X x) A)
+
+Vec : Set -> Nat -> Set
+Vec A n := (X:Nat -> Set) => ((n:Nat) => elim A X n -> X n) -> X n
+
+vzero_in : (A:Set) => Unit -> Vec A zero
+vzero_in -A u -X f := f -zero [λ e. to_true e -Unit unit, λ -n e. δ { zero_not_succ -n e } -(Unit -> Pair (X n) A) unit]
+
+vzero_out : (A:Set) => Vec A zero -> Unit
+vzero_out -A v := v -(λ n. Unit) (λ -n el. ?)
+
