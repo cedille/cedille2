@@ -1,0 +1,23 @@
+module view
+
+import eq
+import cast
+import not
+import sigma
+import irrel
+
+Top : Set
+Top := False => False
+
+-- λ a. a
+top_inject : (A:Set) => A -> Top ∩ A
+top_inject -A a := [λ -f. φ { a, f -(A ∩ False), f -(a = (f -(A ∩ False)).1) }.2, a]
+
+View : Set -> Top -> Set
+View A x := Sigma (Top ∩ A) (λ z. x = (z.1))
+
+intrView : (A:Set) => (x:Top) -> (a:A) => (x = (top_inject a).1) => View A x
+intrView -A x -a -e := sigma -(Top ∩ A) -(λ z. x = (z.1)) (φ { x , top_inject a, e }) β{x}
+
+elimView : (A:Set) => (b:Top) -> View A b => A
+elimView -A b -v := φ { b , dfst v , dsnd v }.2

@@ -984,8 +984,10 @@ fn infer(db: &mut Database, ctx: Context, term: &syntax::Term) -> Result<(Term, 
         }
 
         syntax::Term::Promote { span, variant, equation, lhs, rhs } => {
-            let (lhs_elabed, inter_type) = infer(db, ctx.clone(), lhs)?;
-            let rhs_elabed = check(db, ctx.clone(), rhs, inter_type.clone())?;
+            let lhs_ctx = ctx.clone().phase_shift(Mode::Erased, Sort::Term);
+            let (lhs_elabed, inter_type) = infer(db, lhs_ctx, lhs)?;
+            let rhs_ctx = ctx.clone().phase_shift(Mode::Erased, Sort::Term);
+            let rhs_elabed = check(db, rhs_ctx, rhs, inter_type.clone())?;
             let inter_type = unfold_to_head(db, inter_type);
             let Head::Intersect { first, second, .. } = inter_type.head()
                 else { return Err(ElabError::ExpectedIntersectionType { 

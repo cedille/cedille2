@@ -148,3 +148,13 @@ FunctorIdentityLaw F fmap := (A:Set) =>
   (f:A -> A) -> (id: (a:A) -> f a = a) ->
   (a:F A) ->
   fmap -A -A f a = a
+
+cast_icomm : (A:Set) => (B:Set) => Cast (A ∩ B) (B ∩ A)
+cast_icomm -A -B := [λ x. [x, [x.2, x.1]], unit]
+
+-- λ e. e (λ x. x)
+theta2 : (A:Set) => (B:Set) => (a:A ∩ B) => (b:A ∩ B) => ((a.2) = (b.2)) -> a = b
+theta2 -A -B -a -b e :=
+  let e2 : (((cast -(A ∩ B) -(B ∩ A) (cast_icomm -A -B) a).1) = ((cast -(A ∩ B) -(B ∩ A) (cast_icomm -A -B) b).1)) := e 
+  let e3 := ϑ1 { e2, cast -(A ∩ B) -(B ∩ A) (cast_icomm -A -B) a, cast -(A ∩ B) -(B ∩ A) (cast_icomm -A -B) b }
+  cong e3 -(cast -(B ∩ A) -(A ∩ B) (cast_icomm -B -A))

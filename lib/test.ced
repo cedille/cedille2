@@ -1,17 +1,16 @@
+module test
 
-(def Nat
-    *
-    (pi 0 X *
-        (pi w _ X
-            (pi w _ (pi w _ X X)
-                X
-))))
+Id : Set
+Id := (X:Set) => X -> X
 
-(def zero
-    Nat
-    (lam 0 X *
-        (lam w z X
-            (lam w s (pi w _ X X)
-                z
-))))
+self : Id -> Id
+self u := u -Id u
 
+False : Set
+False := (X:Set) => X
+
+bad : (P:False -> Set) => (f:False) -> P f
+bad -P f :=
+  let e1 := f -((f -(Id -> Id)) = self)
+  let e2 := f -(f = f -(False -> False) f)
+  ?

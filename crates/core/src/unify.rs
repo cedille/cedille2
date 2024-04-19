@@ -307,13 +307,13 @@ fn unify_inner(db: &mut Database, typed: bool, level: Level, lhs: Value, rhs: Va
                 }
             }
         }
-        (Head::Variable { level, erasure, .. }, _) => {
+        (Head::Variable { level, erasure, .. }, _) if erasure.is_some() => {
             let spine = lhs.spine();
             let Some(erasure) = erasure else { return Ok(false) };
             let erasure = erasure.force(db).perform_spine(db, spine);
             unify(db, false, level, erasure, rhs)?
         }
-        (_, Head::Variable { level, erasure, .. }) => {
+        (_, Head::Variable { level, erasure, .. }) if erasure.is_some() => {
             let spine = rhs.spine();
             let Some(erasure) = erasure else { return Ok(false) };
             let erasure = erasure.force(db).perform_spine(db, spine);

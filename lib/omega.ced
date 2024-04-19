@@ -9,7 +9,7 @@ id : Id
 id -X x := x
 
 delt : Id -> Id
-delt u := u Id u
+delt u := u -Id u
 
 #erase delt
 
@@ -19,23 +19,19 @@ False := (X:Set) => X
 ------------------------------------------------------
 -- Why you can't use normal phi with FV(|e|) ⊂ FV(|a|)
 ------------------------------------------------------
-a : False -> False -> False
-a g f := f ((False -> False) -> False -> False) (λ x. x (False -> False) x) g
 
-#erase a
+-- b : False -> (Id -> Id) ∩ Id
+-- b f := [f -(Id -> Id), f -Id]
 
-b : False -> (False -> False) ∩ ((Id -> Id) -> Id)
-b g := [g (False -> False), g ((Id -> Id) -> Id)]
+-- e : (f : False) -> delt = (b f).1
+-- e f := f -(delt = (b f).1)
 
-bad : False -> Id
-bad g := (b g).2 delt
+-- bad : False => Id
+-- bad -f := delt (φ { delt, b -f, e -f }).2
 
-#erase bad
+-- fdelt : False -> Id -> Id
+-- fdelt f u := ?
 
-bad_eq : (g : False) -> (a g) = ((b g).1)
-bad_eq g := g ((a g) = ((b g).1))
-
-#erase bad_eq
 
 ------------------------------------------------------
 ------------------------------------------------------
@@ -43,30 +39,33 @@ bad_eq g := g ((a g) = ((b g).1))
 import pair
 
 
-witness : Pair (Id -> Id) False -> (Pair (Id -> Id) False) ∩ ((Pair (Id -> Id) False -> Id -> Id) -> (Id -> Id) -> Id)
-witness w := (snd (Id -> Id) False w) ((Pair (Id -> Id) False) ∩ ((Pair (Id -> Id) False -> Id -> Id) -> (Id -> Id) -> Id))
+A : Set 
+A := Pair (Id -> Id) False
 
+T : Set
+T := ((A -> Id -> Id) -> (Id -> Id) -> Id)
 
-evidence : (x : Pair (Id -> Id) False) -> x = (witness x).1
-evidence x := (snd (Id -> Id) False x) (x = (witness x).1)
+b : A -> A ∩ T
+b w := (snd w) -(A ∩ T)
 
-phi : Pair (Id -> Id) False -> (Pair (Id -> Id) False) ∩ ((Pair (Id -> Id) False -> Id -> Id) -> (Id -> Id) -> Id)
-phi := φ { witness, evidence }
+e : (x : A) -> x = (b x).1
+e x := (snd x) -(x = (b x).1)
 
-#erase phi
-#erase pair
-#erase snd
-#erase delt
+phi : A -> A ∩ T
+phi a := φ { a, b a, e a }
 
-bad2 : False -> Id
-bad2 b := (phi (pair (Id -> Id) False delt b)).2 (λ p. fst (Id -> Id) False p) delt
+p1 : False -> A
+p1 f := pair delt f
 
-#erase bad2
+p2 : A -> Id -> Id
+p2 x := fst x
 
-bad3 : False -> Id -> Id
-bad3 b := ((bad2 b) Id id) (Id -> Id) delt
+-- λ f. λ b. delt
+inner : False -> Id
+inner f := (phi (p1 f)).2 p2 delt
 
-#erase bad3
+bad : False -> Id -> Id
+bad f := (inner f -Id id) -(Id -> Id) delt
 
 -- e : { a = b }
 
