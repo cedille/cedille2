@@ -35,12 +35,3 @@ cong -A -B -a -b e -f := subst e -(λ y e. f a = f y) β{f a}
 
 wrap : (A:Set) => (a:A) => (b:A) => (a = b) -> (a = b)
 wrap -A -a -b e := subst e -(λ y e. a = y) β{a}
-
--- refl_uip : (A:Set) => (a:A) => (p:a = a) -> β{a} = p
--- refl_uip -A -a p := J A (λ a b i. β{b} = (leibniz A (λ i. i = b) a b ? i))
---   a a p
---   (λ -i. β{β{i}})
-
--- uip : (A:Set) => (a:A) => (b:A) => (p:a = b) -> (q:a = b) -> p = q
--- uip -A -a -b p := J A (λ a b i. (q:a = b) -> i = q)
---   a b p (λ -x q. subst A x x q (λ i e. β{i} = e) β{β{x}})

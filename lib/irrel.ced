@@ -16,3 +16,10 @@ irrel -A -a -b -e := φ { β{a}
 -- erasure: λ x. x
 cast_irrel : (A:Set) => (B:Set) => Cast A B => Cast A B
 cast_irrel -A -B -k := [λ a. φ { a , k.1 a , cast_eq k a }, unit]
+
+uip : (A:Set) => (a:A) => (b:A) => (p:a = b) -> (q:a = b) -> p = q
+uip -A -a -b p := J -A -a -b p
+  -(λ a b i. (q:a = b) -> i = q)
+  (λ -x q. subst -A -x -x q
+    -(λ i e. β{i} = subst -A -x -i (irrel -A -x -i -e) -(λ z w. z = i) e)
+    β{β{x}})

@@ -349,7 +349,7 @@ fn unify_inner(db: &mut Database, typed: bool, level: Level, lhs: Value, rhs: Va
         }
         (_, Head::Lambda { mode:Mode::Free, .. }) if !rhs.spine().is_empty() => {
             let spine = erase_spine(rhs.spine())?;
-            let head: Value = lhs.head().into();
+            let head: Value = rhs.head().into();
             let rhs = head.perform_spine(db, spine);
             unify(db, false, level, lhs, rhs)?
         }
