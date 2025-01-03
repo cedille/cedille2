@@ -1,0 +1,21 @@
+
+module erasure
+
+test1 : (A : Set) => (a : A) => (b : A) -> A
+test1 -A -a b := b
+
+#erase test1
+
+test2 : (A : Set) => A -> A
+test2 -A a := test1 A a a
+
+#erase test2
+
+test3 : (A : Set) => (a : A) => (b : A) -> A
+test3 -A -a b := test2 A (test1 A a b)
+
+#erase test3
+
+test4 : (A : Set) => (a : A) => (b : A) -> (test1 A a b) = (test3 A a b)
+test4 -A -a b := β{test1 A a b}
+

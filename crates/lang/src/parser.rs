@@ -64,6 +64,7 @@ pub fn parse_command(input : In) -> IResult<In, Command> {
         tag("import").preceded_by(bspace0(0)),
         tag("#erase").preceded_by(bspace0(0)),
         tag("#unfold").preceded_by(bspace0(0)),
+        tag("#normalize").preceded_by(bspace0(0)),
         tag("").preceded_by(bspace0(0))
     )))(input)?;
 
@@ -72,6 +73,7 @@ pub fn parse_command(input : In) -> IResult<In, Command> {
         "import" => parse_import(input),
         "#erase" => parse_erase_command(input),
         "#unfold" => parse_unfold_command(input),
+        "#normalize" => parse_normalize_command(input),
         _ => parse_def(input)
     }
 }
@@ -93,6 +95,16 @@ fn parse_unfold_command(input: In) -> IResult<In, Command> {
     )))(input)?;
 
     let command = Command::Unfold(term);
+    Ok((rest, command))
+}
+
+fn parse_normalize_command(input: In) -> IResult<In, Command> {
+    let (rest, (_, term)) = context("normalize_command", tuple((
+        tag("#normalize").preceded_by(bspace0(0)),
+        parse_term(2)
+    )))(input)?;
+
+    let command = Command::Value(term);
     Ok((rest, command))
 }
 

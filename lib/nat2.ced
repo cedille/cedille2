@@ -1,0 +1,35 @@
+module nat2
+
+import eq
+import cast
+
+Bool : Set
+Bool := (X:Set) => X -> X -> X
+
+tt : Bool
+tt -X x y := y
+
+ff : Bool
+ff -X x y := x
+
+Pre : Set
+Pre := (X:Set) =>
+  X ->
+  ((R:Bool -> Set) => (R tt -> X) -> (R ff -> X) -> R ff -> X) ->
+  X
+
+zero : Pre
+zero -X z s := z
+
+succR : Set -> Bool -> Set
+succR X b := ((b = tt) -> X) ∩ ((b = ff) -> Pre)
+
+succ : Pre -> Pre
+succ n -X z s := s
+  -(succR X)
+  (λ x. x.1 β{tt})
+  (λ x. (x.2 β{ff}) -X z s)
+  [λ d. δ{d} -(Pre -> X) n, λ d. (to_true d) -Pre n]
+
+pred : Pre -> Pre
+pred n := n -Pre z (λ -R k rec xs. ?)

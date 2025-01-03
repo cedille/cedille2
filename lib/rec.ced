@@ -4,16 +4,11 @@ import eq
 import cast
 
 Rec : (Set -> Set) -> Set
-Rec F := (X : Set) => Lin (F X) X -> X
+Rec F := (X : Set) => (Cast (F X) X) -> X
 
-rec_lin : (F:Set -> Set) => (X:Set) => Cast (F X) X -> Lin (Rec F) X
-rec_lin -F -X l := [λ r. r X (cast_to_lin (F X) X l), λ u. unit_to_fn.1 u l.2]
+in : (F : Set -> Set) => CastMono F -> F (Rec F) -> Rec F
+in -F mono xs -X ctor :=
+  let f : Cast (Rec F) X := [λ x. [? , x -X ctor], ?];
+  cast ctor (cast (mono f) xs)
+  
 
-rec_fold : (F:Set -> Set) => LinMono F -> F (Rec F) -> Rec F
-rec_fold -F m x := λ -X c. c.1 ((m (Rec F) X (rec_lin F X c)).1 x)
-
--- -- rec_in : (F:Set -> Set) => LinMono F -> Lin (F (Rec F)) (Rec F)
--- -- rec_in -F m := [rec_fold F m, λ u. ? ]
-
--- rec_unfold : (F:Set -> Set) => LinMono F -> Rec F -> F (Rec F)
--- rec_unfold -F m x := x (F (Rec F)) ?

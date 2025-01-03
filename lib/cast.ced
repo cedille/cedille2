@@ -152,6 +152,13 @@ FunctorIdentityLaw F fmap := (A:Set) =>
 cast_icomm : (A:Set) => (B:Set) => Cast (A ∩ B) (B ∩ A)
 cast_icomm -A -B := [λ x. [x, [x.2, x.1]], unit]
 
+theta_phi : (A:Set) => (B:A -> Set) => (a:(x:A) ∩ B x) => φ {a.1, a, β{a.1}} = a
+theta_phi -A -B -a := β{a}
+
+theta1 : (A:Set) => (B:A -> Set) => (a:(x:A) ∩ B x) -> (b:(x:A) ∩ B x) -> ((b.1) = (a.1)) -> a = b
+theta1 -A -B a b e :=
+  leibniz -_ -(λ x. x = b) -_ -_ (leibniz -_ -(λ x. (e : x = (a.1)) => φ { x, a, e } = b) -b.1 -a.1 (λ -i. β{b}) e -β{a.1}) (theta_phi -_ -_ -a)
+
 -- λ e. e (λ x. x)
 theta2 : (A:Set) => (B:Set) => (a:A ∩ B) => (b:A ∩ B) => ((a.2) = (b.2)) -> a = b
 theta2 -A -B -a -b e :=

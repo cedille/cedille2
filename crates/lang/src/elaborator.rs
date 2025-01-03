@@ -312,7 +312,14 @@ pub fn elaborate(db: &mut Database, module: Symbol, mut commands: Vec<syntax::Co
                 let term_unfolded = unfold_all(db, term_elabed);
                 log::info!("\n{}\n{}\n{}", term.as_str(db.text_ref(module)), "unfolded to".green(), term_unfolded.to_string());
             }
-            syntax::Command::Value(_) => todo!(),
+            syntax::Command::Value(term) => {
+                let (term_elabed, _) = infer(db, ctx.clone(), &term)?;
+                let term_unfolded = unfold_all(db, term_elabed);
+                let term_value = eval(db, ctx.env(), term_unfolded);
+                let term_quoted = quote(db, term_value, ctx.env_lvl());
+                let erased = term_quoted.erase(db);
+                log::info!("\n{}\n{}\n{}", term.as_str(db.text_ref(module)), "normalized to".green(), erased.to_string());
+            }
         }
     }
     // let ctx = elaborate_module_params(db, Context::new(module), &syntax.params)?;
